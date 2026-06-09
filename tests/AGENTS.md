@@ -30,5 +30,14 @@ Every suite must keep at least one fixture that *fails* (`greet_fail.yaml`) and
 the malformed/missing-provider paths, so the e2e proves skilltest reports
 failures and exits non-zero — not just that the happy path works.
 
+## The one `#[ignore]` exception
+
+`crates/skilltest-cli/tests/live.rs` is the *only* test allowed to be
+`#[ignore]`. It needs a real provider and credentials, so it is opt-in
+(`SKILLTEST_LIVE_PROVIDER=... cargo test --test live -- --ignored`) and stays out
+of the deterministic gate. Do **not** add `#[ignore]` to any other e2e test to
+speed up the gate — split genuinely slow journeys into a target CI still runs
+instead.
+
 When the JSON contract changes, update fixtures and the three stacks' parsers
 (serde / Pydantic / Zod) together.

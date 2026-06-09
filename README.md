@@ -23,7 +23,19 @@ models.
                                            └───────────────────────────────┘
 ```
 
-## Install / build
+## Install
+
+Prebuilt binary (Linux/macOS, x86_64/aarch64) from the latest GitHub Release:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/nickderobertis/skilltest/main/scripts/install.sh | sh
+```
+
+Pin a version or install location with `SKILLTEST_VERSION` and
+`SKILLTEST_INSTALL_DIR`; the script verifies the sha256 checksum before
+installing.
+
+### Build from source
 
 skilltest is a Rust workspace with Python and TypeScript plugins. You need
 `cargo` (+ `cargo-nextest`), [`uv`](https://docs.astral.sh/uv/), and
@@ -35,6 +47,16 @@ just check       # the full quality gate (format, lint, types, unit + e2e)
 ```
 
 See [`docs/development.md`](docs/development.md).
+
+## Quick start
+
+```bash
+skilltest init            # scaffold skilltest.yaml + an example skill and case
+skilltest run cases/example.yaml --provider skilltest-fake-provider   # try it offline
+```
+
+`skilltest init` writes a runnable starter project you can immediately run
+against the bundled deterministic provider, then point at a real one.
 
 ## Use the CLI
 
@@ -71,6 +93,9 @@ Validate skill definitions:
 skilltest validate skills/greeter      # a single skill
 skilltest validate skills/             # a folder of skills
 ```
+
+Scaffold a new project: `skilltest init [DIR]` writes a `skilltest.yaml`, an
+example skill, and an example case (refusing to overwrite existing files).
 
 Exit codes: `0` all passed · `1` a case/skill failed · `2` bad input ·
 `3` provider failure.

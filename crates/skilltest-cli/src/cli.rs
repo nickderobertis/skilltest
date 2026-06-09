@@ -31,6 +31,8 @@ enum Command {
     Run(RunArgs),
     /// Validate one or more skill definitions (a skill dir, or a folder of them).
     Validate(ValidateArgs),
+    /// Scaffold a starter project: a config, an example skill, and a case.
+    Init(InitArgs),
 }
 
 #[derive(Args)]
@@ -76,6 +78,13 @@ struct ValidateArgs {
     format: Format,
 }
 
+#[derive(Args)]
+struct InitArgs {
+    /// Directory to scaffold into (default: the current directory).
+    #[arg(value_name = "DIR", default_value = ".")]
+    dir: PathBuf,
+}
+
 #[derive(Clone, Copy, ValueEnum)]
 enum Format {
     /// A compact, human-readable summary.
@@ -110,6 +119,7 @@ where
     let result = match &cli.command {
         Command::Run(args) => cmd_run(cli.config.as_deref(), args),
         Command::Validate(args) => cmd_validate(args),
+        Command::Init(args) => cmd_init(args),
     };
 
     match result {
@@ -211,6 +221,18 @@ fn cmd_validate(args: &ValidateArgs) -> Result<ExitCode> {
     } else {
         ExitCode::TestFailure
     })
+}
+
+fn cmd_init(args: &InitArgs) -> Result<ExitCode> {
+    let created = crate::scaffold::scaffold(&args.dir)?;
+    for path in &created {
+        println!("created {}", path.display());
+    }
+    println!(
+        "\nNext: skilltest run cases/example.yaml\n\
+         Try it offline:  skilltest run cases/example.yaml --provider skilltest-fake-provider"
+    );
+    Ok(ExitCode::Success)
 }
 
 fn report_error(err: &Error) -> ExitCode {

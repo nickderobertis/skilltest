@@ -31,6 +31,8 @@ must prove a skill still behaves.
 | `plugins/vitest` | `@skilltest/vitest`: TypeScript API + vitest helpers, wrapping the same JSON contract. |
 | `tests/fixtures` | Sample skills and YAML test cases shared by the e2e suites. |
 | `docs/` | The provider protocol and config/test-case schema reference. |
+| `scripts/install.sh` | Installs a prebuilt `skilltest` from a GitHub Release (verifies checksum). |
+| `.github/workflows/release.yml` | Tag-triggered cross-platform binary build + checksums. |
 
 ## Command surface
 

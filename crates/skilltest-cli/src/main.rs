@@ -2,6 +2,7 @@
 //! translates the resulting [`skilltest_core::ExitCode`] into a process exit.
 
 mod cli;
+mod scaffold;
 
 fn main() {
     let code = cli::run(std::env::args_os());

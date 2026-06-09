@@ -1,0 +1,50 @@
+# Build and publish cross-platform `skilltest` binaries on a version tag.
+#
+# Push a tag like `v0.1.0` and this builds the CLI for each supported platform on
+# a native runner (no cross-compilation), then uploads a `.tar.gz` plus a
+# `.sha256` checksum to the matching GitHub Release. The install script
+# (scripts/install.sh) consumes these asset names.
+
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  upload:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+          - target: x86_64-apple-darwin
+            os: macos-13
+          - target: aarch64-apple-darwin
+            os: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build and upload the binary
+        uses: taiki-e/upload-rust-binary-action@v1
+        with:
+          bin: skilltest
+          target: ${{ matrix.target }}
+          # Deterministic asset name the install script depends on:
+          # skilltest-<target>.tar.gz (+ .sha256).
+          archive: skilltest-$target
+          checksum: sha256
+          token: ${{ secrets.GITHUB_TOKEN }}

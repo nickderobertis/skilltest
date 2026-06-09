@@ -40,9 +40,32 @@ Running a real provider locally:
 skilltest run cases/greet.yaml --provider oneharness -p claude-code -m claude-opus-4-8
 ```
 
+## Smoke-testing a real provider
+
+The gate is deterministic, so a live provider is never in it. There is one opt-in
+smoke test, gated behind `#[ignore]` and an env var, to exercise a real provider
+before a release:
+
+```bash
+SKILLTEST_LIVE_PROVIDER=oneharness \
+  cargo test -p skilltest-cli --test live -- --ignored
+```
+
+Optional `SKILLTEST_LIVE_PLATFORM` / `SKILLTEST_LIVE_MODEL` override the
+platform/model. It asserts the provider was reachable and returned a well-formed
+report, not a specific pass/fail (a real model is non-deterministic).
+
 ## Releasing
 
-`just audit` runs `cargo deny` (advisories + licenses) before publishing
-binaries. The `--format json` output of `run` and `validate` is a stable
-contract the plugins parse; changing its shape means updating the Rust types, the
-Pydantic models, and the Zod schema together, and bumping versions.
+1. `just audit` — `cargo deny` (advisories + licenses) before publishing.
+2. Optionally run the live smoke test above against `oneharness`.
+3. Push a tag `vX.Y.Z`. [`release.yml`](../.github/workflows/release.yml) builds
+   the `skilltest` binary on native runners for Linux and macOS
+   (x86_64 + aarch64) and uploads each as `skilltest-<target>.tar.gz` plus a
+   `.sha256` to the GitHub Release.
+4. [`scripts/install.sh`](../scripts/install.sh) consumes those assets; verify it
+   end-to-end after the first release.
+
+The `--format json` output of `run` and `validate` is a stable contract the
+plugins parse; changing its shape means updating the Rust types, the Pydantic
+models, and the Zod schema together, and bumping versions.

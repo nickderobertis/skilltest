@@ -170,3 +170,60 @@ fn help_exits_zero() {
     assert!(stdout.contains("run"));
     assert!(stdout.contains("validate"));
 }
+
+/// A fresh, unique temp directory for a test.
+fn unique_dir(tag: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("skilltest-e2e-{}-{tag}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+#[test]
+fn init_scaffolds_a_runnable_project() {
+    let dir = unique_dir("init");
+    let out = Command::new(skilltest())
+        .arg("init")
+        .arg(&dir)
+        .output()
+        .expect("executes");
+    assert!(out.status.success(), "init exits 0");
+    assert!(dir.join("skilltest.yaml").is_file());
+    assert!(dir.join("skills/example/SKILL.md").is_file());
+    assert!(dir.join("cases/example.yaml").is_file());
+
+    // The scaffolded skill validates, and the scaffolded case runs and passes
+    // offline against the fake provider — proving the starter project works.
+    let validated = Command::new(skilltest())
+        .arg("validate")
+        .arg(dir.join("skills/example"))
+        .output()
+        .expect("executes");
+    assert!(validated.status.success(), "scaffolded skill validates");
+
+    let ran = run_case(dir.join("cases/example.yaml"), &["--format", "json"]);
+    assert!(ran.status.success(), "scaffolded case passes offline");
+    assert_eq!(json(&ran)["passed"], Value::Bool(true));
+}
+
+#[test]
+fn init_refuses_to_overwrite() {
+    let dir = unique_dir("init-clobber");
+    let first = Command::new(skilltest())
+        .arg("init")
+        .arg(&dir)
+        .output()
+        .expect("executes");
+    assert!(first.status.success());
+    let second = Command::new(skilltest())
+        .arg("init")
+        .arg(&dir)
+        .output()
+        .expect("executes");
+    assert_eq!(second.status.code(), Some(2), "re-init refuses with exit 2");
+    let stderr = String::from_utf8_lossy(&second.stderr);
+    assert!(
+        stderr.contains("overwrite"),
+        "explains the refusal: {stderr}"
+    );
+}
