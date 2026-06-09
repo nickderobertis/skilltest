@@ -48,21 +48,31 @@ Use the `just` recipes; do not hand-roll equivalent commands.
 `just` needs `cargo`, `uv`, and `node`/`pnpm` on `PATH`. CI installs all three;
 locally, install them once (see `docs/development.md`).
 
-## The provider boundary (oneharness)
+## The provider boundary
 
-`skilltest` never talks to a model directly. It shells out to a **provider**
-command (default `oneharness`) speaking a small JSON-lines protocol — one request
-object on stdin, one response object on stdout — for three operations: `respond`
-(an assistant/skill turn), `user` (a simulated-user turn), and `judge` (a
-natural-language eval or done-check). The protocol is specified in
-[`docs/protocol.md`](docs/protocol.md) and is the contract every provider must
-satisfy.
+`skilltest` never talks to a model directly. The `Provider` trait
+(`provider.rs`) has two real backends; see [`docs/protocol.md`](docs/protocol.md).
 
-This boundary is the reason the whole pipeline is testable without a live model:
-`skilltest-fake-provider` implements the protocol deterministically, so the e2e
-suites exercise the real argument parsing, YAML loading, conversation loop, eval
-logic, exit codes, and JSON output — everything except the non-deterministic
-model, which must never be in the gate.
+- **`OneharnessProvider` (default).**
+  [`oneharness`](https://github.com/nickderobertis/oneharness) is a stateless
+  prompt→text CLI (`oneharness run --harness H --model M --prompt-file -`) with
+  no skill/judge/user/session concept. So this provider *builds the prompts* —
+  inlining the skill + conversation for `respond`, framing a persona for `user`,
+  and asking for a strict JSON verdict for `judge` — runs `oneharness`, and
+  parses `results[0].text`. Evals and the simulated user run on a fixed
+  `judge_harness`, independent of the harness under test. Verdict JSON is parsed
+  tolerantly (real models wrap it in prose/fences) and type-checked.
+- **`CommandProvider`.** A small JSON-lines protocol (one request object on
+  stdin, one response on stdout, per op) backing the bundled
+  `skilltest-fake-provider` and any custom provider.
+
+The fake provider is why the whole pipeline is testable without a live model: it
+implements the protocol deterministically, so the default e2e suites exercise the
+real argument parsing, YAML loading, conversation loop, eval logic, exit codes,
+and JSON output — everything except the non-deterministic model. The
+`OneharnessProvider` path is proven separately by the opt-in live tests
+(`crates/skilltest-cli/tests/live.rs`), which run against real oneharness + a
+real harness and are never in the gate.
 
 ## Invariants (non-negotiable)
 

@@ -16,11 +16,12 @@ models.
 │  skilltest   │ ───────────────────────▶ │ skilltest-core                │
 │  CLI         │                          │  load → converse → eval → report
 └──────────────┘                          └───────────────┬───────────────┘
-        ▲  pytest / vitest plugins                        │ provider protocol (JSON)
+        ▲  pytest / vitest plugins                        │ Provider
         │  (same JSON contract)                           ▼
-        │                                  ┌───────────────────────────────┐
-   your test suite                         │ oneharness  (or any provider) │
-                                           └───────────────────────────────┘
+        │                          ┌───────────────────────────────────────┐
+   your test suite                 │ oneharness ──▶ claude-code / codex / … │
+                                   │ (or a custom JSON-lines provider)      │
+                                   └───────────────────────────────────────┘
 ```
 
 ## Install
@@ -79,9 +80,9 @@ evals:
 Run it across the platforms/models in your `skilltest.yaml`:
 
 ```bash
-skilltest run cases/greet.yaml                 # human summary
+skilltest run cases/greet.yaml                 # human summary (uses oneharness)
 skilltest run cases/ --format json             # whole directory, machine output
-skilltest run cases/greet.yaml -p claude-code -m claude-opus-4-8
+skilltest run cases/greet.yaml -p claude-code -m sonnet
 ```
 
 Multi-turn cases add a `user:` block with a persona and a `done_when` condition;
@@ -139,11 +140,13 @@ test("greeter", async () => {
   whole pipeline be tested without a live model.
 - **`plugins/{pytest,vitest}`** — thin, typed wrappers over that JSON contract.
 
-The boundary to a model is a small JSON protocol
-([`docs/protocol.md`](docs/protocol.md)); `oneharness` is the default
-implementation, but any command that speaks it works. Today the plugin lineup is
-pytest and vitest; the architecture is built to grow to other languages and test
-frameworks.
+The boundary to a model is the `Provider` trait ([`docs/protocol.md`](docs/protocol.md))
+with two backends: the default **oneharness** provider runs each skill on a
+harness (Claude Code, Codex, …) by building prompts and parsing `oneharness run`'s
+JSON, while a **custom command** provider speaks a small JSON-lines protocol (this
+is how the deterministic `skilltest-fake-provider` keeps the test gate
+model-free). Today the plugin lineup is pytest and vitest; the architecture is
+built to grow to other languages and test frameworks.
 
 ## License
 

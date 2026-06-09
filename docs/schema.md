@@ -8,22 +8,36 @@ Loaded from `skilltest.yaml` in the working directory by default, or from
 the file.
 
 ```yaml
-# The provider command as an argv vector (see docs/protocol.md).
-provider: ["oneharness"]
+# The provider (see docs/protocol.md). The default runs skills through
+# oneharness; `kind: command` runs a custom JSON-lines provider instead.
+provider:
+  kind: oneharness          # or: command
+  bin: oneharness           # oneharness binary, resolved on PATH
+  judge_harness: claude-code # harness used for evals + the simulated user
+  timeout_secs: 120         # passed to `oneharness run --timeout`
+  # For kind: command instead:
+  #   kind: command
+  #   command: ["skilltest-fake-provider"]
 
 # Harness platforms a case runs on; a run fans out over platforms × models.
-platforms: ["claude-code", "cursor"]
+# Platforms are oneharness harness ids.
+platforms: ["claude-code"]
 
-# Models a case runs on.
-models: ["claude-opus-4-8", "claude-sonnet-4-6"]
+# Models a case runs on (must be valid for the chosen harness).
+models: ["sonnet"]
 
 # Model used for natural-language evals and the simulated user.
 # Defaults to the first entry of `models` when omitted.
-judge_model: "claude-opus-4-8"
+judge_model: "haiku"
 
 # Default cap on assistant turns for multi-turn cases (a case may lower it).
 max_turns: 8
 ```
+
+CLI flags override the file: `--provider "<argv>"` switches to a command
+provider; `--oneharness-bin`, `--judge-harness`, and `--timeout` tune the
+oneharness provider; `--platform`, `--model`, `--judge-model`, and `--max-turns`
+override the rest.
 
 ## Test case (`*.yaml`, or `*.skilltest.yaml` for plugin auto-collection)
 

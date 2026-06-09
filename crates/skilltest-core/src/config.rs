@@ -1,5 +1,5 @@
-//! Configuration: the provider command, the default platforms and models a run
-//! fans out across, and the model used for natural-language evals.
+//! Configuration: which provider runs skills, the default platforms and models a
+//! run fans out across, and the model used for natural-language evals.
 //!
 //! Config is loaded from a YAML file (default `skilltest.yaml`) and then refined
 //! by CLI overrides (see [`Config::apply_overrides`]).
@@ -10,17 +10,81 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 
+fn default_oneharness_bin() -> String {
+    "oneharness".to_string()
+}
+
+fn default_judge_harness() -> String {
+    "claude-code".to_string()
+}
+
+fn default_timeout_secs() -> u64 {
+    120
+}
+
+/// Settings for the default [`oneharness`](https://github.com/nickderobertis/oneharness)
+/// provider, which runs each prompt on a harness via `oneharness run`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OneharnessConfig {
+    /// The `oneharness` binary (resolved on `PATH`).
+    #[serde(default = "default_oneharness_bin")]
+    pub bin: String,
+    /// The harness used for evals and the simulated user (kept independent of the
+    /// harness under test, so the evaluator does not vary with the matrix).
+    #[serde(default = "default_judge_harness")]
+    pub judge_harness: String,
+    /// Per-call timeout passed through to `oneharness run --timeout`.
+    #[serde(default = "default_timeout_secs")]
+    pub timeout_secs: u64,
+}
+
+impl Default for OneharnessConfig {
+    fn default() -> Self {
+        Self {
+            bin: default_oneharness_bin(),
+            judge_harness: default_judge_harness(),
+            timeout_secs: default_timeout_secs(),
+        }
+    }
+}
+
+/// Settings for a custom provider command speaking the JSON-lines protocol (see
+/// `docs/protocol.md`). Used by the bundled `skilltest-fake-provider` and any
+/// provider you write yourself.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CommandConfig {
+    /// The provider command as an argv vector.
+    pub command: Vec<String>,
+}
+
+/// Which provider backs a run.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum ProviderConfig {
+    /// Run skills through `oneharness` (the default).
+    Oneharness(OneharnessConfig),
+    /// Run a custom command speaking the JSON-lines protocol.
+    Command(CommandConfig),
+}
+
+impl Default for ProviderConfig {
+    fn default() -> Self {
+        ProviderConfig::Oneharness(OneharnessConfig::default())
+    }
+}
+
 /// The full configuration for a run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
-    /// The provider command as an argv vector. The default expects
-    /// [`oneharness`](https://github.com/nickderobertis/oneharness) on `PATH`.
-    /// Tests point this at a deterministic fake provider.
-    pub provider: Vec<String>,
-    /// Harness platforms a case runs on (e.g. `claude-code`, `cursor`).
+    /// The provider that executes skills and evals.
+    pub provider: ProviderConfig,
+    /// Harness platforms a case runs on (e.g. `claude-code`, `codex`).
     pub platforms: Vec<String>,
-    /// Models a case runs on (e.g. `claude-opus-4-8`).
+    /// Models a case runs on (must be valid for the chosen harness, e.g.
+    /// `sonnet`/`haiku` for `claude-code`).
     pub models: Vec<String>,
     /// Model used for natural-language evals and the simulated user. Falls back
     /// to the first entry of `models` when empty.
@@ -32,7 +96,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            provider: vec!["oneharness".to_string()],
+            provider: ProviderConfig::default(),
             platforms: vec!["claude-code".to_string()],
             models: vec!["claude-opus-4-8".to_string()],
             judge_model: String::new(),
@@ -44,7 +108,14 @@ impl Default for Config {
 /// CLI-supplied overrides. `None`/empty fields leave the config value in place.
 #[derive(Debug, Clone, Default)]
 pub struct Overrides {
-    pub provider: Option<Vec<String>>,
+    /// If set, switch to a [`ProviderConfig::Command`] with this argv.
+    pub command_provider: Option<Vec<String>>,
+    /// Override the `oneharness` binary (only applies to the oneharness provider).
+    pub oneharness_bin: Option<String>,
+    /// Override the judge harness (only applies to the oneharness provider).
+    pub judge_harness: Option<String>,
+    /// Override the per-call timeout (only applies to the oneharness provider).
+    pub timeout_secs: Option<u64>,
     pub platforms: Vec<String>,
     pub models: Vec<String>,
     pub judge_model: Option<String>,
@@ -72,9 +143,7 @@ impl Config {
         Ok(config)
     }
 
-    /// Load `path` if it exists, otherwise return [`Config::default`]. This lets
-    /// the CLI run against an explicit config or fall back to sane defaults plus
-    /// CLI flags.
+    /// Load `path` if it exists, otherwise return [`Config::default`].
     ///
     /// # Errors
     /// Same as [`Config::load`] when the file is present but invalid.
@@ -91,8 +160,18 @@ impl Config {
     /// # Errors
     /// [`Error::Invalid`] if the merged configuration is inconsistent.
     pub fn apply_overrides(&mut self, overrides: Overrides) -> Result<()> {
-        if let Some(provider) = overrides.provider {
-            self.provider = provider;
+        if let Some(command) = overrides.command_provider {
+            self.provider = ProviderConfig::Command(CommandConfig { command });
+        } else if let ProviderConfig::Oneharness(oh) = &mut self.provider {
+            if let Some(bin) = overrides.oneharness_bin {
+                oh.bin = bin;
+            }
+            if let Some(judge_harness) = overrides.judge_harness {
+                oh.judge_harness = judge_harness;
+            }
+            if let Some(timeout) = overrides.timeout_secs {
+                oh.timeout_secs = timeout;
+            }
         }
         if !overrides.platforms.is_empty() {
             self.platforms = overrides.platforms;
@@ -123,12 +202,34 @@ impl Config {
     /// Check internal consistency.
     ///
     /// # Errors
-    /// [`Error::Invalid`] when the provider is empty or no platform/model is set.
+    /// [`Error::Invalid`] when the provider is misconfigured or no
+    /// platform/model is set.
     pub fn validate(&self) -> Result<()> {
-        if self.provider.is_empty() {
-            return Err(Error::Invalid(
-                "config `provider` must name a command (e.g. [\"oneharness\"])".into(),
-            ));
+        match &self.provider {
+            ProviderConfig::Oneharness(oh) => {
+                if oh.bin.trim().is_empty() {
+                    return Err(Error::Invalid(
+                        "config `provider.bin` must name the oneharness binary".into(),
+                    ));
+                }
+                if oh.judge_harness.trim().is_empty() {
+                    return Err(Error::Invalid(
+                        "config `provider.judge_harness` must name a harness".into(),
+                    ));
+                }
+                if oh.timeout_secs == 0 {
+                    return Err(Error::Invalid(
+                        "config `provider.timeout_secs` must be at least 1".into(),
+                    ));
+                }
+            }
+            ProviderConfig::Command(c) => {
+                if c.command.is_empty() {
+                    return Err(Error::Invalid(
+                        "config `provider.command` must name a command".into(),
+                    ));
+                }
+            }
         }
         if self.platforms.is_empty() {
             return Err(Error::Invalid(
@@ -154,22 +255,67 @@ mod tests {
     use super::*;
 
     #[test]
-    fn defaults_are_valid() {
-        Config::default().validate().unwrap();
+    fn defaults_are_valid_and_use_oneharness() {
+        let config = Config::default();
+        config.validate().unwrap();
+        assert!(matches!(config.provider, ProviderConfig::Oneharness(_)));
     }
 
     #[test]
-    fn overrides_replace_lists() {
+    fn command_override_switches_provider() {
         let mut config = Config::default();
         config
             .apply_overrides(Overrides {
-                models: vec!["a".into(), "b".into()],
+                command_provider: Some(vec!["fake".into()]),
                 ..Default::default()
             })
             .unwrap();
-        assert_eq!(config.models, vec!["a", "b"]);
-        // Platforms untouched.
-        assert_eq!(config.platforms, vec!["claude-code"]);
+        assert_eq!(
+            config.provider,
+            ProviderConfig::Command(CommandConfig {
+                command: vec!["fake".into()]
+            })
+        );
+    }
+
+    #[test]
+    fn oneharness_bin_override_applies() {
+        let mut config = Config::default();
+        config
+            .apply_overrides(Overrides {
+                oneharness_bin: Some("/tmp/oneharness".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        let ProviderConfig::Oneharness(oh) = &config.provider else {
+            panic!("expected oneharness provider");
+        };
+        assert_eq!(oh.bin, "/tmp/oneharness");
+    }
+
+    #[test]
+    fn parses_command_provider_yaml() {
+        let yaml = "provider:\n  kind: command\n  command: [\"prov\", \"--flag\"]\n";
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(
+            config.provider,
+            ProviderConfig::Command(CommandConfig {
+                command: vec!["prov".into(), "--flag".into()]
+            })
+        );
+    }
+
+    #[test]
+    fn parses_oneharness_provider_yaml() {
+        let yaml = "provider:\n  kind: oneharness\n  bin: oh\n  judge_harness: codex\n";
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        let ProviderConfig::Oneharness(oh) = &config.provider else {
+            panic!("expected oneharness provider");
+        };
+        assert_eq!(oh.bin, "oh");
+        assert_eq!(oh.judge_harness, "codex");
+        // Unspecified fields fall back to defaults.
+        assert_eq!(oh.timeout_secs, 120);
     }
 
     #[test]

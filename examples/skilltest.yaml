@@ -2,19 +2,32 @@
 # point at it with `skilltest run --config path/to/skilltest.yaml`.
 # See ../docs/schema.md for every field.
 
-# The provider command (argv). Requires `oneharness` on PATH for real runs;
-# see ../docs/protocol.md to plug in your own.
-provider: ["oneharness"]
+# The default provider runs each skill through oneharness
+# (https://github.com/nickderobertis/oneharness), which must be on PATH.
+provider:
+  kind: oneharness
+  bin: oneharness
+  # Harness used for evals and the simulated user, kept independent of the
+  # harness under test so the evaluator doesn't vary with the matrix.
+  judge_harness: claude-code
+  # Per-call timeout passed to `oneharness run --timeout`.
+  timeout_secs: 120
 
-# A run fans out over platforms × models.
+# To run a custom provider (or the bundled deterministic fake) instead, use:
+#   provider:
+#     kind: command
+#     command: ["skilltest-fake-provider"]
+
+# A run fans out over platforms × models. Platforms are oneharness harness ids;
+# models must be valid for the chosen harness.
 platforms:
   - claude-code
 
 models:
-  - claude-opus-4-8
+  - sonnet
 
 # Model used for natural-language evals and the simulated user.
-judge_model: claude-opus-4-8
+judge_model: haiku
 
 # Default cap on assistant turns for multi-turn cases.
 max_turns: 8

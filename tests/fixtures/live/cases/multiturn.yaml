@@ -1,0 +1,12 @@
+# Live multi-turn case: drives a simulated user for a second turn (no done_when,
+# so it runs to max_turns). Exercises respond + simulate_user + judge live.
+name: live_multiturn
+skill: ../skills/echo-ok
+input: "hello"
+user:
+  persona: "You are a user. Reply to the assistant with exactly the single word: continue"
+  max_turns: 2
+evals:
+  - type: boolean
+    name: assistant-responded
+    criterion: "the assistant produced a reply to the user on each of its turns"

@@ -1,97 +1,86 @@
-# Provider protocol
+# Providers
 
-`skilltest` never talks to a model directly. It shells out to a **provider**
-command (default `oneharness`) that speaks a small JSON-lines protocol. For each
-operation skilltest spawns the command, writes **one** JSON request object to
-stdin (followed by a newline), and reads **one** JSON response object from
-stdout. The command exits 0 on success; any non-zero exit (with a message on
-stderr) is surfaced as a provider error.
+skilltest never talks to a model directly. A **provider** does three things for
+the runner: produce an assistant/skill turn (`respond`), play the simulated user
+(`user`), and score the transcript against a criterion (`judge`). There are two
+provider backends.
 
-A reference implementation lives in
-[`crates/skilltest-cli/src/bin/fake_provider.rs`](../crates/skilltest-cli/src/bin/fake_provider.rs)
-(`skilltest-fake-provider`); it is deterministic and used by the e2e suites.
+## 1. The oneharness provider (default)
 
-The provider command is configured as an argv vector (`provider:` in the config,
-or `--provider` on the CLI). skilltest appends no arguments of its own — all
-context travels in the request body — so any wrapper that reads stdin and writes
-stdout works.
+[`oneharness`](https://github.com/nickderobertis/oneharness) is a stateless
+prompt→text runner: `oneharness run --harness H --model M --prompt-file -` runs a
+prompt on a harness (Claude Code, Codex, …) and returns one JSON document whose
+`results[0].text` is the harness's final message. It has no skill, judge, user,
+or session concept — so skilltest's provider **builds the prompts** and parses
+the result.
 
-## Common request fields
+For each operation skilltest invokes:
 
-Every request has an `op` field and a `messages` array (the conversation so
-far). A message is `{ "role": "user" | "assistant" | "system", "content": string }`.
-
-## `respond` — an assistant/skill turn
-
-Run the skill (on the given platform/model) to produce the next assistant turn.
-
-Request:
-
-```json
-{
-  "op": "respond",
-  "platform": "claude-code",
-  "model": "claude-opus-4-8",
-  "skill": { "name": "greeter", "path": "/abs/skills/greeter", "instructions": "<SKILL.md body>" },
-  "messages": [{ "role": "user", "content": "Greet Dr. Smith." }]
-}
+```
+oneharness run --harness <H> --model <M> --output-format json --compact \
+  --timeout <secs> --prompt-file -
 ```
 
-Response:
+with a constructed prompt on stdin, then reads `results[0]`: it requires
+`status == "ok"` and uses `text` (a non-`ok` status or missing text is a provider
+error).
 
-```json
-{ "message": "Hello, Dr. Smith!", "done": false }
+| op | harness / model | prompt skilltest builds |
+| --- | --- | --- |
+| `respond` | the platform + model under test | the skill instructions inlined, then the conversation, then "write only the assistant's next reply" |
+| `user` | `judge_harness` + `judge_model` | the persona, then the conversation, then "write only the user's next message" |
+| `judge` | `judge_harness` + `judge_model` | the criterion + transcript, then "respond with ONLY `{\"value\": …, \"reason\": …}`" |
+
+Two deliberate choices:
+
+- **Evaluator independence.** `user` and `judge` run on a fixed `judge_harness`
+  (default `claude-code`) and `judge_model`, *not* the harness/model under test,
+  so the evaluator doesn't vary across the matrix.
+- **Tolerant verdict parsing.** Real models don't always emit bare JSON, so the
+  judge response is extracted from the first `{…}` in the text (code fences and
+  surrounding prose are tolerated) and then type-checked against the eval kind.
+
+Configure it (see `docs/schema.md`):
+
+```yaml
+provider:
+  kind: oneharness
+  bin: oneharness          # resolved on PATH
+  judge_harness: claude-code
+  timeout_secs: 120
 ```
 
-`done` (optional, default `false`) lets the skill signal it considers the task
-complete, ending a multi-turn conversation early.
+`platforms` are oneharness harness ids; `models` must be valid for the chosen
+harness (e.g. `sonnet`, `haiku`, or a full model id for `claude-code`).
 
-## `user` — a simulated-user turn
+## 2. The custom command protocol (JSON-lines)
 
-Only used for multi-turn cases. Produce the next user turn, playing the persona.
+The second backend speaks a small JSON-lines protocol and backs both the bundled
+deterministic `skilltest-fake-provider` (which is how the gate runs without a
+model) and any provider you write. skilltest spawns the command once per op,
+writes **one** JSON request object to stdin (newline-terminated), and reads
+**one** JSON response object from stdout; a non-zero exit (message on stderr) is a
+provider error.
 
-Request:
-
-```json
-{
-  "op": "user",
-  "model": "claude-opus-4-8",
-  "persona": "You are a terse patient confirming an appointment.",
-  "messages": [ "...the conversation so far..." ]
-}
+```yaml
+provider:
+  kind: command
+  command: ["skilltest-fake-provider"]   # or ["python3", "my_provider.py"]
 ```
 
-Response:
+Every request has an `op` and a `messages` array (`{role, content}`).
 
-```json
-{ "message": "Yes, please go ahead.", "stop": false }
-```
+**`respond`** — request carries `platform`, `model`, `skill` (`{name, path,
+instructions}`), `messages`; response: `{"message": "...", "done": false}`
+(`done` optional).
 
-`stop` (optional, default `false`) lets the simulated user end the conversation.
+**`user`** — request carries `model`, `persona`, `messages`; response:
+`{"message": "...", "stop": false}` (`stop` optional).
 
-## `judge` — a natural-language eval or done-check
+**`judge`** — request carries `model`, `kind` (`"boolean"`/`"numeric"`),
+`criterion`, `messages`, plus `min`/`max` for numeric; response:
+`{"value": <bool|number>, "reason": "..."}`. `value` must be a boolean for
+boolean evals and a number for numeric; a mismatch is a provider error.
 
-Score a plain-English criterion against the transcript. Used for every eval and
-for the multi-turn `done_when` check.
-
-Boolean request/response:
-
-```json
-{ "op": "judge", "model": "claude-opus-4-8", "kind": "boolean", "criterion": "the reply greets Dr. Smith by name", "messages": [ ... ] }
-```
-```json
-{ "value": true, "reason": "the reply addresses her by title and surname" }
-```
-
-Numeric request/response (the scale travels as `min`/`max`):
-
-```json
-{ "op": "judge", "model": "claude-opus-4-8", "kind": "numeric", "criterion": "how completely was the appointment confirmed", "min": 0, "max": 10, "messages": [ ... ] }
-```
-```json
-{ "value": 8, "reason": "confirmed with date but not time" }
-```
-
-`value` must be a boolean for `kind: "boolean"` and a number for
-`kind: "numeric"`; a mismatch is a provider error. `reason` is optional but
-strongly encouraged — it is what appears in a failing report.
+A reference implementation is
+[`crates/skilltest-cli/src/bin/fake_provider.rs`](../crates/skilltest-cli/src/bin/fake_provider.rs).

@@ -24,14 +24,14 @@ pub mod runner;
 pub mod skill;
 pub mod testcase;
 
-pub use config::{Config, Overrides};
+pub use config::{CommandConfig, Config, OneharnessConfig, Overrides, ProviderConfig};
 pub use conversation::{Message, Role, Transcript};
 pub use error::{Error, Result};
 pub use eval::{Comparator, Eval, EvalDetail, EvalOutcome, JudgeValue};
 pub use exit::ExitCode;
 pub use provider::{
-    AssistantTurn, CommandProvider, JudgeKind, JudgeQuery, JudgeVerdict, Provider, SkillRef,
-    UserTurn,
+    AssistantTurn, CommandProvider, JudgeKind, JudgeQuery, JudgeVerdict, OneharnessProvider,
+    Provider, SkillRef, UserTurn,
 };
 pub use report::{CaseRun, Report, Summary};
 pub use runner::Runner;

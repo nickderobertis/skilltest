@@ -8,13 +8,16 @@ use skilltest_core::{Error, Result};
 
 const CONFIG: &str = "\
 # skilltest configuration. See https://github.com/nickderobertis/skilltest.
-# Requires `oneharness` on PATH for real runs; pass --provider to override.
-provider: [\"oneharness\"]
+# The default provider runs skills through `oneharness` (must be on PATH).
+provider:
+  kind: oneharness
+  bin: oneharness
+  judge_harness: claude-code
 platforms:
   - claude-code
 models:
-  - claude-opus-4-8
-judge_model: claude-opus-4-8
+  - sonnet
+judge_model: haiku
 max_turns: 8
 ";
 

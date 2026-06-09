@@ -1,19 +1,22 @@
-//! The provider boundary. `skilltest` never talks to a model directly; it shells
-//! out to a provider command (default `oneharness`) that speaks a small
-//! JSON-lines protocol — one request object in on stdin, one response object out
-//! on stdout, per invocation. See `docs/protocol.md` for the wire format.
+//! The provider boundary. `skilltest` never talks to a model directly; a
+//! [`Provider`] runs the skill, plays the simulated user, and judges the
+//! transcript.
 //!
-//! The [`Provider`] trait abstracts that boundary so the runner can be unit
-//! tested against an in-memory fake, while [`CommandProvider`] is the real
-//! subprocess implementation used in production and by the e2e suite (pointed at
-//! the deterministic `skilltest-fake-provider`).
+//! There are two real implementations. [`OneharnessProvider`] (the default) runs
+//! each prompt on a harness through the
+//! [`oneharness`](https://github.com/nickderobertis/oneharness) CLI and parses
+//! its JSON. [`CommandProvider`] speaks a small JSON-lines protocol (see
+//! `docs/protocol.md`) and backs both the deterministic `skilltest-fake-provider`
+//! used by the gate and any custom provider you write. The [`Provider`] trait
+//! also lets the runner be unit-tested against an in-memory fake.
 
 use std::io::Write as _;
 use std::process::{Command, Stdio};
 
 use serde::{Deserialize, Serialize};
 
-use crate::conversation::Message;
+use crate::config::OneharnessConfig;
+use crate::conversation::{Message, Role};
 use crate::error::{Error, Result};
 use crate::eval::JudgeValue;
 
@@ -312,6 +315,294 @@ impl Provider for CommandProvider {
     }
 }
 
+// ---------------------------------------------------------------------------
+// OneharnessProvider
+// ---------------------------------------------------------------------------
+
+/// The default [`Provider`]: runs each prompt on a harness through the
+/// `oneharness` CLI.
+///
+/// oneharness has no skill/judge/user/session concept — it is a stateless
+/// prompt→text runner (`oneharness run --harness H --model M --prompt-file -`).
+/// So this provider *builds the prompts*: it inlines the skill instructions and
+/// the conversation for an assistant turn, frames a persona for a user turn, and
+/// asks for a strict JSON verdict for a judge. Evals and the simulated user run
+/// on a fixed `judge_harness`, independent of the harness under test.
+pub struct OneharnessProvider {
+    bin: String,
+    judge_harness: String,
+    timeout_secs: u64,
+}
+
+/// The subset of the `oneharness run` JSON envelope we consume.
+#[derive(Deserialize)]
+struct OhEnvelope {
+    results: Vec<OhResult>,
+}
+
+#[derive(Deserialize)]
+struct OhResult {
+    status: String,
+    #[serde(default)]
+    text: Option<String>,
+    #[serde(default)]
+    stderr: String,
+    #[serde(default)]
+    error: Option<String>,
+}
+
+impl OneharnessProvider {
+    /// Build a provider from its configuration.
+    #[must_use]
+    pub fn new(config: &OneharnessConfig) -> Self {
+        Self {
+            bin: config.bin.clone(),
+            judge_harness: config.judge_harness.clone(),
+            timeout_secs: config.timeout_secs,
+        }
+    }
+
+    /// Run one prompt on `harness` with `model` and return the normalized text.
+    fn run(&self, harness: &str, model: &str, prompt: &str) -> Result<String> {
+        let timeout = self.timeout_secs.to_string();
+        let mut child = Command::new(&self.bin)
+            .args([
+                "run",
+                "--harness",
+                harness,
+                "--model",
+                model,
+                "--output-format",
+                "json",
+                "--compact",
+                "--timeout",
+                &timeout,
+                "--prompt-file",
+                "-",
+            ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| {
+                Error::provider(
+                    "oneharness",
+                    format!(
+                        "could not run `{}`: {e}. Is oneharness installed and on PATH?",
+                        self.bin
+                    ),
+                )
+            })?;
+
+        child
+            .stdin
+            .as_mut()
+            .ok_or_else(|| Error::provider("oneharness", "could not open oneharness stdin"))?
+            .write_all(prompt.as_bytes())
+            .map_err(|e| Error::provider("oneharness", format!("could not write prompt: {e}")))?;
+
+        let output = child.wait_with_output().map_err(|e| {
+            Error::provider("oneharness", format!("oneharness did not complete: {e}"))
+        })?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let envelope: OhEnvelope = serde_json::from_str(stdout.trim()).map_err(|e| {
+            Error::provider(
+                "oneharness",
+                format!(
+                    "could not parse oneharness output: {e}; stderr: {}",
+                    String::from_utf8_lossy(&output.stderr).trim()
+                ),
+            )
+        })?;
+
+        let result = envelope
+            .results
+            .into_iter()
+            .next()
+            .ok_or_else(|| Error::provider("oneharness", "oneharness returned no results"))?;
+
+        if result.status != "ok" {
+            let detail = result
+                .error
+                .filter(|e| !e.is_empty())
+                .or_else(|| Some(result.stderr.clone()).filter(|s| !s.is_empty()))
+                .unwrap_or_else(|| format!("status `{}`", result.status));
+            return Err(Error::provider(
+                format!("oneharness:{harness}"),
+                format!("harness run failed: {detail}"),
+            ));
+        }
+
+        result.text.filter(|t| !t.trim().is_empty()).ok_or_else(|| {
+            Error::provider(
+                format!("oneharness:{harness}"),
+                "harness produced no extractable text",
+            )
+        })
+    }
+}
+
+impl Provider for OneharnessProvider {
+    fn respond(
+        &self,
+        platform: &str,
+        model: &str,
+        skill: &SkillRef<'_>,
+        messages: &[Message],
+    ) -> Result<AssistantTurn> {
+        let prompt = build_respond_prompt(skill, messages);
+        let text = self.run(platform, model, &prompt)?;
+        Ok(AssistantTurn {
+            message: text.trim().to_string(),
+            done: false,
+        })
+    }
+
+    fn simulate_user(&self, model: &str, persona: &str, messages: &[Message]) -> Result<UserTurn> {
+        let prompt = build_user_prompt(persona, messages);
+        let text = self.run(&self.judge_harness, model, &prompt)?;
+        Ok(UserTurn {
+            message: text.trim().to_string(),
+            stop: false,
+        })
+    }
+
+    fn judge(
+        &self,
+        model: &str,
+        query: &JudgeQuery<'_>,
+        messages: &[Message],
+    ) -> Result<JudgeVerdict> {
+        let prompt = build_judge_prompt(query, messages);
+        let text = self.run(&self.judge_harness, model, &prompt)?;
+        parse_verdict(query.kind, &text)
+    }
+}
+
+/// Render the conversation as `Role: content` lines for inlining in a prompt.
+fn render_transcript(messages: &[Message]) -> String {
+    messages
+        .iter()
+        .map(|m| {
+            let role = match m.role {
+                Role::User => "User",
+                Role::Assistant => "Assistant",
+                Role::System => "System",
+            };
+            format!("{role}: {}", m.content)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn build_respond_prompt(skill: &SkillRef<'_>, messages: &[Message]) -> String {
+    format!(
+        "You are an assistant operating under the following skill instructions.\n\n\
+         --- SKILL: {name} ---\n{instructions}\n--- END SKILL ---\n\n\
+         Conversation so far (most recent last):\n{transcript}\n\n\
+         Write only the assistant's next reply, following the skill. Output the \
+         reply text and nothing else.",
+        name = skill.name,
+        instructions = skill.instructions,
+        transcript = render_transcript(messages),
+    )
+}
+
+fn build_user_prompt(persona: &str, messages: &[Message]) -> String {
+    format!(
+        "You are role-playing the USER in a conversation with an AI assistant. \
+         Stay in character:\n\n{persona}\n\n\
+         Conversation so far (most recent last):\n{transcript}\n\n\
+         Write only the user's next message. Output the message text and nothing \
+         else.",
+        transcript = render_transcript(messages),
+    )
+}
+
+fn build_judge_prompt(query: &JudgeQuery<'_>, messages: &[Message]) -> String {
+    let transcript = render_transcript(messages);
+    match query.kind {
+        JudgeKind::Boolean => format!(
+            "You are a strict, careful evaluator of an AI assistant's behavior.\n\n\
+             Criterion: {criterion}\n\n\
+             Transcript:\n{transcript}\n\n\
+             Decide whether the criterion is satisfied. Respond with ONLY a \
+             single-line JSON object and nothing else:\n\
+             {{\"value\": true or false, \"reason\": \"<one short sentence>\"}}",
+            criterion = query.criterion,
+        ),
+        JudgeKind::Numeric => {
+            let (min, max) = query.scale.unwrap_or((0.0, 10.0));
+            format!(
+                "You are a strict, careful evaluator of an AI assistant's behavior.\n\n\
+                 Criterion: {criterion}\n\n\
+                 Transcript:\n{transcript}\n\n\
+                 Score how well the criterion is satisfied on a scale from {min} to \
+                 {max} (inclusive). Respond with ONLY a single-line JSON object and \
+                 nothing else:\n\
+                 {{\"value\": <number between {min} and {max}>, \"reason\": \"<one short sentence>\"}}",
+                criterion = query.criterion,
+            )
+        }
+    }
+}
+
+/// Extract the first JSON object from `text`, tolerating code fences and prose
+/// around it (real models do not always emit bare JSON).
+fn extract_json_object(text: &str) -> Option<&str> {
+    let start = text.find('{')?;
+    let end = text.rfind('}')?;
+    if end > start {
+        Some(&text[start..=end])
+    } else {
+        None
+    }
+}
+
+fn parse_verdict(kind: JudgeKind, text: &str) -> Result<JudgeVerdict> {
+    let json = extract_json_object(text).ok_or_else(|| {
+        Error::provider(
+            "oneharness:judge",
+            format!("judge did not return a JSON object; got: {text}"),
+        )
+    })?;
+    let value: serde_json::Value = serde_json::from_str(json).map_err(|e| {
+        Error::provider(
+            "oneharness:judge",
+            format!("judge verdict was not valid JSON: {e}; got: {json}"),
+        )
+    })?;
+    let reason = value
+        .get("reason")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let raw = value
+        .get("value")
+        .ok_or_else(|| Error::provider("oneharness:judge", "judge verdict has no `value` field"))?;
+
+    let verdict_value = match kind {
+        JudgeKind::Boolean => JudgeValue::Bool(raw.as_bool().ok_or_else(|| {
+            Error::provider(
+                "oneharness:judge",
+                format!("boolean judge `value` was not a bool: {raw}"),
+            )
+        })?),
+        JudgeKind::Numeric => JudgeValue::Number(raw.as_f64().ok_or_else(|| {
+            Error::provider(
+                "oneharness:judge",
+                format!("numeric judge `value` was not a number: {raw}"),
+            )
+        })?),
+    };
+
+    Ok(JudgeVerdict {
+        value: verdict_value,
+        reason,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -334,5 +625,49 @@ mod tests {
         let json = serde_json::to_string(&req).unwrap();
         assert!(json.contains("\"op\":\"judge\""));
         assert!(json.contains("\"kind\":\"numeric\""));
+    }
+
+    #[test]
+    fn respond_prompt_inlines_skill_and_transcript() {
+        let skill = SkillRef {
+            name: "greeter",
+            dir: "/x",
+            instructions: "Greet by name.",
+        };
+        let prompt = build_respond_prompt(&skill, &[Message::user("Hi")]);
+        assert!(prompt.contains("greeter"));
+        assert!(prompt.contains("Greet by name."));
+        assert!(prompt.contains("User: Hi"));
+    }
+
+    #[test]
+    fn extracts_json_from_fenced_or_prose_text() {
+        assert_eq!(
+            extract_json_object("```json\n{\"value\": true}\n```"),
+            Some("{\"value\": true}")
+        );
+        assert_eq!(
+            extract_json_object("Sure! {\"value\": 8, \"reason\": \"x\"} done"),
+            Some("{\"value\": 8, \"reason\": \"x\"}")
+        );
+        assert_eq!(extract_json_object("no json here"), None);
+    }
+
+    #[test]
+    fn parses_boolean_and_numeric_verdicts() {
+        let b = parse_verdict(JudgeKind::Boolean, "{\"value\": true, \"reason\": \"ok\"}").unwrap();
+        assert!(matches!(b.value, JudgeValue::Bool(true)));
+        assert_eq!(b.reason, "ok");
+
+        let n =
+            parse_verdict(JudgeKind::Numeric, "{\"value\": 8.5, \"reason\": \"good\"}").unwrap();
+        assert!(matches!(n.value, JudgeValue::Number(v) if (v - 8.5).abs() < f64::EPSILON));
+    }
+
+    #[test]
+    fn verdict_with_wrong_value_type_errors() {
+        assert!(parse_verdict(JudgeKind::Boolean, "{\"value\": 3}").is_err());
+        assert!(parse_verdict(JudgeKind::Numeric, "{\"value\": true}").is_err());
+        assert!(parse_verdict(JudgeKind::Boolean, "no json").is_err());
     }
 }

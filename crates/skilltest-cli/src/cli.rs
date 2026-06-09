@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use skilltest_core::{
-    discover_cases, validate_path, CommandProvider, Config, Error, ExitCode, Overrides, Report,
-    Result, Runner, TestCase,
+    discover_cases, validate_path, CommandProvider, Config, Error, ExitCode, OneharnessProvider,
+    Overrides, Provider, ProviderConfig, Report, Result, Runner, TestCase,
 };
 
 /// Test AI skills across harness/model platforms with natural-language evals.
@@ -49,10 +49,23 @@ struct RunArgs {
     #[arg(short = 'm', long = "model", value_name = "MODEL")]
     models: Vec<String>,
 
-    /// Provider command, overriding config. Whitespace-split into argv, e.g.
-    /// `--provider oneharness` or `--provider "python3 provider.py"`.
+    /// Use a custom provider command (JSON-lines protocol) instead of
+    /// oneharness. Whitespace-split into argv, e.g.
+    /// `--provider "python3 provider.py"`.
     #[arg(long, value_name = "CMD")]
     provider: Option<String>,
+
+    /// Path to the oneharness binary (oneharness provider only; overrides config).
+    #[arg(long, value_name = "PATH")]
+    oneharness_bin: Option<String>,
+
+    /// Harness used for evals and the simulated user (oneharness provider only).
+    #[arg(long, value_name = "ID")]
+    judge_harness: Option<String>,
+
+    /// Per-call timeout in seconds (oneharness provider only).
+    #[arg(long, value_name = "SECS")]
+    timeout: Option<u64>,
 
     /// Model used for evals and the simulated user (overrides config).
     #[arg(long, value_name = "MODEL")]
@@ -134,20 +147,23 @@ fn cmd_run(config_path: Option<&Path>, args: &RunArgs) -> Result<ExitCode> {
         None => Config::load_or_default(Path::new("skilltest.yaml"))?,
     };
 
-    let provider_argv = args
+    let command_provider = args
         .provider
         .as_ref()
         .map(|s| s.split_whitespace().map(String::from).collect::<Vec<_>>());
 
     config.apply_overrides(Overrides {
-        provider: provider_argv,
+        command_provider,
+        oneharness_bin: args.oneharness_bin.clone(),
+        judge_harness: args.judge_harness.clone(),
+        timeout_secs: args.timeout,
         platforms: args.platforms.clone(),
         models: args.models.clone(),
         judge_model: args.judge_model.clone(),
         max_turns: args.max_turns,
     })?;
 
-    let provider = CommandProvider::new(config.provider.clone())?;
+    let provider = build_provider(&config.provider)?;
 
     let mut cases = Vec::new();
     for path in &args.paths {
@@ -156,7 +172,7 @@ fn cmd_run(config_path: Option<&Path>, args: &RunArgs) -> Result<ExitCode> {
         }
     }
 
-    let runner = Runner::new(&provider, &config);
+    let runner = Runner::new(provider.as_ref(), &config);
     let report = runner.run_all(&cases)?;
 
     print_report(&report, args.format)?;
@@ -166,6 +182,13 @@ fn cmd_run(config_path: Option<&Path>, args: &RunArgs) -> Result<ExitCode> {
     } else {
         ExitCode::TestFailure
     })
+}
+
+fn build_provider(config: &ProviderConfig) -> Result<Box<dyn Provider>> {
+    match config {
+        ProviderConfig::Oneharness(oh) => Ok(Box::new(OneharnessProvider::new(oh))),
+        ProviderConfig::Command(c) => Ok(Box::new(CommandProvider::new(c.command.clone())?)),
+    }
 }
 
 fn print_report(report: &Report, format: Format) -> Result<()> {

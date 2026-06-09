@@ -1,0 +1,15 @@
+# Live case: a near-deterministic skill, so a real model judge has an
+# unambiguous verdict. Exercises respond + boolean + numeric judging.
+name: live_pong
+skill: ../skills/pong
+input: "ping"
+evals:
+  - type: boolean
+    name: replied-pong
+    criterion: "the assistant's reply is the word 'pong' (case-insensitive), with no other words"
+  - type: numeric
+    name: conciseness
+    criterion: "how concise and on-instruction is the reply (a one-word answer scores highest)"
+    min: 0
+    max: 10
+    threshold: 4
