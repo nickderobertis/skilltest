@@ -1,0 +1,32 @@
+[package]
+name = "skilltest-cli"
+description = "The `skilltest` command-line tool for testing AI skills."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+
+[[bin]]
+name = "skilltest"
+path = "src/main.rs"
+
+# A deterministic reference implementation of the provider protocol, used by the
+# e2e suite (and as living documentation of how to write a provider). Not a
+# production model — it never calls out to anything.
+[[bin]]
+name = "skilltest-fake-provider"
+path = "src/bin/fake_provider.rs"
+
+[dependencies]
+skilltest-core = { workspace = true }
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

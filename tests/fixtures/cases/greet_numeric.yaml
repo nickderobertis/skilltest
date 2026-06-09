@@ -1,0 +1,12 @@
+# Single-turn numeric eval: score how completely the reply covers the brief.
+name: greet_numeric
+skill: ../skills/greeter
+input: "Greet Dr. Smith about today's appointment."
+evals:
+  - type: numeric
+    name: coverage
+    criterion: "reply mentions `Dr. Smith` and the `appointment`"
+    min: 0
+    max: 10
+    threshold: 7
+    comparator: ">="

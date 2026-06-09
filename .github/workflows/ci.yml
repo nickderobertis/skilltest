@@ -1,0 +1,62 @@
+# Prove the artifact from a clean checkout: bootstrap, then the full gate.
+#
+# skilltest ships a cross-platform CLI plus Python and TypeScript plugins, so the
+# matrix covers Linux and macOS. Each job installs only what `just bootstrap`
+# needs — Rust (+ nextest), uv, and pnpm/Node — then runs `just bootstrap` and
+# `just check` (format, lint, type check, unit, and e2e). See references/ci.md.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install just
+        uses: extractions/setup-just@v2
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: plugins/vitest/pnpm-lock.yaml
+
+      - name: Bootstrap
+        run: just bootstrap
+
+      - name: Check
+        run: just check

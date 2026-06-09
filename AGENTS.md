@@ -1,0 +1,125 @@
+# AGENTS.md
+
+Durable instructions for humans and agents working in this repo. Write for a
+future maintainer, not as a session log. Put deterministic steps in scripts and
+keep this file for constraints, tradeoffs, and judgment.
+
+> `CLAUDE.md` is a symlink to this file (`ln -s AGENTS.md CLAUDE.md`) so the two
+> never drift. Edit `AGENTS.md` only.
+
+## What this repo is
+
+`skilltest` is a framework for testing AI **skills** (a `SKILL.md` plus its
+assets). The artifact is a **Rust CLI** (`skilltest`) plus thin **plugins** that
+expose the same capability inside existing test runners — `pytest` (Python) and
+`vitest` (TypeScript) to start. It runs a skill on one or more harness/model
+**platforms** via [`oneharness`](https://github.com/nickderobertis/oneharness),
+optionally driving a simulated user across multiple turns, then scores the
+transcript with built-in **natural-language evals** (boolean and numeric). It
+also validates skill definitions.
+
+Consumers: skill authors who want a regression suite for a skill, and CI that
+must prove a skill still behaves.
+
+## Layout
+
+| Path | What |
+| --- | --- |
+| `crates/skilltest-core` | Library: config, skill model + validation, test-case model, provider protocol, evals, runner, report. The stable Rust API the plugins and CLI build on. |
+| `crates/skilltest-cli` | The `skilltest` binary (clap). Also ships `skilltest-fake-provider`, a deterministic reference provider used by the e2e suite. |
+| `plugins/pytest` | `skilltest-pytest`: Python API + pytest collection, wrapping the CLI's JSON contract. |
+| `plugins/vitest` | `@skilltest/vitest`: TypeScript API + vitest helpers, wrapping the same JSON contract. |
+| `tests/fixtures` | Sample skills and YAML test cases shared by the e2e suites. |
+| `docs/` | The provider protocol and config/test-case schema reference. |
+
+## Command surface
+
+Use the `just` recipes; do not hand-roll equivalent commands.
+
+- `just bootstrap` — set up from a clean clone (cargo fetch + `uv sync` + `pnpm install`).
+- `just check` — full quality gate (format, lint, type check, unit + e2e tests).
+  Must pass before any commit or PR.
+- `just test` / `just lint` / `just format` / `just typecheck` — individual gate steps.
+- `just test-e2e` — the cross-language end-to-end suites (Rust + both plugins).
+- `just upgrade` — upgrade dependencies across all three stacks, then re-run `just check`.
+
+`just` needs `cargo`, `uv`, and `node`/`pnpm` on `PATH`. CI installs all three;
+locally, install them once (see `docs/development.md`).
+
+## The provider boundary (oneharness)
+
+`skilltest` never talks to a model directly. It shells out to a **provider**
+command (default `oneharness`) speaking a small JSON-lines protocol — one request
+object on stdin, one response object on stdout — for three operations: `respond`
+(an assistant/skill turn), `user` (a simulated-user turn), and `judge` (a
+natural-language eval or done-check). The protocol is specified in
+[`docs/protocol.md`](docs/protocol.md) and is the contract every provider must
+satisfy.
+
+This boundary is the reason the whole pipeline is testable without a live model:
+`skilltest-fake-provider` implements the protocol deterministically, so the e2e
+suites exercise the real argument parsing, YAML loading, conversation loop, eval
+logic, exit codes, and JSON output — everything except the non-deterministic
+model, which must never be in the gate.
+
+## Invariants (non-negotiable)
+
+- The quality gate is strict: no warnings-only mode. `clippy`, `ruff`, `ty`,
+  `biome`, and `tsc` all fail the build on findings. A diagnostic is either an
+  error or suppressed with a documented, tracked rationale.
+- Validate all external / IO inputs at trust boundaries: config files, test-case
+  YAML, skill frontmatter, and every provider response are parsed into typed
+  models (`serde` in Rust, Pydantic in Python, Zod in TS) before use. Never trust
+  raw provider output.
+- The CLI's `--format json` output is a **stable contract** the plugins depend
+  on. Changing its shape is a breaking change; update the Rust types, the
+  Pydantic models, and the Zod schema together, and bump versions.
+- Keep the artifact portable across the supported platform matrix (Linux, macOS).
+- Do not commit secrets, credentials, PII, or customer data. Real provider runs
+  need API keys; those live in the environment, never in fixtures or config.
+- No non-determinism in the gate: the LLM is always faked in tests.
+
+## Scripts and output are context
+
+- Every script you add should be quiet on success — a single line or nothing.
+- On failure, print the exact error and a concrete suggested next action.
+- The CLI follows the same rule: minimal human output on success, the exact
+  problem plus a suggested action on stderr, distinct exit codes (see
+  `crates/skilltest-core/src/exit.rs`).
+
+## Tests are context engineering
+
+- Tests are how you and future agents actually see this system behave, so invest
+  in them deliberately.
+- The e2e suites drive the **built** CLI the way users do — as a subprocess,
+  asserting on exit codes and JSON — against the fake provider. When you touch
+  the conversation loop, evals, or the JSON contract, extend an e2e journey
+  rather than adding another narrow unit test.
+- Every e2e suite must cover at least one happy path **and** one meaningful
+  failure/recovery path (a failing eval, a malformed config, a missing provider).
+
+## Keeping the allowlist current
+
+- The agent command allowlist lives in `.claude/settings.json`; the tool
+  enforces it, so this file does not restate "follow the allowlist."
+- Your job is to keep it current: when a new routine command becomes part of the
+  normal build/test/release workflow, add it to the allowlist instead of
+  re-approving it every session. Keep it narrow.
+
+## Conventions
+
+- Rust: stable toolchain, `rustfmt` defaults, `clippy -D warnings`. Errors use
+  `thiserror`; the boundary between library errors and process exit codes lives
+  in the CLI, not the core.
+- Python plugin: Python 3.12+, `uv`, `ruff`, `ty`, `pytest`. Public API is
+  re-exported from `skilltest_pytest/__init__.py`; everything else is internal.
+- TS plugin: `strict` TypeScript, `biome` for lint+format, `vitest`, `pnpm`.
+  Public API is the package entry in `src/index.ts`.
+- See `tests/AGENTS.md` for test-fixture conventions.
+
+## After the main task: refine and hand off
+
+After completing a requested task, propose only materially-helpful follow-ups
+(scripts to automate a manual step, a constraint worth recording here, a fixture
+that improves visibility). Skip busywork. If nothing is materially helpful, say
+so and stop.

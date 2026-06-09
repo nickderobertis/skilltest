@@ -1,0 +1,15 @@
+# Multi-turn case: drive a simulated user until the conversation reaches two
+# assistant turns, then score the final transcript.
+name: booking_multiturn
+skill: ../skills/greeter
+input: "I'd like to confirm my appointment, please."
+user:
+  persona: |
+    You are a terse patient confirming an appointment.
+    say: Yes, please go ahead.
+  done_when: "the conversation has reached turns>=2"
+  max_turns: 4
+evals:
+  - type: boolean
+    name: confirms-appointment
+    criterion: "the assistant confirmed the appointment (`confirmed`)"

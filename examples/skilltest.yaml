@@ -1,0 +1,20 @@
+# Example skilltest config. Copy to your project root as `skilltest.yaml`, or
+# point at it with `skilltest run --config path/to/skilltest.yaml`.
+# See ../docs/schema.md for every field.
+
+# The provider command (argv). Requires `oneharness` on PATH for real runs;
+# see ../docs/protocol.md to plug in your own.
+provider: ["oneharness"]
+
+# A run fans out over platforms × models.
+platforms:
+  - claude-code
+
+models:
+  - claude-opus-4-8
+
+# Model used for natural-language evals and the simulated user.
+judge_model: claude-opus-4-8
+
+# Default cap on assistant turns for multi-turn cases.
+max_turns: 8

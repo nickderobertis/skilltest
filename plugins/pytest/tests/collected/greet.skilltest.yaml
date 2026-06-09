@@ -1,0 +1,9 @@
+# Auto-collected by the skilltest pytest plugin: running `pytest` turns this file
+# into a test item. Provider/binary come from the env defaults in conftest.py.
+name: collected_greet
+skill: ./greeter
+input: "Greet Dr. Smith."
+evals:
+  - type: boolean
+    name: names-the-patient
+    criterion: "the reply greets `Dr. Smith` by name"

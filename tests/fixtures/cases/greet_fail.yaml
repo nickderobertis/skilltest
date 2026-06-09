@@ -1,0 +1,9 @@
+# Failure path: the greeter never says goodbye, so this eval must fail. Used to
+# prove skilltest reports failing evals and exits non-zero.
+name: greet_fail
+skill: ../skills/greeter
+input: "Greet Dr. Smith."
+evals:
+  - type: boolean
+    name: says-goodbye
+    criterion: "the reply contains a `goodbye`"

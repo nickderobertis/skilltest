@@ -1,0 +1,39 @@
+[project]
+name = "skilltest-pytest"
+version = "0.1.0"
+description = "pytest plugin for skilltest: run AI-skill tests and natural-language evals as pytest, with deterministic mix-in checks."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+authors = [{ name = "Nick DeRobertis" }]
+dependencies = [
+    "pydantic>=2.7",
+]
+
+[project.entry-points.pytest11]
+skilltest = "skilltest_pytest.plugin"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "ruff>=0.6",
+    "ty>=0.0.1a1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["skilltest_pytest"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]

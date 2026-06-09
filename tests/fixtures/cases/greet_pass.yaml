@@ -1,0 +1,11 @@
+# Single-turn happy path: the greeter must name Dr. Smith and confirm.
+name: greet_pass
+skill: ../skills/greeter
+input: "Greet Dr. Smith, who has an appointment today."
+evals:
+  - type: boolean
+    name: names-the-patient
+    criterion: "the reply greets `Dr. Smith` by name"
+  - type: boolean
+    name: confirms-appointment
+    criterion: "the reply states the appointment is `confirmed`"
