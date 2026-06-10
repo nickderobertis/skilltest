@@ -35,9 +35,16 @@ pub enum Error {
     #[error("invalid test definition: {0}")]
     Invalid(String),
 
-    /// The provider command could not be spawned or did not behave.
+    /// The provider command could not be spawned or did not behave. `kind`, when
+    /// set, classifies the failure (e.g. `"auth"`, `"rate_limit"`,
+    /// `"model_not_found"`, `"quota"`) so the CLI can distinguish a broken
+    /// environment from a broken skill.
     #[error("provider error ({context}): {message}")]
-    Provider { context: String, message: String },
+    Provider {
+        context: String,
+        message: String,
+        kind: Option<String>,
+    },
 
     /// A skill definition failed validation. Carries the human-readable
     /// findings so the CLI can print them.
@@ -46,11 +53,25 @@ pub enum Error {
 }
 
 impl Error {
-    /// Construct a [`Error::Provider`] from any displayable message.
+    /// Construct a [`Error::Provider`] with no classification.
     pub fn provider(context: impl Into<String>, message: impl std::fmt::Display) -> Self {
         Error::Provider {
             context: context.into(),
             message: message.to_string(),
+            kind: None,
+        }
+    }
+
+    /// Construct a classified [`Error::Provider`] (e.g. `kind = "auth"`).
+    pub fn provider_classified(
+        context: impl Into<String>,
+        message: impl std::fmt::Display,
+        kind: impl Into<String>,
+    ) -> Self {
+        Error::Provider {
+            context: context.into(),
+            message: message.to_string(),
+            kind: Some(kind.into()),
         }
     }
 }

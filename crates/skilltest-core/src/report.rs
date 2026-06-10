@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::conversation::Transcript;
 use crate::eval::EvalOutcome;
+use crate::provider::Usage;
 
 /// The result of running one test case on one (platform, model) pair.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -26,10 +27,16 @@ pub struct CaseRun {
     pub evals: Vec<EvalOutcome>,
     /// The full conversation, for debugging and deterministic mix-in checks.
     pub transcript: Transcript,
+    /// Aggregated token/cost usage across every provider call in this run
+    /// (skill turns + simulated-user turns + judge calls). Omitted when no
+    /// usage was reported (e.g. the fake provider or a harness that doesn't
+    /// surface usage).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<Usage>,
 }
 
 /// Aggregate pass/fail counts for a report.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Summary {
     /// Distinct test cases represented.
     pub cases: usize,
@@ -39,6 +46,10 @@ pub struct Summary {
     pub passed: usize,
     /// Runs that failed.
     pub failed: usize,
+    /// Aggregated token/cost usage across every run in the report. Omitted
+    /// when no run reported usage.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<Usage>,
 }
 
 /// The top-level report for a `skilltest run` invocation.
@@ -60,11 +71,19 @@ impl Report {
         case_names.sort_unstable();
         case_names.dedup();
         let passed_runs = runs.iter().filter(|r| r.passed).count();
+        let mut total_usage = Usage::default();
+        for run in &runs {
+            if let Some(u) = &run.usage {
+                total_usage.add(u);
+            }
+        }
+        let usage = (!total_usage.is_empty()).then_some(total_usage);
         let summary = Summary {
             cases: case_names.len(),
             runs: runs.len(),
             passed: passed_runs,
             failed: runs.len() - passed_runs,
+            usage,
         };
         Report {
             passed: summary.failed == 0 && !runs.is_empty(),
@@ -108,6 +127,25 @@ impl Report {
             "{}/{} runs passed\n",
             self.summary.passed, self.summary.runs
         ));
+        if let Some(usage) = &self.summary.usage {
+            let mut parts = Vec::new();
+            if let Some(cost) = usage.cost_usd {
+                parts.push(format!("${cost:.4}"));
+            }
+            if let (Some(i), Some(o)) = (usage.input_tokens, usage.output_tokens) {
+                parts.push(format!("{} in / {} out tokens", i, o));
+            } else {
+                if let Some(i) = usage.input_tokens {
+                    parts.push(format!("{i} input tokens"));
+                }
+                if let Some(o) = usage.output_tokens {
+                    parts.push(format!("{o} output tokens"));
+                }
+            }
+            if !parts.is_empty() {
+                out.push_str(&format!("usage: {}\n", parts.join(", ")));
+            }
+        }
         out
     }
 }

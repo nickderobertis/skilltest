@@ -7,11 +7,12 @@ use serde::{Deserialize, Serialize};
 use crate::error::{Error, Result};
 
 /// How a numeric score is compared to its threshold.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Comparator {
     /// value >= threshold (the default).
     #[serde(alias = ">=")]
+    #[default]
     Gte,
     /// value > threshold.
     #[serde(alias = ">")]
@@ -22,12 +23,6 @@ pub enum Comparator {
     /// value < threshold.
     #[serde(alias = "<")]
     Lt,
-}
-
-impl Default for Comparator {
-    fn default() -> Self {
-        Self::Gte
-    }
 }
 
 impl Comparator {

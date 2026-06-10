@@ -261,10 +261,23 @@ fn cmd_init(args: &InitArgs) -> Result<ExitCode> {
 fn report_error(err: &Error) -> ExitCode {
     eprintln!("error: {err}");
     match err {
-        Error::Provider { .. } => {
-            eprintln!(
-                "hint: ensure the provider command is installed and on PATH, or pass --provider"
-            );
+        Error::Provider { kind, .. } => {
+            let hint = match kind.as_deref() {
+                Some("auth") => "hint: authentication failed — check your provider credentials (e.g. `claude` login)",
+                Some("rate_limit") => "hint: the harness rate-limited the call — retry after a backoff",
+                Some("model_not_found") => {
+                    "hint: the harness does not recognize this model — check `--model` and `oneharness list`"
+                }
+                Some("quota") => "hint: provider quota exhausted — check your account limits",
+                Some(other) => {
+                    eprintln!("classified as: {other}");
+                    "hint: see provider docs for this failure class"
+                }
+                None => {
+                    "hint: ensure the provider command is installed and on PATH, or pass --provider"
+                }
+            };
+            eprintln!("{hint}");
             ExitCode::ProviderError
         }
         _ => ExitCode::UsageError,

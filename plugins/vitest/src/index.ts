@@ -29,6 +29,7 @@ export {
   type Report,
   type Summary,
   type Transcript,
+  type Usage,
   type ValidationFinding,
   type ValidationReport,
 } from "./schema.js";

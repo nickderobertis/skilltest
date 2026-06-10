@@ -31,6 +31,18 @@ class Transcript(_Model):
         return "\n".join(m.content for m in self.messages if m.role == "assistant")
 
 
+class Usage(_Model):
+    """Token / cost usage aggregated for a run or the whole report.
+
+    Each field is independently optional because not every harness reports every
+    signal (cost is commonly absent on subscription auth).
+    """
+
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cost_usd: float | None = None
+
+
 class BooleanDetail(_Model):
     kind: Literal["boolean"]
     value: bool
@@ -63,6 +75,7 @@ class CaseRun(_Model):
     turns: int
     evals: list[EvalOutcome]
     transcript: Transcript
+    usage: Usage | None = None
 
     def failed_evals(self) -> list[EvalOutcome]:
         return [e for e in self.evals if not e.passed]
@@ -73,6 +86,7 @@ class Summary(_Model):
     runs: int
     passed: int
     failed: int
+    usage: Usage | None = None
 
 
 class Report(_Model):

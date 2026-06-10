@@ -92,6 +92,26 @@ fn live_respond_and_judge_boolean_and_numeric() {
     // Both a boolean and a numeric eval ran and passed.
     assert_eq!(run["evals"][0]["detail"]["kind"], "boolean");
     assert_eq!(run["evals"][1]["detail"]["kind"], "numeric");
+
+    // Normalized usage flowed through: every claude-code call reports tokens
+    // and cost, so the run *and* the report summary must carry usage with
+    // input/output token counts. cost_usd is omitted on subscription auth, so
+    // we only require it to be a number when present.
+    let usage = &run["usage"];
+    assert!(usage.is_object(), "expected per-run usage; got {usage}");
+    assert!(
+        usage["input_tokens"].as_u64().unwrap_or(0) > 0,
+        "expected non-zero input_tokens; got {usage}"
+    );
+    assert!(
+        usage["output_tokens"].as_u64().unwrap_or(0) > 0,
+        "expected non-zero output_tokens; got {usage}"
+    );
+    let summary_usage = &report["summary"]["usage"];
+    assert!(
+        summary_usage.is_object(),
+        "expected summary.usage; got {summary_usage}"
+    );
 }
 
 #[test]
@@ -115,4 +135,11 @@ fn live_multi_turn_drives_simulated_user() {
         .map(|m| m["role"].as_str().unwrap())
         .collect();
     assert_eq!(roles, ["user", "assistant", "user", "assistant"]);
+    // Multi-turn against claude-code goes through --resume, so usage is the
+    // sum of two skill turns plus the judge / done_when calls.
+    assert!(
+        run["usage"].is_object(),
+        "expected usage; got {}",
+        run["usage"]
+    );
 }
