@@ -30,8 +30,8 @@ pub use error::{Error, Result};
 pub use eval::{Comparator, Eval, EvalDetail, EvalOutcome, JudgeValue};
 pub use exit::ExitCode;
 pub use provider::{
-    AssistantTurn, CommandProvider, JudgeKind, JudgeQuery, JudgeVerdict, OneharnessProvider,
-    Provider, SkillRef, UserTurn,
+    supports_resume, AssistantTurn, CommandProvider, JudgeKind, JudgeQuery, JudgeVerdict,
+    OneharnessProvider, Provider, SkillRef, Usage, UserTurn,
 };
 pub use report::{CaseRun, Report, Summary};
 pub use runner::Runner;

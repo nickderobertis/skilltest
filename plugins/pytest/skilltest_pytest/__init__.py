@@ -25,6 +25,7 @@ from .models import (
     Report,
     Summary,
     Transcript,
+    Usage,
     ValidationFinding,
     ValidationReport,
 )
@@ -42,6 +43,7 @@ __all__ = [
     "SkilltestUsageError",
     "Summary",
     "Transcript",
+    "Usage",
     "ValidationFinding",
     "ValidationReport",
     "run_skill",

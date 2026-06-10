@@ -16,6 +16,17 @@ export const TranscriptSchema = z.object({
   messages: z.array(MessageSchema),
 });
 
+/**
+ * Token / cost usage aggregated for a run or the whole report.
+ * Each field is independently nullable because not every harness reports
+ * every signal (cost is commonly absent on subscription auth).
+ */
+export const UsageSchema = z.object({
+  input_tokens: z.number().optional(),
+  output_tokens: z.number().optional(),
+  cost_usd: z.number().optional(),
+});
+
 export const BooleanDetailSchema = z.object({
   kind: z.literal("boolean"),
   value: z.boolean(),
@@ -50,6 +61,7 @@ export const CaseRunSchema = z.object({
   turns: z.number(),
   evals: z.array(EvalOutcomeSchema),
   transcript: TranscriptSchema,
+  usage: UsageSchema.optional(),
 });
 
 export const SummarySchema = z.object({
@@ -57,6 +69,7 @@ export const SummarySchema = z.object({
   runs: z.number(),
   passed: z.number(),
   failed: z.number(),
+  usage: UsageSchema.optional(),
 });
 
 export const ReportSchema = z.object({
@@ -77,6 +90,7 @@ export const ValidationReportSchema = z.object({
 
 export type Message = z.infer<typeof MessageSchema>;
 export type Transcript = z.infer<typeof TranscriptSchema>;
+export type Usage = z.infer<typeof UsageSchema>;
 export type EvalDetail = z.infer<typeof EvalDetailSchema>;
 export type EvalOutcome = z.infer<typeof EvalOutcomeSchema>;
 export type CaseRun = z.infer<typeof CaseRunSchema>;

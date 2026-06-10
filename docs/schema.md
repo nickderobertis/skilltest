@@ -85,3 +85,33 @@ the evals score it. A **multi-turn** case includes `user` and loops.
 
 A case run passes when every eval passes. A `skilltest run` exits `0` when all
 runs pass and `1` when any fail.
+
+## Report (`--format json`)
+
+The stable JSON contract the plugins parse (Pydantic in pytest, Zod in vitest).
+Each run and the top-level summary may carry a `usage` object aggregated from
+every provider call:
+
+```json
+{
+  "passed": true,
+  "summary": {
+    "cases": 1, "runs": 1, "passed": 1, "failed": 0,
+    "usage": {"input_tokens": 5616, "output_tokens": 46, "cost_usd": 0.0124}
+  },
+  "runs": [{
+    "case": "pong", "skill": "…/skills/pong",
+    "platform": "claude-code", "model": "haiku",
+    "passed": true, "turns": 1,
+    "evals": [{"label": "…", "passed": true, "detail": {…}, "reason": "…"}],
+    "transcript": {"messages": […]},
+    "usage": {"input_tokens": 5616, "output_tokens": 46, "cost_usd": 0.0124}
+  }]
+}
+```
+
+`usage.input_tokens`, `usage.output_tokens`, and `usage.cost_usd` are each
+independently optional — `null` / absent means "this harness did not report
+the signal," not zero. The whole `usage` object is omitted when nothing
+reported usage (e.g. the fake provider in the gate). Cost is commonly absent
+on subscription auth.

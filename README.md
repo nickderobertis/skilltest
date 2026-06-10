@@ -142,11 +142,14 @@ test("greeter", async () => {
 
 The boundary to a model is the `Provider` trait ([`docs/protocol.md`](docs/protocol.md))
 with two backends: the default **oneharness** provider runs each skill on a
-harness (Claude Code, Codex, …) by building prompts and parsing `oneharness run`'s
-JSON, while a **custom command** provider speaks a small JSON-lines protocol (this
-is how the deterministic `skilltest-fake-provider` keeps the test gate
-model-free). Today the plugin lineup is pytest and vitest; the architecture is
-built to grow to other languages and test frameworks.
+harness (Claude Code, Codex, …) by passing the skill via `--system`, threading
+`session_id` through `--resume` for faithful multi-turn on supporting harnesses,
+and surfacing each result's normalized `usage` (token + cost totals) and
+`failure_kind` (auth / rate-limit / … classification). A **custom command**
+provider speaks a small JSON-lines protocol (this is how the deterministic
+`skilltest-fake-provider` keeps the test gate model-free). Today the plugin
+lineup is pytest and vitest; the architecture is built to grow to other
+languages and test frameworks.
 
 ## License
 

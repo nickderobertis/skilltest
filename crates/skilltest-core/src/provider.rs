@@ -50,20 +50,65 @@ pub struct JudgeQuery<'a> {
     pub scale: Option<(f64, f64)>,
 }
 
+/// Token / cost usage for one provider call.
+///
+/// Each field is independently optional because not every harness reports every
+/// signal (cost is commonly absent on subscription auth; some harnesses report
+/// no usage at all). The whole struct is `Option<Usage>` on a turn — `None`
+/// means "no signal," not "zero."
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Usage {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_usd: Option<f64>,
+}
+
+impl Usage {
+    /// True iff every field is `None`.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.input_tokens.is_none() && self.output_tokens.is_none() && self.cost_usd.is_none()
+    }
+
+    /// Add another sample into this total. `None` values stay `None` until
+    /// something reports a real number, at which point they accumulate.
+    pub fn add(&mut self, other: &Usage) {
+        if let Some(v) = other.input_tokens {
+            self.input_tokens = Some(self.input_tokens.unwrap_or(0) + v);
+        }
+        if let Some(v) = other.output_tokens {
+            self.output_tokens = Some(self.output_tokens.unwrap_or(0) + v);
+        }
+        if let Some(v) = other.cost_usd {
+            self.cost_usd = Some(self.cost_usd.unwrap_or(0.0) + v);
+        }
+    }
+}
+
 /// An assistant/skill turn produced by the provider.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct AssistantTurn {
     pub message: String,
     /// The skill signalled it considers the task complete.
     pub done: bool,
+    /// Cost/token usage for this call, if the provider reported it.
+    pub usage: Option<Usage>,
+    /// A session handle the runner can pass back on the next `respond` call to
+    /// continue the same conversation against the real harness (only some
+    /// harnesses expose this — see `OneharnessProvider::supports_resume`).
+    pub session_id: Option<String>,
 }
 
 /// A simulated-user turn produced by the provider.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct UserTurn {
     pub message: String,
     /// The simulated user chose to end the conversation.
     pub stop: bool,
+    pub usage: Option<Usage>,
 }
 
 /// A judge verdict: the raw value (bool or number) plus the stated reason.
@@ -71,11 +116,16 @@ pub struct UserTurn {
 pub struct JudgeVerdict {
     pub value: JudgeValue,
     pub reason: String,
+    pub usage: Option<Usage>,
 }
 
 /// The provider boundary.
 pub trait Provider {
-    /// Run one assistant/skill turn given the conversation so far.
+    /// Run one assistant/skill turn given the conversation so far. `session`,
+    /// when `Some`, is a handle returned by a previous `respond` call on this
+    /// run that the provider may use to continue the same harness session
+    /// (e.g. via `oneharness run --resume`); providers that don't support
+    /// continuation should ignore it.
     ///
     /// # Errors
     /// [`Error::Provider`] if the command fails or returns malformed output.
@@ -85,6 +135,7 @@ pub trait Provider {
         model: &str,
         skill: &SkillRef<'_>,
         messages: &[Message],
+        session: Option<&str>,
     ) -> Result<AssistantTurn>;
 
     /// Produce one simulated-user turn.
@@ -103,10 +154,18 @@ pub trait Provider {
         query: &JudgeQuery<'_>,
         messages: &[Message],
     ) -> Result<JudgeVerdict>;
+
+    /// True iff `respond` on `platform` will faithfully continue a prior
+    /// session when given its `session_id`. The default is `false`; providers
+    /// that support resume override this so the runner knows to thread the
+    /// session id through.
+    fn supports_resume(&self, _platform: &str) -> bool {
+        false
+    }
 }
 
 // ---------------------------------------------------------------------------
-// Wire types
+// Wire types (CommandProvider JSON-lines protocol)
 // ---------------------------------------------------------------------------
 
 #[derive(Serialize)]
@@ -124,6 +183,8 @@ enum Request<'a> {
         model: &'a str,
         skill: SkillPayload<'a>,
         messages: &'a [Message],
+        #[serde(skip_serializing_if = "Option::is_none")]
+        session: Option<&'a str>,
     },
     User {
         model: &'a str,
@@ -147,6 +208,10 @@ struct RespondPayload {
     message: String,
     #[serde(default)]
     done: bool,
+    #[serde(default)]
+    usage: Option<Usage>,
+    #[serde(default)]
+    session_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -154,6 +219,8 @@ struct UserPayload {
     message: String,
     #[serde(default)]
     stop: bool,
+    #[serde(default)]
+    usage: Option<Usage>,
 }
 
 #[derive(Deserialize)]
@@ -161,6 +228,8 @@ struct JudgePayload {
     value: JudgeValue,
     #[serde(default)]
     reason: String,
+    #[serde(default)]
+    usage: Option<Usage>,
 }
 
 // ---------------------------------------------------------------------------
@@ -258,6 +327,7 @@ impl Provider for CommandProvider {
         model: &str,
         skill: &SkillRef<'_>,
         messages: &[Message],
+        session: Option<&str>,
     ) -> Result<AssistantTurn> {
         let request = Request::Respond {
             platform,
@@ -268,11 +338,14 @@ impl Provider for CommandProvider {
                 instructions: skill.instructions,
             },
             messages,
+            session,
         };
         let payload: RespondPayload = self.call(&request, "respond")?;
         Ok(AssistantTurn {
             message: payload.message,
             done: payload.done,
+            usage: payload.usage,
+            session_id: payload.session_id,
         })
     }
 
@@ -286,6 +359,7 @@ impl Provider for CommandProvider {
         Ok(UserTurn {
             message: payload.message,
             stop: payload.stop,
+            usage: payload.usage,
         })
     }
 
@@ -311,6 +385,7 @@ impl Provider for CommandProvider {
         Ok(JudgeVerdict {
             value: payload.value,
             reason: payload.reason,
+            usage: payload.usage,
         })
     }
 }
@@ -322,12 +397,26 @@ impl Provider for CommandProvider {
 /// The default [`Provider`]: runs each prompt on a harness through the
 /// `oneharness` CLI.
 ///
-/// oneharness has no skill/judge/user/session concept — it is a stateless
-/// prompt→text runner (`oneharness run --harness H --model M --prompt-file -`).
-/// So this provider *builds the prompts*: it inlines the skill instructions and
-/// the conversation for an assistant turn, frames a persona for a user turn, and
-/// asks for a strict JSON verdict for a judge. Evals and the simulated user run
-/// on a fixed `judge_harness`, independent of the harness under test.
+/// Wires four real oneharness features that ship in v0.2.0:
+///
+/// * `--system <skill instructions>` — the skill becomes a *real* system prompt
+///   on the underlying harness (e.g. `--append-system-prompt` for claude-code),
+///   instead of being inlined into the user message.
+/// * `--resume <session>` — multi-turn `respond` calls thread the previous
+///   `session_id` so the harness sees a continuing conversation (and keeps its
+///   tool state, files, etc.) instead of being re-prompted with a stringified
+///   transcript. Used only for harnesses that report `supports_resume` in the
+///   registry (claude-code, opencode, cursor today); other harnesses fall back
+///   to the inline-transcript path.
+/// * Normalized `usage` (`input_tokens`, `output_tokens`, `cost_usd`) — surfaced
+///   on every turn so cross-model cost reporting is portable.
+/// * Normalized `failure_kind` (`auth`, `rate_limit`, `model_not_found`, …) —
+///   classified provider errors so the CLI can distinguish a broken environment
+///   from a broken skill.
+///
+/// Evals and the simulated user always run on the configured `judge_harness`,
+/// independent of the harness under test, so the evaluator does not drift with
+/// the matrix.
 pub struct OneharnessProvider {
     bin: String,
     judge_harness: String,
@@ -349,6 +438,32 @@ struct OhResult {
     stderr: String,
     #[serde(default)]
     error: Option<String>,
+    #[serde(default)]
+    session_id: Option<String>,
+    #[serde(default)]
+    usage: Option<Usage>,
+    #[serde(default)]
+    failure_kind: Option<String>,
+}
+
+/// Parameters for one `oneharness run` invocation.
+struct RunArgs<'a> {
+    harness: &'a str,
+    model: &'a str,
+    prompt: &'a str,
+    /// Becomes `--system <text>`; only set on `respond` so the skill is the
+    /// system prompt rather than inlined into the user turn.
+    system: Option<&'a str>,
+    /// Becomes `--resume <id>`; only set when the runner wants to continue a
+    /// prior harness session.
+    resume: Option<&'a str>,
+}
+
+/// What we get back from one `oneharness run`.
+struct RunOutcome {
+    text: String,
+    session_id: Option<String>,
+    usage: Option<Usage>,
 }
 
 impl OneharnessProvider {
@@ -362,24 +477,34 @@ impl OneharnessProvider {
         }
     }
 
-    /// Run one prompt on `harness` with `model` and return the normalized text.
-    fn run(&self, harness: &str, model: &str, prompt: &str) -> Result<String> {
+    /// Run one prompt on `harness` and return the normalized text plus the
+    /// session id and usage (when oneharness lifted them from the harness's
+    /// output).
+    fn run(&self, args: &RunArgs<'_>) -> Result<RunOutcome> {
         let timeout = self.timeout_secs.to_string();
-        let mut child = Command::new(&self.bin)
-            .args([
-                "run",
-                "--harness",
-                harness,
-                "--model",
-                model,
-                "--output-format",
-                "json",
-                "--compact",
-                "--timeout",
-                &timeout,
-                "--prompt-file",
-                "-",
-            ])
+        let mut cmd = Command::new(&self.bin);
+        cmd.args([
+            "run",
+            "--harness",
+            args.harness,
+            "--model",
+            args.model,
+            "--output-format",
+            "json",
+            "--compact",
+            "--timeout",
+            &timeout,
+            "--prompt-file",
+            "-",
+        ]);
+        if let Some(system) = args.system {
+            cmd.args(["--system", system]);
+        }
+        if let Some(resume) = args.resume {
+            cmd.args(["--resume", resume]);
+        }
+
+        let mut child = cmd
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -398,7 +523,7 @@ impl OneharnessProvider {
             .stdin
             .as_mut()
             .ok_or_else(|| Error::provider("oneharness", "could not open oneharness stdin"))?
-            .write_all(prompt.as_bytes())
+            .write_all(args.prompt.as_bytes())
             .map_err(|e| Error::provider("oneharness", format!("could not write prompt: {e}")))?;
 
         let output = child.wait_with_output().map_err(|e| {
@@ -428,17 +553,29 @@ impl OneharnessProvider {
                 .filter(|e| !e.is_empty())
                 .or_else(|| Some(result.stderr.clone()).filter(|s| !s.is_empty()))
                 .unwrap_or_else(|| format!("status `{}`", result.status));
-            return Err(Error::provider(
-                format!("oneharness:{harness}"),
-                format!("harness run failed: {detail}"),
-            ));
+            let context = format!("oneharness:{}", args.harness);
+            let message = format!("harness run failed: {detail}");
+            return Err(match result.failure_kind {
+                Some(kind) if !kind.is_empty() => {
+                    Error::provider_classified(context, message, kind)
+                }
+                _ => Error::provider(context, message),
+            });
         }
 
-        result.text.filter(|t| !t.trim().is_empty()).ok_or_else(|| {
-            Error::provider(
-                format!("oneharness:{harness}"),
-                "harness produced no extractable text",
-            )
+        let text = result
+            .text
+            .filter(|t| !t.trim().is_empty())
+            .ok_or_else(|| {
+                Error::provider(
+                    format!("oneharness:{}", args.harness),
+                    "harness produced no extractable text",
+                )
+            })?;
+        Ok(RunOutcome {
+            text,
+            session_id: result.session_id,
+            usage: result.usage,
         })
     }
 }
@@ -450,21 +587,45 @@ impl Provider for OneharnessProvider {
         model: &str,
         skill: &SkillRef<'_>,
         messages: &[Message],
+        session: Option<&str>,
     ) -> Result<AssistantTurn> {
-        let prompt = build_respond_prompt(skill, messages);
-        let text = self.run(platform, model, &prompt)?;
+        // If we have a real session to continue on a supporting harness, only
+        // send the last user message — the harness still has its prior state.
+        // Otherwise inline the whole transcript so harnesses without resume
+        // still see the conversation.
+        let prompt = if session.is_some() {
+            latest_user_message(messages).unwrap_or_default()
+        } else {
+            render_transcript_for_respond(messages)
+        };
+        let outcome = self.run(&RunArgs {
+            harness: platform,
+            model,
+            prompt: &prompt,
+            system: Some(skill.instructions),
+            resume: session,
+        })?;
         Ok(AssistantTurn {
-            message: text.trim().to_string(),
+            message: outcome.text.trim().to_string(),
             done: false,
+            usage: outcome.usage,
+            session_id: outcome.session_id,
         })
     }
 
     fn simulate_user(&self, model: &str, persona: &str, messages: &[Message]) -> Result<UserTurn> {
         let prompt = build_user_prompt(persona, messages);
-        let text = self.run(&self.judge_harness, model, &prompt)?;
+        let outcome = self.run(&RunArgs {
+            harness: &self.judge_harness,
+            model,
+            prompt: &prompt,
+            system: None,
+            resume: None,
+        })?;
         Ok(UserTurn {
-            message: text.trim().to_string(),
+            message: outcome.text.trim().to_string(),
             stop: false,
+            usage: outcome.usage,
         })
     }
 
@@ -475,12 +636,35 @@ impl Provider for OneharnessProvider {
         messages: &[Message],
     ) -> Result<JudgeVerdict> {
         let prompt = build_judge_prompt(query, messages);
-        let text = self.run(&self.judge_harness, model, &prompt)?;
-        parse_verdict(query.kind, &text)
+        let outcome = self.run(&RunArgs {
+            harness: &self.judge_harness,
+            model,
+            prompt: &prompt,
+            system: None,
+            resume: None,
+        })?;
+        let mut verdict = parse_verdict(query.kind, &outcome.text)?;
+        verdict.usage = outcome.usage;
+        Ok(verdict)
+    }
+
+    fn supports_resume(&self, platform: &str) -> bool {
+        supports_resume(platform)
     }
 }
 
+/// The harnesses oneharness's adapter table marks `supports_resume = true`
+/// (claude-code's `--resume`, opencode's `--session`, cursor's `--resume`). Kept
+/// in sync with the `oneharness list` registry — when a new harness ships
+/// session continuation, add it here so the runner threads `session_id`.
+#[must_use]
+pub fn supports_resume(harness: &str) -> bool {
+    matches!(harness, "claude-code" | "opencode" | "cursor")
+}
+
 /// Render the conversation as `Role: content` lines for inlining in a prompt.
+/// Used by the judge, the simulated user, and the no-resume fallback path of
+/// `respond`.
 fn render_transcript(messages: &[Message]) -> String {
     messages
         .iter()
@@ -496,17 +680,26 @@ fn render_transcript(messages: &[Message]) -> String {
         .join("\n")
 }
 
-fn build_respond_prompt(skill: &SkillRef<'_>, messages: &[Message]) -> String {
+/// The prompt for `respond` when we cannot resume a harness session: inline the
+/// whole conversation so the stateless harness call sees it. The skill is
+/// passed separately as `--system`, so it does *not* appear here.
+fn render_transcript_for_respond(messages: &[Message]) -> String {
     format!(
-        "You are an assistant operating under the following skill instructions.\n\n\
-         --- SKILL: {name} ---\n{instructions}\n--- END SKILL ---\n\n\
-         Conversation so far (most recent last):\n{transcript}\n\n\
-         Write only the assistant's next reply, following the skill. Output the \
-         reply text and nothing else.",
-        name = skill.name,
-        instructions = skill.instructions,
-        transcript = render_transcript(messages),
+        "Conversation so far (most recent last):\n{}\n\n\
+         Write only the assistant's next reply, following your system \
+         instructions. Output the reply text and nothing else.",
+        render_transcript(messages),
     )
+}
+
+/// The most recent user message in the transcript — used as the next-turn
+/// prompt when resuming a real harness session.
+fn latest_user_message(messages: &[Message]) -> Option<String> {
+    messages
+        .iter()
+        .rev()
+        .find(|m| m.role == Role::User)
+        .map(|m| m.content.clone())
 }
 
 fn build_user_prompt(persona: &str, messages: &[Message]) -> String {
@@ -600,6 +793,7 @@ fn parse_verdict(kind: JudgeKind, text: &str) -> Result<JudgeVerdict> {
     Ok(JudgeVerdict {
         value: verdict_value,
         reason,
+        usage: None,
     })
 }
 
@@ -628,16 +822,30 @@ mod tests {
     }
 
     #[test]
-    fn respond_prompt_inlines_skill_and_transcript() {
-        let skill = SkillRef {
-            name: "greeter",
-            dir: "/x",
-            instructions: "Greet by name.",
-        };
-        let prompt = build_respond_prompt(&skill, &[Message::user("Hi")]);
-        assert!(prompt.contains("greeter"));
-        assert!(prompt.contains("Greet by name."));
+    fn respond_no_session_inlines_transcript_but_not_skill() {
+        // The skill is passed via --system now, so the prompt the harness sees
+        // for respond carries only the transcript.
+        let messages = [
+            Message::user("Hi"),
+            Message::assistant("Hello"),
+            Message::user("Again?"),
+        ];
+        let prompt = render_transcript_for_respond(&messages);
         assert!(prompt.contains("User: Hi"));
+        assert!(prompt.contains("Assistant: Hello"));
+        assert!(prompt.contains("User: Again?"));
+        // The skill body must not leak here — it belongs in --system.
+        assert!(!prompt.contains("SKILL"));
+    }
+
+    #[test]
+    fn respond_with_session_sends_only_latest_user_message() {
+        let messages = [
+            Message::user("Hi"),
+            Message::assistant("Hello"),
+            Message::user("Again?"),
+        ];
+        assert_eq!(latest_user_message(&messages).as_deref(), Some("Again?"));
     }
 
     #[test]
@@ -669,5 +877,33 @@ mod tests {
         assert!(parse_verdict(JudgeKind::Boolean, "{\"value\": 3}").is_err());
         assert!(parse_verdict(JudgeKind::Numeric, "{\"value\": true}").is_err());
         assert!(parse_verdict(JudgeKind::Boolean, "no json").is_err());
+    }
+
+    #[test]
+    fn usage_accumulates_independently_per_field() {
+        let mut total = Usage::default();
+        total.add(&Usage {
+            input_tokens: Some(10),
+            output_tokens: None,
+            cost_usd: Some(0.01),
+        });
+        total.add(&Usage {
+            input_tokens: Some(5),
+            output_tokens: Some(3),
+            cost_usd: None,
+        });
+        assert_eq!(total.input_tokens, Some(15));
+        assert_eq!(total.output_tokens, Some(3));
+        assert!((total.cost_usd.unwrap() - 0.01).abs() < f64::EPSILON);
+        assert!(!total.is_empty());
+    }
+
+    #[test]
+    fn supports_resume_covers_known_harnesses() {
+        assert!(supports_resume("claude-code"));
+        assert!(supports_resume("opencode"));
+        assert!(supports_resume("cursor"));
+        assert!(!supports_resume("codex"));
+        assert!(!supports_resume("goose"));
     }
 }

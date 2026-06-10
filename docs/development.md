@@ -55,9 +55,12 @@ SKILLTEST_ONEHARNESS_BIN=/path/to/oneharness/target/debug/oneharness \
 
 It uses near-deterministic fixtures (`tests/fixtures/live/`) — a skill that always
 replies "pong", and a two-turn echo skill — so a real judge has an unambiguous
-verdict. It covers `respond`, boolean + numeric `judge`, and a simulated-user
-multi-turn run. Optional `SKILLTEST_LIVE_PLATFORM` (default `claude-code`) and
-`SKILLTEST_LIVE_MODEL` (default `haiku`) override the harness/model.
+verdict. It covers `respond` (via oneharness's `--system` for the skill and
+`--resume` for multi-turn against the real harness session), boolean + numeric
+`judge`, the simulated-user multi-turn loop, and asserts that the normalized
+`usage` totals flow into each `CaseRun` and the report `summary`. Optional
+`SKILLTEST_LIVE_PLATFORM` (default `claude-code`) and `SKILLTEST_LIVE_MODEL`
+(default `haiku`) override the harness/model.
 
 ## Releasing
 

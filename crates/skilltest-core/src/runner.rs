@@ -6,7 +6,7 @@ use crate::config::Config;
 use crate::conversation::{Message, Transcript};
 use crate::error::Result;
 use crate::eval::{Eval, JudgeValue};
-use crate::provider::{JudgeKind, JudgeQuery, Provider, SkillRef};
+use crate::provider::{JudgeKind, JudgeQuery, Provider, SkillRef, Usage};
 use crate::report::{CaseRun, Report};
 use crate::skill::{load_skill, SkillDefinition};
 use crate::testcase::TestCase;
@@ -61,8 +61,9 @@ impl<'a> Runner<'a> {
         platform: &str,
         model: &str,
     ) -> Result<CaseRun> {
-        let transcript = self.converse(case, skill, platform, model)?;
-        let evals = self.score(case, &transcript)?;
+        let mut totals = Usage::default();
+        let transcript = self.converse(case, skill, platform, model, &mut totals)?;
+        let evals = self.score(case, &transcript, &mut totals)?;
         let passed = evals.iter().all(|e| e.passed);
         Ok(CaseRun {
             case: case.name.clone(),
@@ -73,6 +74,7 @@ impl<'a> Runner<'a> {
             turns: transcript.assistant_turns(),
             evals,
             transcript,
+            usage: (!totals.is_empty()).then_some(totals),
         })
     }
 
@@ -84,6 +86,7 @@ impl<'a> Runner<'a> {
         skill: &SkillDefinition,
         platform: &str,
         model: &str,
+        totals: &mut Usage,
     ) -> Result<Transcript> {
         let dir = skill.dir.to_string_lossy().into_owned();
         let skill_ref = SkillRef {
@@ -97,13 +100,34 @@ impl<'a> Runner<'a> {
             .as_ref()
             .and_then(|u| u.max_turns)
             .unwrap_or(self.config.max_turns) as usize;
+        let resume_supported = self.provider.supports_resume(platform);
 
         let mut transcript = Transcript::from_input(&case.input);
+        // On harnesses that support it, thread the session_id from each
+        // respond into the next one so the harness keeps real state instead of
+        // being re-prompted with a stringified transcript.
+        let mut session: Option<String> = None;
 
         loop {
-            let turn = self
-                .provider
-                .respond(platform, model, &skill_ref, &transcript.messages)?;
+            let session_arg = if resume_supported {
+                session.as_deref()
+            } else {
+                None
+            };
+            let turn = self.provider.respond(
+                platform,
+                model,
+                &skill_ref,
+                &transcript.messages,
+                session_arg,
+            )?;
+            if let Some(u) = &turn.usage {
+                totals.add(u);
+            }
+            // Capture or refresh the session handle for the next turn.
+            if let Some(id) = turn.session_id {
+                session = Some(id);
+            }
             let skill_done = turn.done;
             transcript.push(Message::assistant(turn.message));
 
@@ -126,6 +150,9 @@ impl<'a> Runner<'a> {
                 let verdict = self
                     .provider
                     .judge(judge_model, &query, &transcript.messages)?;
+                if let Some(u) = &verdict.usage {
+                    totals.add(u);
+                }
                 if matches!(verdict.value, JudgeValue::Bool(true)) {
                     break;
                 }
@@ -135,6 +162,9 @@ impl<'a> Runner<'a> {
             let user_turn =
                 self.provider
                     .simulate_user(judge_model, &user.persona, &transcript.messages)?;
+            if let Some(u) = &user_turn.usage {
+                totals.add(u);
+            }
             let stop = user_turn.stop;
             transcript.push(Message::user(user_turn.message));
             if stop {
@@ -150,6 +180,7 @@ impl<'a> Runner<'a> {
         &self,
         case: &TestCase,
         transcript: &Transcript,
+        totals: &mut Usage,
     ) -> Result<Vec<crate::eval::EvalOutcome>> {
         let judge_model = self.config.effective_judge_model();
         let mut outcomes = Vec::with_capacity(case.evals.len());
@@ -174,6 +205,9 @@ impl<'a> Runner<'a> {
             let verdict = self
                 .provider
                 .judge(judge_model, &query, &transcript.messages)?;
+            if let Some(u) = &verdict.usage {
+                totals.add(u);
+            }
             outcomes.push(eval.outcome(&verdict.value, verdict.reason)?);
         }
         Ok(outcomes)
@@ -210,6 +244,7 @@ mod tests {
             _model: &str,
             _skill: &SkillRef<'_>,
             _messages: &[Message],
+            _session: Option<&str>,
         ) -> Result<AssistantTurn> {
             let i = self.calls.borrow().assistant;
             self.calls.borrow_mut().assistant += 1;
@@ -239,6 +274,7 @@ mod tests {
             Ok(JudgeVerdict {
                 value: v.value,
                 reason: v.reason.clone(),
+                usage: v.usage.clone(),
             })
         }
     }
@@ -276,11 +312,13 @@ mod tests {
             assistant: vec![AssistantTurn {
                 message: "Hello, Dr. Smith!".into(),
                 done: false,
+                ..Default::default()
             }],
             user: vec![],
             judge: vec![JudgeVerdict {
                 value: JudgeValue::Bool(true),
                 reason: "names her".into(),
+                usage: None,
             }],
             calls: RefCell::new(Calls::default()),
         };
@@ -307,10 +345,12 @@ mod tests {
             assistant: vec![AssistantTurn {
                 message: "Hi there".into(),
                 done: false,
+                ..Default::default()
             }],
             user: vec![UserTurn {
                 message: "continue".into(),
                 stop: false,
+                ..Default::default()
             }],
             // First judge call is the done_when check (true -> stop), second is
             // the eval.
@@ -318,10 +358,12 @@ mod tests {
                 JudgeVerdict {
                     value: JudgeValue::Bool(true),
                     reason: "done".into(),
+                    usage: None,
                 },
                 JudgeVerdict {
                     value: JudgeValue::Bool(true),
                     reason: "greeted".into(),
+                    usage: None,
                 },
             ],
             calls: RefCell::new(Calls::default()),
@@ -341,11 +383,13 @@ mod tests {
             assistant: vec![AssistantTurn {
                 message: "Hello".into(),
                 done: false,
+                ..Default::default()
             }],
             user: vec![],
             judge: vec![JudgeVerdict {
                 value: JudgeValue::Bool(false),
                 reason: "no name".into(),
+                usage: None,
             }],
             calls: RefCell::new(Calls::default()),
         };
@@ -364,11 +408,13 @@ mod tests {
             assistant: vec![AssistantTurn {
                 message: "Hello".into(),
                 done: false,
+                ..Default::default()
             }],
             user: vec![],
             judge: vec![JudgeVerdict {
                 value: JudgeValue::Bool(true),
                 reason: String::new(),
+                usage: None,
             }],
             calls: RefCell::new(Calls::default()),
         };

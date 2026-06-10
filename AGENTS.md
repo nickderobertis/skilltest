@@ -53,18 +53,25 @@ locally, install them once (see `docs/development.md`).
 `skilltest` never talks to a model directly. The `Provider` trait
 (`provider.rs`) has two real backends; see [`docs/protocol.md`](docs/protocol.md).
 
-- **`OneharnessProvider` (default).**
-  [`oneharness`](https://github.com/nickderobertis/oneharness) is a stateless
-  prompt→text CLI (`oneharness run --harness H --model M --prompt-file -`) with
-  no skill/judge/user/session concept. So this provider *builds the prompts* —
-  inlining the skill + conversation for `respond`, framing a persona for `user`,
-  and asking for a strict JSON verdict for `judge` — runs `oneharness`, and
-  parses `results[0].text`. Evals and the simulated user run on a fixed
-  `judge_harness`, independent of the harness under test. Verdict JSON is parsed
-  tolerantly (real models wrap it in prose/fences) and type-checked.
+- **`OneharnessProvider` (default).** Targets
+  [`oneharness`](https://github.com/nickderobertis/oneharness) **v0.2.0+** and
+  uses four of its normalized features directly so skilltest can stop string-
+  munging: `--system <skill instructions>` carries the skill as a real system
+  prompt; `--resume <session_id>` continues a real harness session for the
+  multi-turn loop on harnesses where `supports_resume` is true (claude-code,
+  opencode, cursor today — others fall back to inlining the transcript);
+  `results[*].usage` is aggregated into the report (`{input_tokens,
+  output_tokens, cost_usd}`); and `results[*].failure_kind` (`auth` /
+  `rate_limit` / `model_not_found` / `quota`) is surfaced through `Error::Provider
+  { kind }` so the CLI gives a pointed hint. Evals and the simulated user run
+  on a fixed `judge_harness`, independent of the harness under test. Verdict
+  JSON is parsed tolerantly (real models wrap it in prose/fences) and
+  type-checked.
 - **`CommandProvider`.** A small JSON-lines protocol (one request object on
   stdin, one response on stdout, per op) backing the bundled
-  `skilltest-fake-provider` and any custom provider.
+  `skilltest-fake-provider` and any custom provider. Custom providers may
+  optionally emit `usage` and `session_id` on `respond` to participate in cost
+  reporting and stateful multi-turn.
 
 The fake provider is why the whole pipeline is testable without a live model: it
 implements the protocol deterministically, so the default e2e suites exercise the
