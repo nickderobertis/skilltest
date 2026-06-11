@@ -77,6 +77,15 @@ jobs:
           codex --version
           claude --version
 
+      # codex does not pick up OPENAI_API_KEY from the env for its API calls; it
+      # reads ~/.codex/auth.json. `login --with-api-key` (key on stdin) writes
+      # that, switching codex to API-key auth instead of the ChatGPT/websocket
+      # path that 401s without an interactive login.
+      - name: Authenticate codex with the API key
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: printenv OPENAI_API_KEY | codex login --with-api-key
+
       - name: Live e2e against the real codex CLI
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
