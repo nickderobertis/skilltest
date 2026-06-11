@@ -483,14 +483,18 @@ impl OneharnessProvider {
     fn run(&self, args: &RunArgs<'_>) -> Result<RunOutcome> {
         let timeout = self.timeout_secs.to_string();
         let mut cmd = Command::new(&self.bin);
+        // Intentionally no `--output-format` override: oneharness already requests
+        // each harness's *default* format (json for claude-code/opencode,
+        // stream-json for cursor, text for codex/goose/qwen/crush/copilot) and
+        // extracts the reply accordingly. Forcing `json` everywhere broke the
+        // text-native harnesses — oneharness would json-extract their plain-text
+        // reply and find nothing ("harness produced no extractable text").
         cmd.args([
             "run",
             "--harness",
             args.harness,
             "--model",
             args.model,
-            "--output-format",
-            "json",
             "--compact",
             "--timeout",
             &timeout,

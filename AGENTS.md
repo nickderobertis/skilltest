@@ -87,12 +87,13 @@ and JSON output — everything except the non-deterministic model. The
 `OneharnessProvider` path is proven separately by the opt-in live tests
 (`crates/skilltest-cli/tests/live.rs`, the deep claude-code suite) plus the
 generic per-harness smoke (`scripts/e2e-harness.sh`), which run against real
-oneharness + a real harness and are never in the gate. Caveat worth knowing:
-skilltest carries the skill via `--system`, and **oneharness v0.2.0 only maps
-that to a real system prompt for claude-code** — other harnesses receive it as a
-positional arg they reject, so claude-code is the only live-green harness today.
-`docs/e2e.md` holds the full matrix, the secrets flow (`gh-secrets.json`), and
-the runbook for adding a harness.
+oneharness + a real harness and are never in the gate. skilltest carries the
+skill via `--system`; **oneharness v0.2.1+** delivers that to every harness (a
+native flag for claude-code/goose, prepended to the prompt otherwise), so the
+live-green matrix today is **claude-code, codex, and goose**. opencode and the
+rest are still skipped (loudly) pending oneharness extraction work or missing
+credentials. `docs/e2e.md` holds the full matrix, the secrets flow
+(`gh-secrets.json`), and the runbook for adding a harness.
 
 ## Invariants (non-negotiable)
 

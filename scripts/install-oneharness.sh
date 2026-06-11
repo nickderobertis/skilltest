@@ -17,9 +17,11 @@
 
 set -euo pipefail
 
-# Pinned to the version skilltest's OneharnessProvider targets (oneharness v0.2.0+
-# normalized signals). Bump here when skilltest adopts a newer oneharness.
-default_version="v0.2.0"
+# Pinned to the version skilltest's OneharnessProvider targets. v0.2.1 is the
+# first release that delivers `--system` to every harness (so codex/goose can be
+# driven, not just claude-code) and fixes the codex bypass flags. Bump here when
+# skilltest adopts a newer oneharness.
+default_version="v0.2.1"
 version="${1:-$default_version}"
 repo="nickderobertis/oneharness"
 dest="${ONEHARNESS_INSTALL_DIR:-$HOME/.local/bin}"
