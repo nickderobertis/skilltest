@@ -89,12 +89,14 @@ and JSON output — everything except the non-deterministic model. The
 generic per-harness smoke (`scripts/e2e-harness.sh`), which run against real
 oneharness + a real harness and are never in the gate. skilltest carries the
 skill via `--system`; **oneharness v0.2.1+** delivers that to every harness (a
-native flag for claude-code/goose, prepended to the prompt otherwise). Combined
-with two skilltest-side provider rules — fall back to a harness's **raw stdout**
-when oneharness can't extract `text` (OpenCode's nested JSONL), and **omit
-`--model`** when it is unspecified so the harness uses its own default/env model —
-the **entire matrix is live-green and in CI: claude-code, codex, goose, opencode,
-cursor, crush, qwen, copilot.** Each has a per-harness workflow
+native flag for claude-code/goose, prepended to the prompt otherwise) and
+**v0.2.37+** extracts every harness's reply text natively (OpenCode's nested JSONL
+included, via `text_source: json:opencode-parts`). Combined with two skilltest-
+side provider rules — **omit `--model`** when it is unspecified so the harness uses
+its own default/env model, and fall back to a harness's **raw stdout** as
+defense-in-depth for oneharness's "text may be null" contract (no harness relies on
+it today) — the **entire matrix is live-green and in CI: claude-code, codex, goose,
+opencode, cursor, crush, qwen, copilot.** Each has a per-harness workflow
 (`.github/workflows/e2e-<id>.yml`); a harness is only added once validated, else
 it stays a loud skip. `docs/e2e.md` holds the full matrix (models, per-harness
 delivery/extraction, the qwen gpt-5 gotcha), the secrets flow (`gh-secrets.json`),

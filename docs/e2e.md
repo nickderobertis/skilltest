@@ -50,7 +50,7 @@ check also needs `CLAUDE_CODE_OAUTH_TOKEN`, regardless of the harness under test
 
 skilltest delivers the skill as a system prompt (`--system`). What a harness can
 do therefore depends on whether the pinned `oneharness` can carry that to the
-model and whether we hold a credential. As of **oneharness v0.2.5**, the entire
+model and whether we hold a credential. As of **oneharness v0.2.37**, the entire
 matrix is **green** — every harness skilltest knows about is validated and runs
 in CI:
 
@@ -59,7 +59,7 @@ in CI:
 | claude-code  | `CLAUDE_CODE_OAUTH_TOKEN` ✅ | `haiku`                        | **green** — in CI | native `--append-system-prompt`; json `result` |
 | codex        | `OPENAI_API_KEY` ✅          | `gpt-5-mini`                   | **green** — in CI | prepended to prompt; raw text |
 | goose        | `OPENAI_API_KEY` ✅          | env `GOOSE_MODEL=gpt-5-mini`   | **green** — in CI | native `--system`; raw text |
-| opencode     | `ANTHROPIC_API_KEY` ✅       | `anthropic/claude-haiku-4-5`   | **green** — in CI | prepended to prompt; **raw-stdout fallback** (JSONL) |
+| opencode     | `ANTHROPIC_API_KEY` ✅       | `anthropic/claude-haiku-4-5`   | **green** — in CI | prepended to prompt; json `opencode-parts` (JSONL) |
 | cursor       | `CURSOR_API_KEY` ✅          | CLI default                    | **green** — in CI | prepended to prompt; stream-json `result` |
 | crush        | `ANTHROPIC_API_KEY` ✅       | CLI default (Anthropic)        | **green** — in CI | prepended to prompt; raw text |
 | qwen         | `OPENAI_API_KEY` ✅          | `gpt-4o-mini` (OpenAI-compat)  | **green** — in CI | prepended to prompt; raw text |
@@ -86,12 +86,14 @@ Two layers had to line up to make the whole matrix green:
    - The provider no longer forces `--output-format json`; each harness uses its
      oneharness default format (forcing json made oneharness json-extract the
      plain-text reply of codex/goose and find nothing).
-   - **Raw-stdout fallback.** oneharness extracts the reply into `text` on a
-     best-effort basis and leaves it null when a harness's output shape defeats
-     extraction — OpenCode emits JSONL with the reply nested in a `part`. skilltest
-     now falls back to the raw stdout (where the reply still lives) instead of
-     erroring, matching oneharness's documented contract. This is what makes
-     opencode scorable without an upstream extraction change.
+   - **Raw-stdout fallback (defense-in-depth).** oneharness extracts the reply
+     into `text` on a best-effort basis and, per its contract, may leave it null
+     when a harness's output shape defeats extraction; skilltest falls back to the
+     raw stdout (where the reply still lives) instead of erroring. No harness in
+     the matrix relies on this today — OpenCode's JSONL once did, but **oneharness
+     v0.2.37** reconstructs it natively (`text_source: json:opencode-parts`), so
+     the transcript now carries clean text. The fallback stays in place because the
+     "text may be null" contract holds for any future harness.
    - **Empty model means "use the harness default."** cursor/crush/copilot pick a
      sensible default and qwen reads `OPENAI_MODEL`, so skilltest omits `--model`
      when it is unspecified rather than forwarding a broken empty flag.
@@ -99,12 +101,11 @@ Two layers had to line up to make the whole matrix green:
    One harness-specific gotcha: **qwen** speaks an OpenAI-compatible API but its
    client sends `max_tokens`, which the **gpt-5 family rejects** (they require
    `max_completion_tokens`). The e2e points qwen at `gpt-4o-mini`; gpt-5-mini 400s.
+   (qwen's `--yolo` startup banner no longer litters stderr — oneharness v0.2.37
+   sets `QWEN_CODE_SUPPRESS_YOLO_WARNING=1` as a per-harness default.)
 
-The only rough edge left is cosmetic: opencode's transcript is its raw JSONL
-rather than a clean extracted message. A proper opencode text-extraction in
-oneharness (it already lifts opencode's usage/session signals) would tidy that
-up; the smoke passes today because the judge and the assertion both find the reply
-inside the JSONL.
+Every harness now returns a clean extracted reply, so transcripts and the judge
+see the message itself rather than any harness's wrapper noise.
 
 ## Adding a harness
 
