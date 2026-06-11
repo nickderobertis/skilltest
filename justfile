@@ -78,7 +78,8 @@ upgrade:
 # `oneharness`; install it first with `just install-oneharness`. See docs/e2e.md.
 
 # Install the prebuilt oneharness the live e2e drives (verifies the checksum).
-install-oneharness version="v0.2.0":
+# v0.2.1 is the first release that drives codex/goose (not just claude-code).
+install-oneharness version="v0.2.1":
     @bash scripts/install-oneharness.sh {{version}}
 
 # Deep live suite against real oneharness + claude-code (needs CLAUDE_CODE_OAUTH_TOKEN
