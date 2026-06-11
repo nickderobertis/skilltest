@@ -1,0 +1,86 @@
+name: E2E (Qwen)
+
+# Live end-to-end check that drives the real `qwen` (Qwen Code) CLI through
+# oneharness via the built skilltest binary, scored by the fixed claude-code judge.
+# Needs network and two secrets: OPENAI_API_KEY (Qwen speaks an OpenAI-compatible
+# API) and CLAUDE_CODE_OAUTH_TOKEN (the judge). scripts/e2e-lib.sh points Qwen at
+# OpenAI with OPENAI_BASE_URL + OPENAI_MODEL=gpt-4o-mini (the gpt-5 family rejects
+# qwen-code's `max_tokens`). Qwen has no system flag, so the skill is prepended to
+# the prompt. See docs/e2e.md.
+#
+# Security: gated to the canonical repo and non-fork PRs (defense in depth around
+# the secrets).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-qwen-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  live:
+    name: qwen live e2e
+    if: >-
+      github.repository == 'nickderobertis/skilltest' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify the required secrets are present
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          if [ -z "${OPENAI_API_KEY:-}" ]; then
+            echo "::error::OPENAI_API_KEY is not set (Qwen's OpenAI-compatible auth). Sync it: gh-secrets manifest sync, or gh secret set OPENAI_API_KEY --repo ${{ github.repository }}"
+            exit 1
+          fi
+          if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+            echo "::error::CLAUDE_CODE_OAUTH_TOKEN is not set (the fixed claude-code judge needs it)."
+            exit 1
+          fi
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install just
+        uses: extractions/setup-just@v2
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install oneharness (drives the live check)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          just install-oneharness
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Install the qwen CLI (harness under test) and claude (judge)
+        run: |
+          npm install -g @qwen-code/qwen-code @anthropic-ai/claude-code
+          qwen --version
+          claude --version
+
+      - name: Live e2e against the real qwen CLI
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: just test-harness qwen

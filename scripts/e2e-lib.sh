@@ -61,11 +61,13 @@ e2e_skilltest_bin() {
 #
 # Why H_DRIVABLE exists: skilltest passes the skill as `--system`, and a harness
 # is only drivable when the *pinned* oneharness can carry that to the model.
-# oneharness >= v0.2.1 delivers `--system` to claude-code (native), goose
-# (native), and codex (prepended to the prompt); opencode still can't be scored
-# (oneharness doesn't extract its text event, and a prepended skill can be refused
-# as a policy override). Flip H_DRIVABLE to 1 (and drop H_BLOCKED) for a harness
-# once the pinned oneharness can drive it. See docs/e2e.md.
+# oneharness >= v0.2.1 delivers `--system` to every harness (native flag for
+# claude-code/goose; prepended to the prompt for codex/opencode/cursor/crush/qwen/
+# copilot). Combined with skilltest's raw-stdout fallback (provider.rs) for
+# harnesses whose reply oneharness can't extract (opencode's nested JSONL), the
+# whole matrix is drivable where we hold a credential. Flip H_DRIVABLE to 1 (and
+# drop H_BLOCKED) for a harness once the pinned oneharness can drive it; leave it
+# 0 with a precise H_BLOCKED reason otherwise. See docs/e2e.md.
 e2e_harness_config() {
     local id="$1"
     H_EXTRA_ENV=""; H_BLOCKED=""
@@ -88,15 +90,48 @@ e2e_harness_config() {
             H_EXTRA_ENV="GOOSE_PROVIDER=openai GOOSE_MODEL=${SKILLTEST_E2E_MODEL:-gpt-5-mini}"
             H_DRIVABLE=1 ;;
         opencode)
-            # Still not green: oneharness does not extract opencode 1.17.x's `text`
-            # event, and opencode has no system flag, so the prepended skill lands
-            # as a user message its default agent may refuse as a policy override.
+            # OpenCode emits JSONL whose reply is nested in a `part`, so oneharness
+            # leaves `text` null; skilltest falls back to the raw stdout (which
+            # carries the reply), so the smoke is scorable. Needs a fully-qualified
+            # provider/model id; anthropic/claude-haiku-4-5 matches oneharness's
+            # own validated recipe (and we hold ANTHROPIC_API_KEY).
             H_PLATFORM="opencode"; H_BIN="opencode"
-            H_MODEL="${SKILLTEST_E2E_MODEL:-openai/gpt-5-mini}"
-            H_AUTH_ENV="OPENAI_API_KEY"; H_DRIVABLE=0
-            H_BLOCKED="oneharness $(_e2e_oh_version) does not extract opencode's text event, and the prepended skill (opencode has no system flag) can be refused as a policy override" ;;
+            H_MODEL="${SKILLTEST_E2E_MODEL:-anthropic/claude-haiku-4-5}"
+            H_AUTH_ENV="ANTHROPIC_API_KEY"; H_DRIVABLE=1 ;;
+        cursor)
+            # Cursor CLI (cursor-agent) emits stream-json; oneharness extracts the
+            # terminal `result` event. The skill has no native system flag, so it
+            # is prepended to the prompt.
+            H_PLATFORM="cursor"; H_BIN="cursor-agent"
+            H_MODEL="${SKILLTEST_E2E_MODEL:-}"
+            H_AUTH_ENV="CURSOR_API_KEY"; H_DRIVABLE=1 ;;
+        crush)
+            # Crush `run -q` prints plain text; oneharness extracts the trimmed
+            # stdout. Backed by Anthropic here (we hold ANTHROPIC_API_KEY); the
+            # skill is prepended to the prompt.
+            H_PLATFORM="crush"; H_BIN="crush"
+            H_MODEL="${SKILLTEST_E2E_MODEL:-}"
+            H_AUTH_ENV="ANTHROPIC_API_KEY"; H_DRIVABLE=1 ;;
+        qwen)
+            # Qwen Code speaks an OpenAI-compatible API. Point it at OpenAI with
+            # OPENAI_BASE_URL + OPENAI_MODEL (our OPENAI_API_KEY is a real OpenAI
+            # key); the skill is prepended to the prompt.
+            H_PLATFORM="qwen"; H_BIN="qwen"
+            H_MODEL="${SKILLTEST_E2E_MODEL:-}"
+            # gpt-4o-mini, not gpt-5-mini: qwen-code's OpenAI client sends
+            # `max_tokens`, which the gpt-5 family rejects (it requires
+            # `max_completion_tokens`).
+            H_AUTH_ENV="OPENAI_API_KEY"
+            H_EXTRA_ENV="OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1} OPENAI_MODEL=${QWEN_E2E_MODEL:-gpt-4o-mini}"
+            H_DRIVABLE=1 ;;
+        copilot)
+            # GitHub Copilot CLI. Auth via COPILOT_GITHUB_TOKEN (a token with the
+            # "Copilot Requests" permission); the skill is prepended to the prompt.
+            H_PLATFORM="copilot"; H_BIN="copilot"
+            H_MODEL="${SKILLTEST_E2E_MODEL:-}"
+            H_AUTH_ENV="COPILOT_GITHUB_TOKEN"; H_DRIVABLE=1 ;;
         *)
-            fail "unknown harness id '$id' (known: claude-code, opencode, goose, codex)" ;;
+            fail "unknown harness id '$id' (known: claude-code, codex, goose, opencode, cursor, crush, qwen, copilot)" ;;
     esac
 }
 

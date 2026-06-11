@@ -36,7 +36,7 @@ must prove a skill still behaves.
 | `scripts/e2e-lib.sh`, `scripts/e2e-harness.sh` | Live, per-harness e2e: drive the built CLI against a *real* harness through oneharness. See `docs/e2e.md`. |
 | `gh-secrets.json` | Declarative secret manifest, synced from Bitwarden to the GitHub repo + a gitignored local `.env` via `gh-secrets manifest sync`. |
 | `.github/workflows/release.yml` | Tag-triggered cross-platform binary build + checksums. |
-| `.github/workflows/e2e-claude.yml` | Live claude-code e2e, gated to the canonical repo and non-fork PRs. |
+| `.github/workflows/e2e-<id>.yml` | One live per-harness e2e each (claude, codex, goose, opencode, cursor, crush, qwen, copilot), gated to the canonical repo and non-fork PRs. |
 
 ## Command surface
 
@@ -89,11 +89,16 @@ and JSON output — everything except the non-deterministic model. The
 generic per-harness smoke (`scripts/e2e-harness.sh`), which run against real
 oneharness + a real harness and are never in the gate. skilltest carries the
 skill via `--system`; **oneharness v0.2.1+** delivers that to every harness (a
-native flag for claude-code/goose, prepended to the prompt otherwise), so the
-live-green matrix today is **claude-code, codex, and goose**. opencode and the
-rest are still skipped (loudly) pending oneharness extraction work or missing
-credentials. `docs/e2e.md` holds the full matrix, the secrets flow
-(`gh-secrets.json`), and the runbook for adding a harness.
+native flag for claude-code/goose, prepended to the prompt otherwise). Combined
+with two skilltest-side provider rules — fall back to a harness's **raw stdout**
+when oneharness can't extract `text` (OpenCode's nested JSONL), and **omit
+`--model`** when it is unspecified so the harness uses its own default/env model —
+the **entire matrix is live-green and in CI: claude-code, codex, goose, opencode,
+cursor, crush, qwen, copilot.** Each has a per-harness workflow
+(`.github/workflows/e2e-<id>.yml`); a harness is only added once validated, else
+it stays a loud skip. `docs/e2e.md` holds the full matrix (models, per-harness
+delivery/extraction, the qwen gpt-5 gotcha), the secrets flow (`gh-secrets.json`),
+and the runbook for adding a harness.
 
 ## Invariants (non-negotiable)
 

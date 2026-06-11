@@ -1,0 +1,85 @@
+name: E2E (Crush)
+
+# Live end-to-end check that drives the real `crush` CLI through oneharness via the
+# built skilltest binary, scored by the fixed claude-code judge. Needs network and
+# two secrets: ANTHROPIC_API_KEY (Crush's provider key here) and
+# CLAUDE_CODE_OAUTH_TOKEN (the judge). Crush has no system flag, so the skill is
+# prepended to the prompt; `crush run -q` prints plain text, which oneharness takes
+# as the reply. See docs/e2e.md.
+#
+# Security: gated to the canonical repo and non-fork PRs (defense in depth around
+# the secrets).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-crush-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  live:
+    name: crush live e2e
+    if: >-
+      github.repository == 'nickderobertis/skilltest' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify the required secrets are present
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+            echo "::error::ANTHROPIC_API_KEY is not set (Crush's provider key). Sync it: gh-secrets manifest sync, or gh secret set ANTHROPIC_API_KEY --repo ${{ github.repository }}"
+            exit 1
+          fi
+          if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+            echo "::error::CLAUDE_CODE_OAUTH_TOKEN is not set (the fixed claude-code judge needs it)."
+            exit 1
+          fi
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install just
+        uses: extractions/setup-just@v2
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install oneharness (drives the live check)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          just install-oneharness
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Install the crush CLI (harness under test) and claude (judge)
+        run: |
+          npm install -g @charmland/crush @anthropic-ai/claude-code
+          crush --version
+          claude --version
+
+      - name: Live e2e against the real crush CLI
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: just test-harness crush

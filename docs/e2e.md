@@ -40,55 +40,71 @@ to both the GitHub repo and a local (gitignored) `.env` with:
 gh-secrets manifest sync
 ```
 
-Currently synced: `CLAUDE_CODE_OAUTH_TOKEN` (claude-code) and `OPENAI_API_KEY`
-(OpenAI-backed harnesses). The fixed claude-code judge means every harness check
-also needs `CLAUDE_CODE_OAUTH_TOKEN`.
+Currently synced: `CLAUDE_CODE_OAUTH_TOKEN` (claude-code, and the fixed judge),
+`OPENAI_API_KEY` (codex, goose, qwen), `ANTHROPIC_API_KEY` (opencode, crush),
+`CURSOR_API_KEY` (cursor), and `COPILOT_GITHUB_TOKEN` (copilot, sourced from the
+Bitwarden `GH_TOKEN` item). The fixed claude-code judge means **every** harness
+check also needs `CLAUDE_CODE_OAUTH_TOKEN`, regardless of the harness under test.
 
 ## Harness matrix
 
 skilltest delivers the skill as a system prompt (`--system`). What a harness can
 do therefore depends on whether the pinned `oneharness` can carry that to the
-model. As of **oneharness v0.2.1** (which delivers `--system` to every harness —
-see below):
+model and whether we hold a credential. As of **oneharness v0.2.5**, the entire
+matrix is **green** — every harness skilltest knows about is validated and runs
+in CI:
 
-| Harness      | Secret (have?)              | Status | Note |
-| ------------ | --------------------------- | ------ | ---- |
-| claude-code  | `CLAUDE_CODE_OAUTH_TOKEN` ✅ | **green** — validated, in CI | native `--append-system-prompt` |
-| codex        | `OPENAI_API_KEY` ✅          | **green** — validated, in CI | skill prepended to the prompt |
-| goose        | `OPENAI_API_KEY` ✅          | **green** — validated, in CI | native `--system` flag |
-| opencode     | `OPENAI_API_KEY` ✅          | blocked | oneharness doesn't extract opencode 1.17.x's `text` event, and the prepended skill (no system flag) can be refused as a policy override |
-| cursor       | `CURSOR_API_KEY` ❌          | needs secret | — |
-| crush        | `ANTHROPIC_API_KEY` ❌       | needs secret | — |
-| copilot      | `COPILOT_GITHUB_TOKEN` ❌    | needs secret | — |
-| qwen         | `OPENAI_API_KEY` + base url ✅/❌ | needs secret/config | — |
+| Harness      | Secret (have?)              | Model (e2e default)            | Status | Skill delivery / reply extraction |
+| ------------ | --------------------------- | ------------------------------ | ------ | --------------------------------- |
+| claude-code  | `CLAUDE_CODE_OAUTH_TOKEN` ✅ | `haiku`                        | **green** — in CI | native `--append-system-prompt`; json `result` |
+| codex        | `OPENAI_API_KEY` ✅          | `gpt-5-mini`                   | **green** — in CI | prepended to prompt; raw text |
+| goose        | `OPENAI_API_KEY` ✅          | env `GOOSE_MODEL=gpt-5-mini`   | **green** — in CI | native `--system`; raw text |
+| opencode     | `ANTHROPIC_API_KEY` ✅       | `anthropic/claude-haiku-4-5`   | **green** — in CI | prepended to prompt; **raw-stdout fallback** (JSONL) |
+| cursor       | `CURSOR_API_KEY` ✅          | CLI default                    | **green** — in CI | prepended to prompt; stream-json `result` |
+| crush        | `ANTHROPIC_API_KEY` ✅       | CLI default (Anthropic)        | **green** — in CI | prepended to prompt; raw text |
+| qwen         | `OPENAI_API_KEY` ✅          | `gpt-4o-mini` (OpenAI-compat)  | **green** — in CI | prepended to prompt; raw text |
+| copilot      | `COPILOT_GITHUB_TOKEN` ✅    | CLI default                    | **green** — in CI | prepended to prompt; raw text |
 
-`scripts/e2e-harness.sh` **skips** a not-yet-green harness with its exact reason
-(`H_DRIVABLE=0` + `H_BLOCKED` in `scripts/e2e-lib.sh`) rather than reporting a
-false pass.
+`scripts/e2e-harness.sh` still **skips** (never falsely passes) when a harness
+binary, `oneharness`, or a secret is missing — and a future not-yet-drivable
+harness should be added with `H_DRIVABLE=0` + a precise `H_BLOCKED` reason in
+`scripts/e2e-lib.sh`.
 
-### How the skill reaches each harness (oneharness v0.2.1)
+### How the skill reaches each harness, and how the reply comes back
 
-v0.2.1 ([oneharness#12](https://github.com/nickderobertis/oneharness/pull/12))
-fixed two gaps that had limited the live matrix to claude-code:
+Two layers had to line up to make the whole matrix green:
 
-1. **`--system` reached only claude-code.** Every other adapter dropped the
-   system text, so the skill was silently ignored. Now it maps to a native flag
-   where one exists (claude-code's `--append-system-prompt`, **goose's
-   `--system`**) and is **prepended to the prompt** otherwise (codex, opencode,
-   qwen, crush, copilot, cursor), so the instructions always reach the model.
-2. **codex `-a never`.** Replaced with `--dangerously-bypass-approvals-and-sandbox`
-   (codex-cli ≥ 0.135 removed `-a`).
+1. **`--system` delivery (oneharness v0.2.1,
+   [#12](https://github.com/nickderobertis/oneharness/pull/12)).** It maps to a
+   native flag where one exists (claude-code's `--append-system-prompt`, goose's
+   `--system`) and is **prepended to the prompt** otherwise (codex, opencode,
+   cursor, crush, qwen, copilot), so the skill always reaches the model. The same
+   release replaced codex's removed `-a never` with
+   `--dangerously-bypass-approvals-and-sandbox` (codex-cli ≥ 0.135).
 
-A third, skilltest-side fix was needed: the provider used to force
-`--output-format json` on every harness, which made oneharness try to JSON-extract
-the **plain-text** reply of codex/goose and find nothing. It now lets each harness
-use its oneharness default format.
+2. **Reply extraction + model selection (skilltest-side).** Three provider fixes:
+   - The provider no longer forces `--output-format json`; each harness uses its
+     oneharness default format (forcing json made oneharness json-extract the
+     plain-text reply of codex/goose and find nothing).
+   - **Raw-stdout fallback.** oneharness extracts the reply into `text` on a
+     best-effort basis and leaves it null when a harness's output shape defeats
+     extraction — OpenCode emits JSONL with the reply nested in a `part`. skilltest
+     now falls back to the raw stdout (where the reply still lives) instead of
+     erroring, matching oneharness's documented contract. This is what makes
+     opencode scorable without an upstream extraction change.
+   - **Empty model means "use the harness default."** cursor/crush/copilot pick a
+     sensible default and qwen reads `OPENAI_MODEL`, so skilltest omits `--model`
+     when it is unspecified rather than forwarding a broken empty flag.
 
-**opencode** remains blocked on two things, both downstream of it having no
-system-prompt flag: oneharness doesn't yet extract opencode 1.17.x's `text` event,
-and a skill prepended as a *user* message can trip opencode's default agent into
-refusing it as a "policy override." A true system-prompt path for opencode (and
-the matching extraction) would unblock it.
+   One harness-specific gotcha: **qwen** speaks an OpenAI-compatible API but its
+   client sends `max_tokens`, which the **gpt-5 family rejects** (they require
+   `max_completion_tokens`). The e2e points qwen at `gpt-4o-mini`; gpt-5-mini 400s.
+
+The only rough edge left is cosmetic: opencode's transcript is its raw JSONL
+rather than a clean extracted message. A proper opencode text-extraction in
+oneharness (it already lifts opencode's usage/session signals) would tidy that
+up; the smoke passes today because the judge and the assertion both find the reply
+inside the JSONL.
 
 ## Adding a harness
 
