@@ -434,6 +434,12 @@ struct OhResult {
     status: String,
     #[serde(default)]
     text: Option<String>,
+    /// Raw harness stdout. oneharness's `text` extraction is best-effort; when a
+    /// harness's output shape defeats it (e.g. OpenCode emits JSONL with the
+    /// reply nested in a `part`), `text` is null and the reply survives only
+    /// here. We fall back to it rather than hard-failing.
+    #[serde(default)]
+    stdout: String,
     #[serde(default)]
     stderr: String,
     #[serde(default)]
@@ -466,6 +472,17 @@ struct RunOutcome {
     usage: Option<Usage>,
 }
 
+/// Choose the harness's reply text: oneharness's extracted `text` when non-empty,
+/// otherwise its raw stdout. oneharness extracts `text` on a best-effort basis
+/// and, per its contract, leaves it null when a harness's output shape defeats
+/// extraction (OpenCode, for instance, emits JSONL with the reply nested in a
+/// `part`) — the reply still survives in stdout. Returns `None` only when both
+/// are empty, the one case that is a genuine "the harness said nothing" error.
+fn select_reply_text(text: Option<String>, stdout: &str) -> Option<String> {
+    text.filter(|t| !t.trim().is_empty())
+        .or_else(|| (!stdout.trim().is_empty()).then(|| stdout.to_string()))
+}
+
 impl OneharnessProvider {
     /// Build a provider from its configuration.
     #[must_use]
@@ -483,20 +500,30 @@ impl OneharnessProvider {
     fn run(&self, args: &RunArgs<'_>) -> Result<RunOutcome> {
         let timeout = self.timeout_secs.to_string();
         let mut cmd = Command::new(&self.bin);
+        // Intentionally no `--output-format` override: oneharness already requests
+        // each harness's *default* format (json for claude-code/opencode,
+        // stream-json for cursor, text for codex/goose/qwen/crush/copilot) and
+        // extracts the reply accordingly. Forcing `json` everywhere broke the
+        // text-native harnesses — oneharness would json-extract their plain-text
+        // reply and find nothing ("harness produced no extractable text").
         cmd.args([
             "run",
             "--harness",
             args.harness,
-            "--model",
-            args.model,
-            "--output-format",
-            "json",
             "--compact",
             "--timeout",
             &timeout,
             "--prompt-file",
             "-",
         ]);
+        // An empty model means "unspecified" — omit `--model` so the harness uses
+        // its own default (cursor/crush/copilot) or an env-selected model (qwen
+        // via OPENAI_MODEL, goose via GOOSE_MODEL), exactly as oneharness's own
+        // smoke scripts do. Forwarding `--model ""` would push a broken empty
+        // model flag to the harness CLI.
+        if !args.model.is_empty() {
+            cmd.args(["--model", args.model]);
+        }
         if let Some(system) = args.system {
             cmd.args(["--system", system]);
         }
@@ -563,15 +590,16 @@ impl OneharnessProvider {
             });
         }
 
-        let text = result
-            .text
-            .filter(|t| !t.trim().is_empty())
-            .ok_or_else(|| {
-                Error::provider(
-                    format!("oneharness:{}", args.harness),
-                    "harness produced no extractable text",
-                )
-            })?;
+        // Prefer oneharness's extracted `text`; fall back to raw stdout when a
+        // harness's output shape defeats extraction (oneharness's documented
+        // contract — see OhResult::stdout). Only a run that produced *neither* is
+        // a real error.
+        let text = select_reply_text(result.text, &result.stdout).ok_or_else(|| {
+            Error::provider(
+                format!("oneharness:{}", args.harness),
+                "harness produced neither extractable text nor stdout",
+            )
+        })?;
         Ok(RunOutcome {
             text,
             session_id: result.session_id,
@@ -896,6 +924,28 @@ mod tests {
         assert_eq!(total.output_tokens, Some(3));
         assert!((total.cost_usd.unwrap() - 0.01).abs() < f64::EPSILON);
         assert!(!total.is_empty());
+    }
+
+    #[test]
+    fn reply_text_prefers_extracted_then_falls_back_to_stdout() {
+        // Extracted text wins when present.
+        assert_eq!(
+            select_reply_text(Some("clean reply".into()), "raw noise"),
+            Some("clean reply".into())
+        );
+        // Null/blank extracted text falls back to raw stdout (the OpenCode case:
+        // oneharness couldn't extract, but the reply is in stdout).
+        assert_eq!(
+            select_reply_text(None, "{\"type\":\"text\",\"part\":{\"text\":\"pong\"}}"),
+            Some("{\"type\":\"text\",\"part\":{\"text\":\"pong\"}}".into())
+        );
+        assert_eq!(
+            select_reply_text(Some("   ".into()), "fallback"),
+            Some("fallback".into())
+        );
+        // Neither present is the only real error.
+        assert_eq!(select_reply_text(None, "   \n"), None);
+        assert_eq!(select_reply_text(Some(String::new()), ""), None);
     }
 
     #[test]

@@ -19,3 +19,10 @@ plugins/vitest/dist/
 # Editors / OS
 .DS_Store
 *.swp
+
+# Secrets: never commit these. `gh-secrets manifest sync` writes the real harness
+# auth tokens into .env (and tracks push state in .gh-secrets-state.json). The
+# manifest (gh-secrets.json) is committed; the resolved values are not.
+.env
+.env.local
+.gh-secrets-state.json

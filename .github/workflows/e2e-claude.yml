@@ -1,0 +1,88 @@
+name: E2E (Claude Code)
+
+# Live end-to-end check that drives the *real* claude CLI through oneharness via
+# the built skilltest binary, then asserts on the JSON report. Unlike ci.yml this
+# needs network, a model call, and the CLAUDE_CODE_OAUTH_TOKEN secret, so it lives
+# in its own workflow gated to trusted contexts only.
+#
+# Why only claude-code today: skilltest delivers the skill as a system prompt
+# (`--system`), and oneharness v0.2.0 only maps that to a real system prompt for
+# claude-code — for other harnesses it forwards the text as a positional arg the
+# harness CLI rejects. See docs/e2e.md for the full matrix and how to add a
+# harness (its secret is already synced via gh-secrets.json for OpenAI-backed
+# ones; the workflow is a copy of this file).
+#
+# Security: a secret in a public repo must never be reachable by untrusted code.
+# GitHub already withholds secrets from fork pull requests; the job `if` below is
+# defense in depth — it runs only in the canonical repo and never for a PR whose
+# head is a fork, so this workflow can be edited in a fork PR without exposing the
+# token.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-claude-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  live:
+    name: claude-code live e2e
+    if: >-
+      github.repository == 'nickderobertis/skilltest' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify the auth token is present
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+            echo "::error::CLAUDE_CODE_OAUTH_TOKEN is not set. Sync it with 'gh-secrets manifest sync' (it lives in Bitwarden), or set it directly: gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo ${{ github.repository }}"
+            exit 1
+          fi
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install just
+        uses: extractions/setup-just@v2
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # The live check drives claude through oneharness; install the pinned
+      # prebuilt and put it on PATH for the run step.
+      - name: Install oneharness (drives the live check)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          just install-oneharness
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Install Claude Code CLI
+        run: |
+          npm install -g @anthropic-ai/claude-code
+          claude --version
+
+      - name: Live e2e against the real claude CLI
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: just test-live

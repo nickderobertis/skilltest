@@ -1,0 +1,90 @@
+name: E2E (Cursor)
+
+# Live end-to-end check that drives the real Cursor CLI (`cursor-agent`) through
+# oneharness via the built skilltest binary, scored by the fixed claude-code judge.
+# Needs network and two secrets: CURSOR_API_KEY (the harness under test, read from
+# the environment) and CLAUDE_CODE_OAUTH_TOKEN (the judge). Cursor has no system
+# flag, so the skill is prepended to the prompt; it emits stream-json, from which
+# oneharness extracts the terminal `result` event. See docs/e2e.md.
+#
+# Security: gated to the canonical repo and non-fork PRs (defense in depth around
+# the secrets).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-cursor-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  live:
+    name: cursor live e2e
+    if: >-
+      github.repository == 'nickderobertis/skilltest' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify the required secrets are present
+        env:
+          CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          if [ -z "${CURSOR_API_KEY:-}" ]; then
+            echo "::error::CURSOR_API_KEY is not set (cursor-agent auth). Sync it: gh-secrets manifest sync, or gh secret set CURSOR_API_KEY --repo ${{ github.repository }}"
+            exit 1
+          fi
+          if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+            echo "::error::CLAUDE_CODE_OAUTH_TOKEN is not set (the fixed claude-code judge needs it)."
+            exit 1
+          fi
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install just
+        uses: extractions/setup-just@v2
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install oneharness (drives the live check)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          just install-oneharness
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Install the Cursor CLI (harness under test)
+        run: |
+          curl https://cursor.com/install -fsS | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/cursor-agent" --version
+
+      - name: Install the claude CLI (the fixed judge)
+        run: |
+          npm install -g @anthropic-ai/claude-code
+          claude --version
+
+      - name: Live e2e against the real cursor-agent CLI
+        env:
+          CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: just test-harness cursor
