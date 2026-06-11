@@ -5,8 +5,8 @@ name: E2E (OpenCode)
 # and two secrets: ANTHROPIC_API_KEY (the model opencode runs,
 # anthropic/claude-haiku-4-5) and CLAUDE_CODE_OAUTH_TOKEN (the judge). OpenCode has
 # no system flag, so the skill is prepended to the prompt; it emits JSONL whose
-# reply oneharness leaves unextracted, so skilltest falls back to the raw stdout.
-# See docs/e2e.md.
+# reply oneharness v0.2.37 reconstructs natively (text_source json:opencode-parts),
+# so the transcript carries clean text. See docs/e2e.md.
 #
 # Security: gated to the canonical repo and non-fork PRs (defense in depth around
 # the secrets).

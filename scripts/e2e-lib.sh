@@ -63,11 +63,12 @@ e2e_skilltest_bin() {
 # is only drivable when the *pinned* oneharness can carry that to the model.
 # oneharness >= v0.2.1 delivers `--system` to every harness (native flag for
 # claude-code/goose; prepended to the prompt for codex/opencode/cursor/crush/qwen/
-# copilot). Combined with skilltest's raw-stdout fallback (provider.rs) for
-# harnesses whose reply oneharness can't extract (opencode's nested JSONL), the
-# whole matrix is drivable where we hold a credential. Flip H_DRIVABLE to 1 (and
-# drop H_BLOCKED) for a harness once the pinned oneharness can drive it; leave it
-# 0 with a precise H_BLOCKED reason otherwise. See docs/e2e.md.
+# copilot) and >= v0.2.37 extracts every harness's reply text (OpenCode's nested
+# JSONL included), so the whole matrix is drivable where we hold a credential.
+# skilltest's raw-stdout fallback (provider.rs) stays as defense-in-depth for the
+# contract's "text may be null" case. Flip H_DRIVABLE to 1 (and drop H_BLOCKED)
+# for a harness once the pinned oneharness can drive it; leave it 0 with a precise
+# H_BLOCKED reason otherwise. See docs/e2e.md.
 e2e_harness_config() {
     local id="$1"
     H_EXTRA_ENV=""; H_BLOCKED=""
@@ -90,9 +91,10 @@ e2e_harness_config() {
             H_EXTRA_ENV="GOOSE_PROVIDER=openai GOOSE_MODEL=${SKILLTEST_E2E_MODEL:-gpt-5-mini}"
             H_DRIVABLE=1 ;;
         opencode)
-            # OpenCode emits JSONL whose reply is nested in a `part`, so oneharness
-            # leaves `text` null; skilltest falls back to the raw stdout (which
-            # carries the reply), so the smoke is scorable. Needs a fully-qualified
+            # OpenCode emits JSONL whose reply is nested in a `part`; oneharness
+            # v0.2.37 reconstructs it (text_source json:opencode-parts), so the
+            # transcript carries clean text (skilltest's raw-stdout fallback is no
+            # longer exercised here, only defense-in-depth). Needs a fully-qualified
             # provider/model id; anthropic/claude-haiku-4-5 matches oneharness's
             # own validated recipe (and we hold ANTHROPIC_API_KEY).
             H_PLATFORM="opencode"; H_BIN="opencode"

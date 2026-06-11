@@ -434,10 +434,12 @@ struct OhResult {
     status: String,
     #[serde(default)]
     text: Option<String>,
-    /// Raw harness stdout. oneharness's `text` extraction is best-effort; when a
-    /// harness's output shape defeats it (e.g. OpenCode emits JSONL with the
-    /// reply nested in a `part`), `text` is null and the reply survives only
-    /// here. We fall back to it rather than hard-failing.
+    /// Raw harness stdout. oneharness's `text` extraction is best-effort and may
+    /// be null when a harness's output shape defeats it, with stdout as the
+    /// documented fallback; we honor that rather than hard-failing. No harness in
+    /// the live matrix relies on it today (OpenCode's JSONL — the case that
+    /// motivated this — is extracted natively as of oneharness v0.2.37), but the
+    /// contract holds for any harness, so the fallback stays as defense-in-depth.
     #[serde(default)]
     stdout: String,
     #[serde(default)]
@@ -474,10 +476,11 @@ struct RunOutcome {
 
 /// Choose the harness's reply text: oneharness's extracted `text` when non-empty,
 /// otherwise its raw stdout. oneharness extracts `text` on a best-effort basis
-/// and, per its contract, leaves it null when a harness's output shape defeats
-/// extraction (OpenCode, for instance, emits JSONL with the reply nested in a
-/// `part`) — the reply still survives in stdout. Returns `None` only when both
-/// are empty, the one case that is a genuine "the harness said nothing" error.
+/// and, per its contract, may leave it null when a harness's output shape defeats
+/// extraction — the reply still survives in stdout. (OpenCode's JSONL once hit
+/// this; oneharness v0.2.37 extracts it natively, so the fallback is now
+/// defense-in-depth.) Returns `None` only when both are empty, the one case that
+/// is a genuine "the harness said nothing" error.
 fn select_reply_text(text: Option<String>, stdout: &str) -> Option<String> {
     text.filter(|t| !t.trim().is_empty())
         .or_else(|| (!stdout.trim().is_empty()).then(|| stdout.to_string()))
@@ -933,8 +936,8 @@ mod tests {
             select_reply_text(Some("clean reply".into()), "raw noise"),
             Some("clean reply".into())
         );
-        // Null/blank extracted text falls back to raw stdout (the OpenCode case:
-        // oneharness couldn't extract, but the reply is in stdout).
+        // Null/blank extracted text falls back to raw stdout (the contract's
+        // escape hatch when oneharness can't extract but the reply is in stdout).
         assert_eq!(
             select_reply_text(None, "{\"type\":\"text\",\"part\":{\"text\":\"pong\"}}"),
             Some("{\"type\":\"text\",\"part\":{\"text\":\"pong\"}}".into())

@@ -19,10 +19,12 @@ set -euo pipefail
 
 # Pinned to the version skilltest's OneharnessProvider targets. v0.2.1 first
 # delivered `--system` to every harness (so codex/goose could be driven, not just
-# claude-code) and fixed the codex bypass flags; v0.2.5 is the current release
-# (its per-harness adapters are unchanged since v0.2.1 — the bump just tracks the
-# tip). Bump here when skilltest adopts a newer oneharness.
-default_version="v0.2.5"
+# claude-code) and fixed the codex bypass flags; v0.2.37 extracts OpenCode's final
+# text from its JSONL (`text_source: json:opencode-parts`, so transcripts carry
+# clean text instead of raw stdout) and injects qwen's
+# `QWEN_CODE_SUPPRESS_YOLO_WARNING=1` by default. Bump here when skilltest adopts a
+# newer oneharness.
+default_version="v0.2.37"
 version="${1:-$default_version}"
 repo="nickderobertis/oneharness"
 dest="${ONEHARNESS_INSTALL_DIR:-$HOME/.local/bin}"
