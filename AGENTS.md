@@ -30,9 +30,13 @@ must prove a skill still behaves.
 | `plugins/pytest` | `skilltest-pytest`: Python API + pytest collection, wrapping the CLI's JSON contract. |
 | `plugins/vitest` | `@skilltest/vitest`: TypeScript API + vitest helpers, wrapping the same JSON contract. |
 | `tests/fixtures` | Sample skills and YAML test cases shared by the e2e suites. |
-| `docs/` | The provider protocol and config/test-case schema reference. |
+| `docs/` | The provider protocol, config/test-case schema, and live-e2e (`docs/e2e.md`) references. |
 | `scripts/install.sh` | Installs a prebuilt `skilltest` from a GitHub Release (verifies checksum). |
+| `scripts/install-oneharness.sh` | Installs the prebuilt `oneharness` the live e2e drives (verifies checksum). |
+| `scripts/e2e-lib.sh`, `scripts/e2e-harness.sh` | Live, per-harness e2e: drive the built CLI against a *real* harness through oneharness. See `docs/e2e.md`. |
+| `gh-secrets.json` | Declarative secret manifest, synced from Bitwarden to the GitHub repo + a gitignored local `.env` via `gh-secrets manifest sync`. |
 | `.github/workflows/release.yml` | Tag-triggered cross-platform binary build + checksums. |
+| `.github/workflows/e2e-claude.yml` | Live claude-code e2e, gated to the canonical repo and non-fork PRs. |
 
 ## Command surface
 
@@ -44,6 +48,9 @@ Use the `just` recipes; do not hand-roll equivalent commands.
 - `just test` / `just lint` / `just format` / `just typecheck` — individual gate steps.
 - `just test-e2e` — the cross-language end-to-end suites (Rust + both plugins).
 - `just upgrade` — upgrade dependencies across all three stacks, then re-run `just check`.
+- `just install-oneharness` / `just test-live` / `just test-harness <id>` — the
+  **opt-in live e2e** against a real harness (never in `just check`; needs
+  `oneharness`, a harness binary, a synced secret, and network). See `docs/e2e.md`.
 
 `just` needs `cargo`, `uv`, and `node`/`pnpm` on `PATH`. CI installs all three;
 locally, install them once (see `docs/development.md`).
@@ -78,8 +85,14 @@ implements the protocol deterministically, so the default e2e suites exercise th
 real argument parsing, YAML loading, conversation loop, eval logic, exit codes,
 and JSON output — everything except the non-deterministic model. The
 `OneharnessProvider` path is proven separately by the opt-in live tests
-(`crates/skilltest-cli/tests/live.rs`), which run against real oneharness + a
-real harness and are never in the gate.
+(`crates/skilltest-cli/tests/live.rs`, the deep claude-code suite) plus the
+generic per-harness smoke (`scripts/e2e-harness.sh`), which run against real
+oneharness + a real harness and are never in the gate. Caveat worth knowing:
+skilltest carries the skill via `--system`, and **oneharness v0.2.0 only maps
+that to a real system prompt for claude-code** — other harnesses receive it as a
+positional arg they reject, so claude-code is the only live-green harness today.
+`docs/e2e.md` holds the full matrix, the secrets flow (`gh-secrets.json`), and
+the runbook for adding a harness.
 
 ## Invariants (non-negotiable)
 

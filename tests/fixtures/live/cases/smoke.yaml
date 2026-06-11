@@ -1,0 +1,14 @@
+# Harness-agnostic live smoke case. Unlike pong.yaml (tuned for a harness that
+# emits ONLY the model's words), this tolerates harnesses that wrap the reply in
+# a session banner or other framing (e.g. Goose prints "starting session …"
+# before the answer). The single boolean eval therefore checks that the reply
+# *includes* the word, not that it is the only word — so one fixture passes on
+# every real harness skilltest can drive. The strict pong.yaml stays as the deep
+# claude-code assertion in live.rs.
+name: live_smoke
+skill: ../skills/pong
+input: "ping"
+evals:
+  - type: boolean
+    name: replied-pong
+    criterion: "the assistant's reply includes the word 'pong' (case-insensitive), even if the harness wraps it in a session banner, tool output, or other framing text"
