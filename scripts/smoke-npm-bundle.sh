@@ -10,14 +10,27 @@
 # Assumes `pnpm install` has run at the repo root (workspace deps available).
 # Quiet on success; on failure the vitest output is the diagnosis.
 set -euo pipefail
+
+# Absolutize the binary args against the caller's cwd *before* we chdir, because
+# the smoke runs the plugin from a temp consumer project — a relative provider
+# path would not resolve from there.
+abspath() { case "$1" in /*) printf '%s\n' "$1" ;; *) printf '%s/%s\n' "$PWD" "$1" ;; esac; }
+
+target="${1:-}"
+cli_arg="${2:-}"
+provider_arg="${3:-}"
+if [ -z "$target" ] || [ -z "$cli_arg" ] || [ -z "$provider_arg" ]; then
+  echo "error: usage: smoke-npm-bundle.sh <rust-target> <cli-binary> <fake-provider>" >&2
+  exit 2
+fi
+cli="$(abspath "$cli_arg")"
+provider="$(abspath "$provider_arg")"
+
 cd "$(dirname "$0")/.."
 repo="$PWD"
 
-target="${1:-}"
-cli="${2:-}"
-provider="${3:-}"
-if [ -z "$target" ] || [ ! -f "$cli" ] || [ ! -f "$provider" ]; then
-  echo "error: usage: smoke-npm-bundle.sh <rust-target> <cli-binary> <fake-provider>" >&2
+if [ ! -f "$cli" ] || [ ! -f "$provider" ]; then
+  echo "error: cli or provider not found: $cli / $provider" >&2
   exit 2
 fi
 if command -v skilltest >/dev/null 2>&1; then
