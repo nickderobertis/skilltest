@@ -5,10 +5,10 @@
   "implicitDependencies": ["skilltest-core"],
   "targets": {
     "build": {
-      "command": "cargo build -p skilltest-cli"
+      "command": "cargo build -p skilltest-cli --features fake-provider"
     },
     "lint": {
-      "command": "cargo clippy -p skilltest-cli --all-targets -- -D warnings"
+      "command": "cargo clippy -p skilltest-cli --all-targets --features fake-provider -- -D warnings"
     },
     "format-check": {
       "command": "cargo fmt -p skilltest-cli --check"

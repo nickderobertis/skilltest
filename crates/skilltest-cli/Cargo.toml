@@ -11,16 +11,25 @@ authors.workspace = true
 [lints.clippy]
 all = { level = "deny", priority = -1 }
 
+[features]
+# Off by default so a published `cargo install skilltest-cli` ships only the
+# `skilltest` binary. The e2e suites (and `just build`/`lint`) enable it to build
+# the bundled reference provider; release builds use default features.
+fake-provider = []
+
 [[bin]]
 name = "skilltest"
 path = "src/main.rs"
 
 # A deterministic reference implementation of the provider protocol, used by the
 # e2e suite (and as living documentation of how to write a provider). Not a
-# production model — it never calls out to anything.
+# production model — it never calls out to anything. Gated behind the
+# `fake-provider` feature so it stays out of the default published install; its
+# source still ships as reference.
 [[bin]]
 name = "skilltest-fake-provider"
 path = "src/bin/fake_provider.rs"
+required-features = ["fake-provider"]
 
 [dependencies]
 skilltest-core = { workspace = true }

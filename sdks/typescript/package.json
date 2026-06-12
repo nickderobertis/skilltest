@@ -3,6 +3,14 @@
   "version": "0.1.0",
   "description": "TypeScript SDK for the skilltest CLI: run AI-skill tests and natural-language evals from TypeScript, with a typed report contract generated from the CLI's JSON Schemas.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nickderobertis/skilltest.git",
+    "directory": "sdks/typescript"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

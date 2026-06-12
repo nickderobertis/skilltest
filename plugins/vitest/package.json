@@ -3,6 +3,14 @@
   "version": "0.2.0",
   "description": "vitest integration for skilltest: register AI-skill test cases as vitest tests, built on @skilltest/sdk.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nickderobertis/skilltest.git",
+    "directory": "plugins/vitest"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
