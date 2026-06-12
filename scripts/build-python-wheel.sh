@@ -17,6 +17,10 @@ target="${1:-}"
 binary="${2:-}"
 outdir="${3:-$PWD/sdks/python/dist}"
 
+# Absolutize outdir: the wheel is built from a `cd sdks/python` subshell, so a
+# relative path would resolve against the wrong directory.
+case "$outdir" in /*) ;; *) outdir="$PWD/$outdir" ;; esac
+
 if [ -z "$target" ] || [ -z "$binary" ]; then
   echo "error: usage: build-python-wheel.sh <rust-target> <skilltest-binary> [out-dir]" >&2
   exit 2

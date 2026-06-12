@@ -16,6 +16,10 @@ cd "$(dirname "$0")/.."
 bindir="${1:-}"
 outdir="${2:-$PWD/sdks/python/dist}"
 
+# Absolutize outdir: the sdist/pure wheel is built from a `cd sdks/python`
+# subshell (as is each platform wheel), so a relative path would land nested.
+case "$outdir" in /*) ;; *) outdir="$PWD/$outdir" ;; esac
+
 if [ -z "$bindir" ] || [ ! -d "$bindir" ]; then
   echo "error: usage: build-python-dist.sh <binaries-dir> [out-dir]" >&2
   exit 2
