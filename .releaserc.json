@@ -61,6 +61,10 @@
           "plugins/pytest/pyproject.toml",
           "plugins/pytest/uv.lock",
           "sdks/typescript/package.json",
+          "sdks/typescript/platforms/cli-linux-x64/package.json",
+          "sdks/typescript/platforms/cli-linux-arm64/package.json",
+          "sdks/typescript/platforms/cli-darwin-x64/package.json",
+          "sdks/typescript/platforms/cli-darwin-arm64/package.json",
           "plugins/vitest/package.json",
           "pnpm-lock.yaml"
         ],
