@@ -22,6 +22,14 @@ fn default_timeout_secs() -> u64 {
     120
 }
 
+fn default_api_timeout_secs() -> u64 {
+    60
+}
+
+fn default_curl_bin() -> String {
+    "curl".to_string()
+}
+
 /// Settings for the default [`oneharness`](https://github.com/nickderobertis/oneharness)
 /// provider, which runs each prompt on a harness via `oneharness run`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -75,6 +83,56 @@ impl Default for ProviderConfig {
     }
 }
 
+/// Which model vendor's API the direct-API judge talks to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ApiVendor {
+    /// Anthropic Messages API (`POST /v1/messages`).
+    Anthropic,
+    /// OpenAI Chat Completions API (`POST /v1/chat/completions`).
+    Openai,
+}
+
+/// Settings for judging evals and the simulated user with a direct model API
+/// call instead of running them through a harness. This trades the harness's
+/// auth-portability for a single fast HTTP round trip per judge call (no
+/// agent-loop cold start), with normalized token usage surfaced into the report.
+///
+/// The judge *model* is the run's `judge_model` (it must be a valid API model
+/// id for the chosen `vendor`, e.g. `claude-opus-4-8` or `gpt-4o`); only the
+/// transport is configured here.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ApiJudgeConfig {
+    /// Which vendor's API to call.
+    pub vendor: ApiVendor,
+    /// Environment variable holding the API key. Defaults to `ANTHROPIC_API_KEY`
+    /// or `OPENAI_API_KEY` by vendor. The key is read at run time and never
+    /// stored in config.
+    #[serde(default)]
+    pub api_key_env: Option<String>,
+    /// Override the API endpoint (e.g. a proxy or an OpenAI-compatible gateway).
+    /// Defaults to the vendor's standard endpoint.
+    #[serde(default)]
+    pub base_url: Option<String>,
+    /// Per-call timeout in seconds, passed to `curl --max-time`.
+    #[serde(default = "default_api_timeout_secs")]
+    pub timeout_secs: u64,
+    /// The `curl` binary (resolved on `PATH`).
+    #[serde(default = "default_curl_bin")]
+    pub curl_bin: String,
+}
+
+/// How evals and the simulated user are judged, independent of the provider that
+/// runs the skill. Absent (the default) means the run's provider judges too
+/// (e.g. the oneharness `judge_harness`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum JudgeConfig {
+    /// Judge with a direct model API call (see [`ApiJudgeConfig`]).
+    Api(ApiJudgeConfig),
+}
+
 /// The full configuration for a run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -91,6 +149,11 @@ pub struct Config {
     pub judge_model: String,
     /// Default cap on assistant turns for multi-turn cases. A case may lower it.
     pub max_turns: u32,
+    /// Optional judge backend that overrides how evals and the simulated user are
+    /// scored, independent of the skill-running provider. When `None`, the
+    /// provider judges (e.g. the oneharness `judge_harness`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub judge: Option<JudgeConfig>,
 }
 
 impl Default for Config {
@@ -101,6 +164,7 @@ impl Default for Config {
             models: vec!["claude-opus-4-8".to_string()],
             judge_model: String::new(),
             max_turns: 8,
+            judge: None,
         }
     }
 }
@@ -246,6 +310,18 @@ impl Config {
                 "config `max_turns` must be at least 1".into(),
             ));
         }
+        if let Some(JudgeConfig::Api(api)) = &self.judge {
+            if api.timeout_secs == 0 {
+                return Err(Error::Invalid(
+                    "config `judge.timeout_secs` must be at least 1".into(),
+                ));
+            }
+            if api.curl_bin.trim().is_empty() {
+                return Err(Error::Invalid(
+                    "config `judge.curl_bin` must name the curl binary".into(),
+                ));
+            }
+        }
         Ok(())
     }
 }
@@ -329,5 +405,33 @@ mod tests {
         let mut config = Config::default();
         config.models.clear();
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn parses_api_judge_config() {
+        let yaml = "\
+provider:\n  kind: oneharness\njudge:\n  kind: api\n  vendor: anthropic\n  timeout_secs: 30\n";
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        let Some(JudgeConfig::Api(api)) = &config.judge else {
+            panic!("expected an api judge");
+        };
+        assert_eq!(api.vendor, ApiVendor::Anthropic);
+        assert_eq!(api.timeout_secs, 30);
+        // Unspecified fields fall back to defaults.
+        assert_eq!(api.curl_bin, "curl");
+        assert!(api.api_key_env.is_none());
+        config.validate().unwrap();
+    }
+
+    #[test]
+    fn api_judge_zero_timeout_is_invalid() {
+        let yaml = "judge:\n  kind: api\n  vendor: openai\n  timeout_secs: 0\n";
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn default_config_has_no_judge_override() {
+        assert!(Config::default().judge.is_none());
     }
 }
