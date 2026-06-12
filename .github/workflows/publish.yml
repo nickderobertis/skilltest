@@ -32,13 +32,19 @@
 
 name: publish
 
+# Tag push is the normal trigger; workflow_dispatch is a manual lever to (re)run
+# the publish for whatever version the manifests currently hold — e.g. to finish
+# a release whose tag run was lost, since publishing is idempotent (already-live
+# versions are skipped). Run it from the branch/tag carrying that version.
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 
 jobs:
-  # Build the CLI for each target on a native runner (no cross-compilation) and
-  # hand the binaries to the npm/PyPI jobs as workflow artifacts to bundle. This
+  # Build the CLI for each target on a native runner (x86_64-apple-darwin cross-
+  # compiles on the arm runner) and hand the binaries to the npm/PyPI jobs to
+  # bundle as workflow artifacts. This
   # mirrors release.yml's matrix; release.yml ships the GitHub-Release tarballs,
   # this feeds the registry packages.
   binaries:
