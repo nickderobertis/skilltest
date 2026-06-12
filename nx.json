@@ -1,0 +1,47 @@
+{
+  "$schema": "./node_modules/nx/schemas/nx-schema.json",
+  "affected": {
+    "defaultBase": "main"
+  },
+  "namedInputs": {
+    "default": ["{projectRoot}/**/*", "sharedGlobals"],
+    "sharedGlobals": [
+      "{workspaceRoot}/Cargo.toml",
+      "{workspaceRoot}/Cargo.lock",
+      "{workspaceRoot}/rustfmt.toml",
+      "{workspaceRoot}/deny.toml",
+      "{workspaceRoot}/nx.json"
+    ]
+  },
+  "targetDefaults": {
+    "build": {
+      "dependsOn": ["^build"],
+      "inputs": ["default"],
+      "cache": false
+    },
+    "lint": {
+      "inputs": ["default"],
+      "cache": true
+    },
+    "format-check": {
+      "inputs": ["default"],
+      "cache": true
+    },
+    "format": {
+      "cache": false
+    },
+    "typecheck": {
+      "inputs": ["default"],
+      "cache": true
+    },
+    "test": {
+      "inputs": ["default"],
+      "cache": true
+    },
+    "test-e2e": {
+      "dependsOn": ["^build"],
+      "inputs": ["default"],
+      "cache": true
+    }
+  }
+}

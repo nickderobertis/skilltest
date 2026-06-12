@@ -16,6 +16,10 @@ node_modules/
 plugins/vitest/dist/
 *.tsbuildinfo
 
+# Nx
+.nx/cache
+.nx/workspace-data
+
 # Editors / OS
 .DS_Store
 *.swp

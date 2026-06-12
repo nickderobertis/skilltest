@@ -1,76 +1,83 @@
 # Canonical command surface for skilltest (Rust core + pytest & vitest plugins).
 #
-# `just bootstrap` must work from a clean clone; `just check` is the full gate
-# (format, lint, type check, unit + e2e) and fails on any issue. Each recipe
-# fans out across the three stacks. Requires `cargo`, `uv`, and `pnpm` on PATH.
+# `just` is a thin wrapper over **nx**: each recipe drives the per-project targets
+# defined in the `project.json` files, and the dependency graph (core <- cli <-
+# {pytest, vitest}) lets nx build prerequisites and skip unaffected work.
+#
+# `just check` runs the gate over only the **affected** projects (vs the nx base,
+# `main`); `just check-all` forces every project. `just bootstrap` must work from
+# a clean clone. Requires `cargo` (+ `cargo-nextest`), `uv`, and `pnpm`/`node`.
 
-py := "plugins/pytest"
-ts := "plugins/vitest"
+nx := "pnpm exec nx"
 
 # List available recipes.
 default:
     @just --list
 
-# Set up the project from a clean clone: fetch toolchains + dependencies.
+# Set up the project from a clean clone: install nx + per-stack dependencies.
 bootstrap:
+    pnpm install
     cargo fetch
-    cd {{py}} && uv sync
-    cd {{ts}} && pnpm install
+    cd plugins/pytest && uv sync
+    cd plugins/vitest && pnpm install
 
-# Full quality gate: format check, lint, type check, unit tests, and e2e.
-# Fails on any issue (no warnings-only mode). e2e is part of the gate.
-check: format-check lint typecheck test test-e2e
+# Full quality gate over the affected projects: format, lint, type check, unit +
+# e2e. Fails on any issue (no warnings-only mode). Use `check-all` to force all.
+check:
+    {{nx}} affected -t format-check lint typecheck test test-e2e
     @echo "check: all gates passed"
 
-# Build the Rust artifacts (the CLI + the fake provider the plugins drive).
+# Same gate, but across every project regardless of what changed.
+check-all:
+    {{nx}} run-many -t format-check lint typecheck test test-e2e
+    @echo "check-all: all gates passed"
+
+# Build the artifacts for affected projects (Rust CLI + fake provider, TS dist).
 build:
-    cargo build
+    {{nx}} affected -t build
 
-# Fast unit tests: the Rust library/bin unit suites.
+# Fast unit tests (Rust library/bin suites) for affected projects.
 test:
-    cargo nextest run -E 'kind(lib) | kind(bin)'
+    {{nx}} affected -t test
 
-# End-to-end suites across all three stacks, driving the built CLI as users do.
-# The plugin suites shell out to the freshly built binaries, so build first.
-test-e2e: build
-    cargo nextest run -E 'kind(test)'
-    cd {{py}} && SKILLTEST_BIN="$PWD/../../target/debug/skilltest" SKILLTEST_PROVIDER="$PWD/../../target/debug/skilltest-fake-provider" uv run pytest
-    cd {{ts}} && SKILLTEST_BIN="$PWD/../../target/debug/skilltest" SKILLTEST_PROVIDER="$PWD/../../target/debug/skilltest-fake-provider" pnpm exec vitest run
+# End-to-end suites for affected projects, driving the built CLI as users do.
+# nx builds the CLI first via the project graph (plugins depend on skilltest-cli).
+test-e2e:
+    {{nx}} affected -t test-e2e
 
-# Lint the codebase; fail on findings.
+# Lint affected projects; fail on findings.
 lint:
-    cargo clippy --all-targets -- -D warnings
-    cd {{py}} && uv run ruff check .
-    cd {{ts}} && pnpm exec biome check .
+    {{nx}} affected -t lint
 
-# Verify formatting without writing changes.
+# Verify formatting of affected projects without writing changes.
 format-check:
-    cargo fmt --check
-    cd {{py}} && uv run ruff format --check .
-    cd {{ts}} && pnpm exec biome format .
+    {{nx}} affected -t format-check
 
-# Type check the typed stacks (Rust types are enforced by clippy/build).
+# Type check affected projects (Rust types are enforced by clippy/build).
 typecheck:
-    cd {{py}} && uv run ty check
-    cd {{ts}} && pnpm exec tsc -p tsconfig.json
+    {{nx}} affected -t typecheck
 
-# Format the codebase in place.
+# Format every project in place.
 format:
-    cargo fmt
-    cd {{py}} && uv run ruff format .
-    cd {{ts}} && pnpm exec biome check --write .
+    {{nx}} run-many -t format
+
+# Show the project graph (opens the interactive nx graph).
+graph:
+    {{nx}} graph
 
 # Security + license audit of the Rust dependency tree (not in the default gate;
 # run before publishing binaries). Requires `cargo-deny`.
 audit:
     cargo deny check
 
-# Upgrade dependencies across all three stacks, then re-run the full gate.
+# Upgrade dependencies across all stacks (nx + the three toolchains), then re-run
+# the full gate across every project.
 upgrade:
+    pnpm update --latest
     cargo update
-    cd {{py}} && uv lock --upgrade && uv sync
-    cd {{ts}} && pnpm update --latest
-    @just check
+    cd plugins/pytest && uv lock --upgrade && uv sync
+    cd plugins/vitest && pnpm update --latest
+    @just check-all
 
 # --- Live e2e against real harnesses (opt-in; never part of `just check`) ------
 # These make real model calls (money, network, non-determinism), so they are

@@ -1,0 +1,27 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "skilltest-cli",
+  "projectType": "application",
+  "implicitDependencies": ["skilltest-core"],
+  "targets": {
+    "build": {
+      "command": "cargo build -p skilltest-cli"
+    },
+    "lint": {
+      "command": "cargo clippy -p skilltest-cli --all-targets -- -D warnings"
+    },
+    "format-check": {
+      "command": "cargo fmt -p skilltest-cli --check"
+    },
+    "format": {
+      "command": "cargo fmt -p skilltest-cli"
+    },
+    "test": {
+      "command": "cargo nextest run -p skilltest-cli --no-tests=pass -E 'kind(lib) | kind(bin)'"
+    },
+    "test-e2e": {
+      "command": "cargo nextest run -p skilltest-cli --no-tests=pass -E 'kind(test)'",
+      "dependsOn": ["build"]
+    }
+  }
+}

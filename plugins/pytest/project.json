@@ -1,0 +1,43 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "skilltest-pytest",
+  "projectType": "library",
+  "implicitDependencies": ["skilltest-cli"],
+  "targets": {
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "uv run ruff check .",
+        "cwd": "{projectRoot}"
+      }
+    },
+    "format-check": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "uv run ruff format --check .",
+        "cwd": "{projectRoot}"
+      }
+    },
+    "format": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "uv run ruff format .",
+        "cwd": "{projectRoot}"
+      }
+    },
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "uv run ty check",
+        "cwd": "{projectRoot}"
+      }
+    },
+    "test-e2e": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "SKILLTEST_BIN=\"$PWD/../../target/debug/skilltest\" SKILLTEST_PROVIDER=\"$PWD/../../target/debug/skilltest-fake-provider\" uv run pytest",
+        "cwd": "{projectRoot}"
+      }
+    }
+  }
+}

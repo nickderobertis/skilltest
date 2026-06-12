@@ -3,6 +3,9 @@
     "allow": [
       "Bash(just bootstrap)",
       "Bash(just check)",
+      "Bash(just check-all)",
+      "Bash(just build)",
+      "Bash(just graph)",
       "Bash(just test)",
       "Bash(just test-e2e)",
       "Bash(just lint)",

@@ -1,0 +1,22 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "skilltest-core",
+  "projectType": "library",
+  "targets": {
+    "build": {
+      "command": "cargo build -p skilltest-core"
+    },
+    "lint": {
+      "command": "cargo clippy -p skilltest-core --all-targets -- -D warnings"
+    },
+    "format-check": {
+      "command": "cargo fmt -p skilltest-core --check"
+    },
+    "format": {
+      "command": "cargo fmt -p skilltest-core"
+    },
+    "test": {
+      "command": "cargo nextest run -p skilltest-core --no-tests=pass -E 'kind(lib)'"
+    }
+  }
+}

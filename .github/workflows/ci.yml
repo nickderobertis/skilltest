@@ -25,6 +25,9 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
+        with:
+          # nx affected diffs against a base ref; fetch history so it can.
+          fetch-depth: 0
 
       - name: Install just
         uses: extractions/setup-just@v2
@@ -55,10 +58,20 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-          cache-dependency-path: plugins/vitest/pnpm-lock.yaml
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            plugins/vitest/pnpm-lock.yaml
+
+      # Derive the base/head SHAs nx uses to compute the affected project set
+      # (last successful run on push, the PR base on pull_request).
+      - name: Derive nx affected SHAs
+        uses: nrwl/nx-set-shas@v4
 
       - name: Bootstrap
         run: just bootstrap
 
+      # On a PR, gate only the affected projects (vs the PR base); on push to
+      # main, nx-set-shas points at the last green commit. `check-all` (run-many)
+      # remains available locally to force every project.
       - name: Check
         run: just check
