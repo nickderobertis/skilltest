@@ -1,13 +1,13 @@
 [project]
 name = "skilltest-pytest"
-version = "0.2.0"
+version = "0.1.0"
 description = "pytest integration for skilltest: auto-collect *.skilltest.yaml cases as pytest tests, built on skilltest-sdk."
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
 authors = [{ name = "Nick DeRobertis" }]
 dependencies = [
-    "skilltest-sdk>=0.1.0,<0.2",
+    "skilltest-sdk==0.1.0",
     "pytest>=8",
 ]
 

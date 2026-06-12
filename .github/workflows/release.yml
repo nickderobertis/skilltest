@@ -18,6 +18,9 @@ jobs:
   upload:
     name: ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
+    # Skip the one-time v0.0.0 baseline-seed tag (it exists only to anchor the first
+    # semantic-release version at 0.1.0; it must not build or publish anything).
+    if: github.ref_name != 'v0.0.0'
     strategy:
       fail-fast: false
       matrix:
