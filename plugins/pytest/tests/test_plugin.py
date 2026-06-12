@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from skilltest_pytest import run_skill
+from skilltest_pytest import describe_failures, run_skill
 
 SKILL_MD = """\
 ---
@@ -37,7 +37,7 @@ def test_sdk_api_is_reexported_and_works(cases: Path) -> None:
     # One dependency is enough for a pytest suite: the SDK's code-level API is
     # available straight from skilltest_pytest.
     report = run_skill(cases / "greet_pass.yaml")
-    assert report.passed, report.describe_failures()
+    assert report.passed, describe_failures(report)
 
 
 def test_collected_case_passes(pytester: pytest.Pytester) -> None:

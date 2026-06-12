@@ -7,8 +7,12 @@ from pathlib import Path
 import pytest
 
 from skilltest_sdk import (
+    NumericDetail,
     SkilltestProviderError,
     SkilltestUsageError,
+    assistant_text,
+    describe_failures,
+    failed_evals,
     run_skill,
     validate_skill,
 )
@@ -16,25 +20,25 @@ from skilltest_sdk import (
 
 def test_happy_path_passes_and_exposes_transcript(cases: Path) -> None:
     report = run_skill(cases / "greet_pass.yaml")
-    assert report.passed, report.describe_failures()
+    assert report.passed, describe_failures(report)
     assert report.summary.runs == 1
     # Deterministic mix-in check on top of the natural-language evals.
-    assert "Dr. Smith" in report.runs[0].transcript.assistant_text()
+    assert "Dr. Smith" in assistant_text(report.runs[0].transcript)
 
 
 def test_numeric_eval_detail_is_typed(cases: Path) -> None:
     report = run_skill(cases / "greet_numeric.yaml")
     assert report.passed
     detail = report.runs[0].evals[0].detail
-    assert detail.kind == "numeric"
+    assert isinstance(detail, NumericDetail)
     assert detail.value >= detail.threshold
 
 
 def test_failing_case_is_reported_not_raised(cases: Path) -> None:
     report = run_skill(cases / "greet_fail.yaml")
     assert not report.passed
-    assert report.runs[0].failed_evals()
-    assert "greet_fail" in report.describe_failures()
+    assert failed_evals(report.runs[0])
+    assert "greet_fail" in describe_failures(report)
 
 
 def test_multi_turn_runs_to_done_condition(cases: Path) -> None:

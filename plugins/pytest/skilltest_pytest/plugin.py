@@ -16,7 +16,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
-from skilltest_sdk import Report, run_skill
+from skilltest_sdk import Report, describe_failures, run_skill
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -54,7 +54,7 @@ class SkilltestFailure(Exception):
     """Raised when a collected case fails, carrying the report for reporting."""
 
     def __init__(self, report: Report) -> None:
-        super().__init__(report.describe_failures())
+        super().__init__(describe_failures(report))
         self.report = report
 
 

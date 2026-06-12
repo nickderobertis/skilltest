@@ -9,9 +9,9 @@ suite only needs one dependency:
 
     def test_greeter():
         report = run_skill("cases/greet.yaml")
-        assert report.passed, report.describe_failures()
+        assert report.passed, describe_failures(report)
         # Mix in a deterministic check on the transcript:
-        assert "Dr. Smith" in report.runs[0].transcript.assistant_text()
+        assert "Dr. Smith" in assistant_text(report.runs[0].transcript)
 """
 
 from __future__ import annotations
@@ -21,7 +21,6 @@ from skilltest_sdk import (
     ENV_PROVIDER,
     BooleanDetail,
     CaseRun,
-    Comparator,
     EvalOutcome,
     Message,
     NumericDetail,
@@ -34,6 +33,10 @@ from skilltest_sdk import (
     Usage,
     ValidationFinding,
     ValidationReport,
+    assistant_text,
+    describe_failures,
+    failed_evals,
+    failed_runs,
     run_skill,
     validate_skill,
 )
@@ -45,7 +48,6 @@ __all__ = [
     "ENV_PROVIDER",
     "BooleanDetail",
     "CaseRun",
-    "Comparator",
     "EvalOutcome",
     "Message",
     "NumericDetail",
@@ -59,6 +61,10 @@ __all__ = [
     "Usage",
     "ValidationFinding",
     "ValidationReport",
+    "assistant_text",
+    "describe_failures",
+    "failed_evals",
+    "failed_runs",
     "run_skill",
     "validate_skill",
 ]

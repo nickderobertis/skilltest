@@ -269,9 +269,12 @@ fn cmd_init(args: &InitArgs) -> Result<ExitCode> {
 }
 
 fn cmd_schema(args: &SchemaArgs) -> Result<ExitCode> {
+    // Draft-07 on purpose: it is the dialect the SDK model generators
+    // (datamodel-code-generator, json-schema-to-typescript) digest reliably.
+    let generator = schemars::generate::SchemaSettings::draft07().into_generator();
     let schema = match args.target {
-        SchemaTarget::Report => schemars::schema_for!(Report),
-        SchemaTarget::Validation => schemars::schema_for!(ValidationReport),
+        SchemaTarget::Report => generator.into_root_schema_for::<Report>(),
+        SchemaTarget::Validation => generator.into_root_schema_for::<ValidationReport>(),
     };
     let json = serde_json::to_string_pretty(&schema)
         .map_err(|e| Error::Invalid(format!("could not serialize schema: {e}")))?;

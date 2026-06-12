@@ -2,12 +2,13 @@
  * `@skilltest/sdk` — the TypeScript SDK for the `skilltest` CLI.
  *
  * A thin, typed wrapper around the CLI and nothing else: run test cases,
- * validate skills, and get back Zod-parsed objects mirroring the stable
- * `--format json` contract. Test frameworks build on this — `@skilltest/vitest`
+ * validate skills, and get back objects typed by declarations **generated from
+ * the CLI's own JSON Schemas** (`just gen-contract`), so the types cannot
+ * drift from the binary. Test frameworks build on this — `@skilltest/vitest`
  * adds the vitest helpers on top.
  *
  * ```ts
- * import { runSkill, assistantText } from "@skilltest/sdk";
+ * import { runSkill, assistantText, describeFailures } from "@skilltest/sdk";
  *
  * const report = await runSkill("cases/greet.yaml");
  * if (!report.passed) throw new Error(describeFailures(report));
@@ -19,31 +20,19 @@ export {
   SkilltestProviderError,
   SkilltestUsageError,
 } from "./errors.js";
-export {
-  assistantText,
-  describeFailures,
-  BooleanDetailSchema,
-  CaseRunSchema,
-  ComparatorSchema,
-  EvalDetailSchema,
-  EvalOutcomeSchema,
-  MessageSchema,
-  NumericDetailSchema,
-  ReportSchema,
-  SummarySchema,
-  TranscriptSchema,
-  UsageSchema,
-  ValidationFindingSchema,
-  ValidationReportSchema,
-  type CaseRun,
-  type Comparator,
-  type EvalDetail,
-  type EvalOutcome,
-  type Message,
-  type Report,
-  type Summary,
-  type Transcript,
-  type Usage,
-  type ValidationFinding,
-  type ValidationReport,
-} from "./schema.js";
+export { assistantText, describeFailures } from "./helpers.js";
+export type {
+  BooleanDetail,
+  CaseRun,
+  Comparator,
+  EvalDetail,
+  EvalOutcome,
+  Message,
+  NumericDetail,
+  Report,
+  Role,
+  Summary,
+  Transcript,
+  Usage,
+} from "./generated/report.js";
+export type { ValidationFinding, ValidationReport } from "./generated/validation.js";

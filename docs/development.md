@@ -76,7 +76,7 @@ verdict. It covers `respond` (via oneharness's `--system` for the skill and
    end-to-end after the first release.
 
 The `--format json` output of `run` and `validate` is a stable contract the
-SDKs parse; changing its shape means changing the Rust types, running
-`just gen-schemas`, updating the Pydantic models and Zod schemas until the SDK
-contract tests pass, and bumping versions (see "Output contract" in
+SDKs parse; the SDK models are generated from the Rust types, so changing the
+shape means changing the types, running `just gen-contract`, committing the
+regenerated artifacts, and bumping versions (see "Output contract" in
 [schema.md](schema.md)).

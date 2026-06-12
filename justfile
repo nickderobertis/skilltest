@@ -20,21 +20,25 @@ bootstrap:
     cd {{py-pytest}} && uv sync
     pnpm install
 
-# Full quality gate: format check, lint, type check, unit tests, and e2e.
-# Fails on any issue (no warnings-only mode). e2e is part of the gate.
-check: format-check lint typecheck test test-e2e
+# Full quality gate: format check, lint, type check, contract drift, unit
+# tests, and e2e. Fails on any issue (no warnings-only mode).
+check: format-check lint typecheck contract-check test test-e2e
     @echo "check: all gates passed"
 
 # Build the Rust artifacts (the CLI + the fake provider the SDKs drive).
 build:
     cargo build
 
-# Regenerate the golden JSON Schemas in schemas/ from the Rust report types.
-# The Rust e2e suite fails when these drift; the SDK contract tests compare
-# their models against them. Run this whenever the report types change.
-gen-schemas: build
-    ./target/debug/skilltest schema report > schemas/report.schema.json
-    ./target/debug/skilltest schema validation > schemas/validation.schema.json
+# Regenerate the contract artifacts: the golden JSON Schemas in schemas/ from
+# the Rust report types, then every SDK's generated models from the schemas.
+# Run this whenever the report types change; `check` fails while it is stale.
+gen-contract:
+    @bash scripts/gen-contract.sh
+
+# Drift gate: verify the checked-in contract artifacts match what the Rust
+# types generate (part of `just check`).
+contract-check:
+    @bash scripts/gen-contract.sh --check
 
 # Fast unit tests: the Rust library/bin unit suites.
 test:

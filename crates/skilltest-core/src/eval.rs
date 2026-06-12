@@ -203,13 +203,15 @@ pub enum JudgeValue {
 }
 
 /// The kind-specific detail of an eval outcome, for reporting.
+///
+/// The variant titles name the generated SDK model for each union arm, so keep
+/// them stable: they are part of the SDK API surface.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum EvalDetail {
-    Boolean {
-        value: bool,
-        expected: bool,
-    },
+    #[schemars(title = "BooleanDetail")]
+    Boolean { value: bool, expected: bool },
+    #[schemars(title = "NumericDetail")]
     Numeric {
         value: f64,
         threshold: f64,

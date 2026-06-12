@@ -107,9 +107,10 @@ Exit codes: `0` all passed · `1` a case/skill failed · `2` bad input ·
 Same engine, surfaced as code so you can add deterministic checks alongside the
 natural-language evals. Each language has one **SDK** that wraps the CLI and
 nothing else — [`skilltest-sdk`](sdks/python) (Python, Pydantic models) and
-[`@skilltest/sdk`](sdks/typescript) (TypeScript, Zod schemas) — and one package
-per test framework built on it, which re-exports the SDK so a test suite needs
-a single dependency.
+[`@skilltest/sdk`](sdks/typescript) (TypeScript) — and one package per test
+framework built on it, which re-exports the SDK so a test suite needs a single
+dependency. SDK models are generated from the CLI's own JSON Schemas, so they
+cannot drift from the binary.
 
 **pytest** ([`plugins/pytest`](plugins/pytest)) — auto-collects
 `*.skilltest.yaml`, or call the API:
@@ -144,9 +145,9 @@ test("greeter", async () => {
   `skilltest-fake-provider`, a deterministic reference provider that lets the
   whole pipeline be tested without a live model.
 - **`sdks/{python,typescript}`** — one SDK per language: a thin, typed wrapper
-  over that JSON contract, with contract tests against the golden schemas in
-  `schemas/` (generated from the Rust types — see
-  [`docs/schema.md`](docs/schema.md)).
+  over that JSON contract, with models generated from the golden schemas in
+  `schemas/` (themselves generated from the Rust types) and a CI drift gate —
+  see [`docs/schema.md`](docs/schema.md).
 - **`plugins/{pytest,vitest}`** — one package per test framework, built on its
   language's SDK.
 

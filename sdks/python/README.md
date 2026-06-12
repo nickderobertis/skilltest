@@ -24,6 +24,7 @@ or `SKILLTEST_PROVIDER`. A failing eval is *reported* (`report.passed` is
 false), not raised; bad input raises `SkilltestUsageError` (CLI exit 2) and
 provider problems raise `SkilltestProviderError` (exit 3).
 
-The models mirror `schemas/report.schema.json` / `schemas/validation.schema.json`
-(generated from the CLI's own types); a contract test in this package fails if
-they drift.
+The Pydantic models are **generated** from `schemas/report.schema.json` /
+`schemas/validation.schema.json` — themselves generated from the CLI's own
+types — via `just gen-contract`, and a drift gate in CI fails if anything is
+stale, so the models cannot diverge from the binary.

@@ -1,124 +1,69 @@
-"""Pydantic models mirroring the ``skilltest --format json`` contract.
+"""Typed views of the ``skilltest --format json`` contract, plus helpers.
 
-Every field crossing the process boundary from the CLI is parsed through these
-models before any test code touches it, so a contract drift surfaces as a clear
-validation error rather than a ``KeyError`` deep in a test.
+The model classes live in ``_report.py`` / ``_validation.py``, which are
+**generated** from the golden JSON Schemas in ``schemas/`` (themselves
+generated from the CLI's Rust types). Never edit the generated modules by
+hand — change the Rust types and run ``just gen-contract``; the gate fails
+while anything is stale. This facade re-exports the generated models and adds
+the hand-written conveniences, which the type checker keeps honest against the
+generated fields.
 """
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from ._report import (
+    BooleanDetail,
+    CaseRun,
+    EvalOutcome,
+    Message,
+    NumericDetail,
+    Report,
+    Summary,
+    Transcript,
+    Usage,
+)
+from ._validation import ValidationFinding, ValidationReport
 
-from pydantic import BaseModel, ConfigDict, Field
-
-
-class _Model(BaseModel):
-    # Ignore unknown keys so a newer CLI that adds fields stays readable by an
-    # older SDK; required fields are still enforced.
-    model_config = ConfigDict(extra="ignore")
-
-
-#: How a numeric eval's score is compared to its threshold (the CLI's
-#: `Comparator` enum). Kept in sync with `schemas/report.schema.json` by the
-#: contract test.
-Comparator = Literal["gte", "gt", "lte", "lt"]
-
-
-class Message(_Model):
-    role: Literal["user", "assistant", "system"]
-    content: str
-
-
-class Transcript(_Model):
-    messages: list[Message]
-
-    def assistant_text(self) -> str:
-        """All assistant turns joined — handy for deterministic mix-in checks."""
-        return "\n".join(m.content for m in self.messages if m.role == "assistant")
-
-
-class Usage(_Model):
-    """Token / cost usage aggregated for a run or the whole report.
-
-    Each field is independently optional because not every harness reports every
-    signal (cost is commonly absent on subscription auth).
-    """
-
-    input_tokens: int | None = None
-    output_tokens: int | None = None
-    cost_usd: float | None = None
+__all__ = [
+    "BooleanDetail",
+    "CaseRun",
+    "EvalOutcome",
+    "Message",
+    "NumericDetail",
+    "Report",
+    "Summary",
+    "Transcript",
+    "Usage",
+    "ValidationFinding",
+    "ValidationReport",
+    "assistant_text",
+    "describe_failures",
+    "failed_evals",
+    "failed_runs",
+]
 
 
-class BooleanDetail(_Model):
-    kind: Literal["boolean"]
-    value: bool
-    expected: bool
+def assistant_text(transcript: Transcript) -> str:
+    """All assistant turns joined — handy for deterministic mix-in checks."""
+    return "\n".join(m.content for m in transcript.messages if m.role == "assistant")
 
 
-class NumericDetail(_Model):
-    kind: Literal["numeric"]
-    value: float
-    threshold: float
-    comparator: Comparator
+def failed_evals(run: CaseRun) -> list[EvalOutcome]:
+    """The evals of a run that did not pass."""
+    return [e for e in run.evals if not e.passed]
 
 
-EvalDetail = Annotated[BooleanDetail | NumericDetail, Field(discriminator="kind")]
+def failed_runs(report: Report) -> list[CaseRun]:
+    """The runs of a report that did not pass."""
+    return [r for r in report.runs if not r.passed]
 
 
-class EvalOutcome(_Model):
-    label: str
-    passed: bool
-    detail: EvalDetail
-    reason: str
-
-
-class CaseRun(_Model):
-    case: str
-    skill: str
-    platform: str
-    model: str
-    passed: bool
-    turns: int
-    evals: list[EvalOutcome]
-    transcript: Transcript
-    usage: Usage | None = None
-
-    def failed_evals(self) -> list[EvalOutcome]:
-        return [e for e in self.evals if not e.passed]
-
-
-class Summary(_Model):
-    cases: int
-    runs: int
-    passed: int
-    failed: int
-    usage: Usage | None = None
-
-
-class Report(_Model):
-    passed: bool
-    summary: Summary
-    runs: list[CaseRun]
-
-    def failed_runs(self) -> list[CaseRun]:
-        return [r for r in self.runs if not r.passed]
-
-    def describe_failures(self) -> str:
-        """A one-line-per-failed-eval summary, for assertion messages."""
-        lines: list[str] = []
-        for run in self.failed_runs():
-            for outcome in run.failed_evals():
-                lines.append(
-                    f"{run.case} [{run.platform}/{run.model}] {outcome.label}: {outcome.reason}"
-                )
-        return "\n".join(lines)
-
-
-class ValidationFinding(_Model):
-    skill: str
-    message: str
-
-
-class ValidationReport(_Model):
-    valid: bool
-    findings: list[ValidationFinding]
+def describe_failures(report: Report) -> str:
+    """A one-line-per-failed-eval summary, for assertion messages."""
+    lines: list[str] = []
+    for run in failed_runs(report):
+        for outcome in failed_evals(run):
+            lines.append(
+                f"{run.case} [{run.platform}/{run.model}] {outcome.label}: {outcome.reason}"
+            )
+    return "\n".join(lines)

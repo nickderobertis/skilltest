@@ -1,5 +1,5 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "ValidationReport",
   "description": "The top-level report for a `skilltest validate` invocation.",
   "type": "object",
@@ -8,7 +8,7 @@
       "description": "Every finding, in discovery order.",
       "type": "array",
       "items": {
-        "$ref": "#/$defs/ValidationFinding"
+        "$ref": "#/definitions/ValidationFinding"
       }
     },
     "valid": {
@@ -20,7 +20,7 @@
     "valid",
     "findings"
   ],
-  "$defs": {
+  "definitions": {
     "ValidationFinding": {
       "description": "One problem found while validating a skill, as serialized in the\n`skilltest validate --format json` output.",
       "type": "object",

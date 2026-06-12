@@ -1,5 +1,5 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Report",
   "description": "The top-level report for a `skilltest run` invocation.",
   "type": "object",
@@ -12,12 +12,16 @@
       "description": "Every individual run.",
       "type": "array",
       "items": {
-        "$ref": "#/$defs/CaseRun"
+        "$ref": "#/definitions/CaseRun"
       }
     },
     "summary": {
       "description": "Aggregate counts.",
-      "$ref": "#/$defs/Summary"
+      "allOf": [
+        {
+          "$ref": "#/definitions/Summary"
+        }
+      ]
     }
   },
   "required": [
@@ -25,7 +29,7 @@
     "summary",
     "runs"
   ],
-  "$defs": {
+  "definitions": {
     "CaseRun": {
       "description": "The result of running one test case on one (platform, model) pair.",
       "type": "object",
@@ -38,7 +42,7 @@
           "description": "Per-eval outcomes, in declaration order.",
           "type": "array",
           "items": {
-            "$ref": "#/$defs/EvalOutcome"
+            "$ref": "#/definitions/EvalOutcome"
           }
         },
         "model": {
@@ -59,7 +63,11 @@
         },
         "transcript": {
           "description": "The full conversation, for debugging and deterministic mix-in checks.",
-          "$ref": "#/$defs/Transcript"
+          "allOf": [
+            {
+              "$ref": "#/definitions/Transcript"
+            }
+          ]
         },
         "turns": {
           "description": "Number of assistant turns produced.",
@@ -71,7 +79,7 @@
           "description": "Aggregated token/cost usage across every provider call in this run\n(skill turns + simulated-user turns + judge calls). Omitted when no\nusage was reported (e.g. the fake provider or a harness that doesn't\nsurface usage).",
           "anyOf": [
             {
-              "$ref": "#/$defs/Usage"
+              "$ref": "#/definitions/Usage"
             },
             {
               "type": "null"
@@ -116,9 +124,10 @@
       ]
     },
     "EvalDetail": {
-      "description": "The kind-specific detail of an eval outcome, for reporting.",
+      "description": "The kind-specific detail of an eval outcome, for reporting.\n\nThe variant titles name the generated SDK model for each union arm, so keep\nthem stable: they are part of the SDK API surface.",
       "oneOf": [
         {
+          "title": "BooleanDetail",
           "type": "object",
           "properties": {
             "expected": {
@@ -139,10 +148,11 @@
           ]
         },
         {
+          "title": "NumericDetail",
           "type": "object",
           "properties": {
             "comparator": {
-              "$ref": "#/$defs/Comparator"
+              "$ref": "#/definitions/Comparator"
             },
             "kind": {
               "type": "string",
@@ -172,7 +182,11 @@
       "properties": {
         "detail": {
           "description": "Kind-specific verdict detail.",
-          "$ref": "#/$defs/EvalDetail"
+          "allOf": [
+            {
+              "$ref": "#/definitions/EvalDetail"
+            }
+          ]
         },
         "label": {
           "description": "The eval's label (name or criterion).",
@@ -202,7 +216,7 @@
           "type": "string"
         },
         "role": {
-          "$ref": "#/$defs/Role"
+          "$ref": "#/definitions/Role"
         }
       },
       "required": [
@@ -262,7 +276,7 @@
           "description": "Aggregated token/cost usage across every run in the report. Omitted\nwhen no run reported usage.",
           "anyOf": [
             {
-              "$ref": "#/$defs/Usage"
+              "$ref": "#/definitions/Usage"
             },
             {
               "type": "null"
@@ -284,7 +298,7 @@
         "messages": {
           "type": "array",
           "items": {
-            "$ref": "#/$defs/Message"
+            "$ref": "#/definitions/Message"
           }
         }
       },

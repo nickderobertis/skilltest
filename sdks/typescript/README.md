@@ -2,10 +2,11 @@
 
 The TypeScript SDK for the
 [`skilltest`](https://github.com/nickderobertis/skilltest) CLI. A thin, typed
-wrapper and nothing else: it runs the CLI as a subprocess and parses the stable
-`--format json` contract with Zod. Test-framework integrations build on it —
-use [`@skilltest/vitest`](../../plugins/vitest) if you want the vitest helpers;
-use this package directly from any other TypeScript/JavaScript code.
+wrapper and nothing else: it runs the CLI as a subprocess and types the stable
+`--format json` contract with declarations generated from the CLI's own JSON
+Schemas. Test-framework integrations build on it — use
+[`@skilltest/vitest`](../../plugins/vitest) if you want the vitest helpers; use
+this package directly from any other TypeScript/JavaScript code.
 
 ```ts
 import { runSkill, validateSkill, assistantText, describeFailures } from "@skilltest/sdk";
@@ -24,6 +25,9 @@ env var, or `PATH`; a provider override comes from `provider` or
 not thrown; bad input throws `SkilltestUsageError` (CLI exit 2) and provider
 problems throw `SkilltestProviderError` (exit 3).
 
-The Zod schemas mirror `schemas/report.schema.json` /
-`schemas/validation.schema.json` (generated from the CLI's own types); a
-contract test in this package fails if they drift.
+The types in `src/generated/` are **generated** from
+`schemas/report.schema.json` / `schemas/validation.schema.json` — themselves
+generated from the CLI's own types — via `just gen-contract`, and a drift gate
+in CI fails if anything is stale, so the types cannot diverge from the binary.
+They are types only: the runner trusts the shape after `JSON.parse`, because
+the gate (not runtime re-validation) is what guarantees it.

@@ -160,8 +160,8 @@ fn validate_rejects_an_invalid_skill() {
 }
 
 /// Assert that `skilltest schema <target>` matches the golden in `schemas/`.
-/// The goldens are what the SDK contract tests compare their models against, so
-/// drift here means the Rust types changed without regenerating the contract.
+/// The goldens are what the SDK models are generated from, so drift here means
+/// the Rust types changed without regenerating the contract.
 fn assert_schema_matches_golden(target: &str, golden: &str) {
     let out = Command::new(skilltest())
         .args(["schema", target])
@@ -177,8 +177,8 @@ fn assert_schema_matches_golden(target: &str, golden: &str) {
     let golden_json: Value = serde_json::from_str(&golden_text).expect("golden is valid JSON");
     assert_eq!(
         emitted, golden_json,
-        "schemas/{golden} is out of date with the Rust report types — run `just gen-schemas` \
-         and update the SDK models if fields changed"
+        "schemas/{golden} is out of date with the Rust report types — run `just gen-contract` \
+         and commit the regenerated artifacts"
     );
 }
 
