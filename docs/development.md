@@ -73,17 +73,28 @@ verdict. It covers `respond` (via oneharness's `--system` for the skill and
 
 ## Releasing
 
-1. `just audit` — `cargo deny` (advisories + licenses) before publishing.
-2. Optionally run the live suite above against real `oneharness`.
-3. Push a tag `vX.Y.Z`. [`release.yml`](../.github/workflows/release.yml) builds
-   the `skilltest` binary on native runners for Linux and macOS
-   (x86_64 + aarch64) and uploads each as `skilltest-<target>.tar.gz` plus a
-   `.sha256` to the GitHub Release.
-4. [`scripts/install.sh`](../scripts/install.sh) consumes those assets; verify it
-   end-to-end after the first release.
+Releases are **automatic and lockstep** — you do not bump versions or push tags by
+hand. Merge a Conventional-Commits PR to `main` and
+[`semantic-release.yml`](../.github/workflows/semantic-release.yml) computes the next
+0.x version from the commit history, writes it into every manifest + lockfile +
+`CHANGELOG.md` via [`scripts/set-version.sh`](../scripts/set-version.sh), commits
+`chore(release): X.Y.Z`, and pushes tag `vX.Y.Z`. That tag then fires
+[`release.yml`](../.github/workflows/release.yml) (binaries) and
+[`publish.yml`](../.github/workflows/publish.yml) (registries). See the "Publishing"
+section of [`AGENTS.md`](../AGENTS.md) for the version policy and the PAT.
+
+- Since PRs are squash-merged, the **PR title** is the commit subject semantic-release
+  parses; `pr-title.yml` enforces a conventional title.
+- `just audit` (`cargo deny`, advisories + licenses) and the live suite above are
+  worth running on a release-bearing PR before merge.
+- A manual `vX.Y.Z` tag remains a re-publish escape hatch (fires `release.yml` /
+  `publish.yml` directly; `publish.yml` skips anything already live).
+- One-time rollout: sync `RELEASE_PAT`, push a `v0.0.0` seed tag (guarded so it never
+  publishes) to anchor the first release at `0.1.0`, and add `pr-title` to the branch's
+  required checks.
 
 The `--format json` output of `run` and `validate` is a stable contract the
 SDKs parse; the SDK models are generated from the Rust types, so changing the
-shape means changing the types, running `just gen-contract`, committing the
-regenerated artifacts, and bumping versions (see "Output contract" in
-[schema.md](schema.md)).
+shape means changing the types, running `just gen-contract`, and committing the
+regenerated artifacts behind a `feat!:`/`BREAKING CHANGE` commit so the lockstep
+version moves (see "Output contract" in [schema.md](schema.md)).

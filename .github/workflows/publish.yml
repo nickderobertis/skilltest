@@ -31,7 +31,7 @@ jobs:
   crates:
     name: crates.io
     runs-on: ubuntu-latest
-    if: github.repository == 'nickderobertis/skilltest'
+    if: github.repository == 'nickderobertis/skilltest' && github.ref_name != 'v0.0.0'
     environment: release
     steps:
       - uses: actions/checkout@v4
@@ -75,7 +75,7 @@ jobs:
   pypi:
     name: PyPI
     runs-on: ubuntu-latest
-    if: github.repository == 'nickderobertis/skilltest'
+    if: github.repository == 'nickderobertis/skilltest' && github.ref_name != 'v0.0.0'
     environment: release
     steps:
       - uses: actions/checkout@v4
@@ -113,7 +113,7 @@ jobs:
   npm:
     name: npm
     runs-on: ubuntu-latest
-    if: github.repository == 'nickderobertis/skilltest'
+    if: github.repository == 'nickderobertis/skilltest' && github.ref_name != 'v0.0.0'
     environment: release
     steps:
       - uses: actions/checkout@v4

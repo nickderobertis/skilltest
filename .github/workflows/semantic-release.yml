@@ -1,0 +1,70 @@
+# Lockstep versioning. On merge to main, semantic-release reads the conventional
+# commits, computes the next 0.x version, writes it into every manifest + lockfile
+# (scripts/set-version.sh) and CHANGELOG.md, commits `chore(release): X.Y.Z` to main,
+# and pushes tag vX.Y.Z. That PAT-pushed tag then triggers publish.yml (registries)
+# and release.yml (binaries). semantic-release itself NEVER publishes.
+#
+# Uses RELEASE_PAT (a real PAT, sourced from the GH_TOKEN gh-secrets item) — the
+# default GITHUB_TOKEN can neither push to protected main nor trigger the downstream
+# tag workflows. The `chore(release):` guard stops this workflow from re-running on
+# its own bump commit (no [skip ci], so the tag workflows are never muzzled).
+
+name: semantic-release
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: semantic-release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    if: >-
+      github.repository == 'nickderobertis/skilltest' &&
+      !startsWith(github.event.head_commit.message, 'chore(release):')
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PAT }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          package_json_file: package.json
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      # semantic-release + the prepare step (scripts/set-version.sh) need the JS deps
+      # and a warm cargo registry so `cargo update` can resolve.
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Warm the cargo registry
+        run: cargo fetch
+
+      - name: Run semantic-release
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PAT }}
+          GIT_AUTHOR_NAME: skilltest-release
+          GIT_AUTHOR_EMAIL: release@users.noreply.github.com
+          GIT_COMMITTER_NAME: skilltest-release
+          GIT_COMMITTER_EMAIL: release@users.noreply.github.com
+        run: pnpm exec semantic-release

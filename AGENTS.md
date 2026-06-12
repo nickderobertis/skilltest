@@ -39,9 +39,12 @@ must prove a skill still behaves.
 | `scripts/install.sh` | Installs a prebuilt `skilltest` from a GitHub Release (verifies checksum). |
 | `scripts/install-oneharness.sh` | Installs the prebuilt `oneharness` the live e2e drives (verifies checksum). |
 | `scripts/e2e-lib.sh`, `scripts/e2e-harness.sh` | Live, per-harness e2e: drive the built CLI against a *real* harness through oneharness. See `docs/e2e.md`. |
+| `scripts/set-version.sh` | Writes one lockstep version into all six manifests + every lockfile + the two cross-package pins. Invoked by semantic-release each release; idempotent and runnable by hand. |
 | `gh-secrets.json` | Declarative secret manifest, synced from Bitwarden to the GitHub repo + a gitignored local `.env` via `gh-secrets manifest sync`. |
-| `.github/workflows/release.yml` | Tag-triggered cross-platform binary build + checksums. |
-| `.github/workflows/publish.yml` | Tag-triggered registry publish of all six packages (crates.io, PyPI, npm) in dependency order; manifest versions are the source of truth and already-published versions are skipped. See "Publishing" below. |
+| `.github/workflows/semantic-release.yml` | Lockstep versioning: on merge to `main`, computes the next version from conventional commits, writes it everywhere via `scripts/set-version.sh`, commits + tags `v*`. Never publishes. See "Publishing". |
+| `.github/workflows/release.yml` | Tag-triggered cross-platform binary build + checksums (fired by the `v*` tag semantic-release pushes). |
+| `.github/workflows/publish.yml` | Tag-triggered registry publish of all six packages (crates.io, PyPI, npm) in dependency order; skips any version already live, so re-fired tags are idempotent. See "Publishing". |
+| `.github/workflows/pr-title.yml` | Enforces a Conventional-Commits PR title (the squash-merge subject semantic-release parses). |
 | `.github/workflows/e2e-<id>.yml` | One live per-harness e2e each (claude, codex, goose, opencode, cursor, crush, qwen, copilot), gated to the canonical repo and non-fork PRs. |
 | `nx.json` | Nx workspace config: the `affected` base, cache/input rules, and per-target defaults (`dependsOn`, caching). |
 | `<project>/project.json` | One per package (`crates/skilltest-{core,cli}`, `sdks/{python,typescript}`, `plugins/{pytest,vitest}`): the package's nx targets and its `implicitDependencies` edge in the graph. |
@@ -158,7 +161,9 @@ and the runbook for adding a harness.
   `json-schema-to-typescript` for TypeScript — see `docs/schema.md`). The sync
   is enforced by `just contract-check` in the gate plus a Rust e2e test on the
   goldens. Changing the shape is a breaking change: change the Rust types, run
-  `just gen-contract`, commit the regenerated artifacts, and bump versions.
+  `just gen-contract`, and commit the regenerated artifacts — then land it behind a
+  `feat!:`/`BREAKING CHANGE` commit so the lockstep version moves on the next release
+  (versions are never hand-bumped; see "Publishing").
 - Keep the artifact portable across the supported platform matrix (Linux, macOS).
 - Do not commit secrets, credentials, PII, or customer data. Real provider runs
   need API keys; those live in the environment, never in fixtures or config.
@@ -185,29 +190,43 @@ and the runbook for adding a harness.
 
 ## Publishing
 
-A version tag (`v*`) drives two independent workflows: `release.yml` uploads the
-CLI binaries to the GitHub Release, and `publish.yml` publishes the six library
-packages to their registries. The two are decoupled on purpose — a registry
-hiccup must not block the binary release, or vice versa.
+**The whole repo shares one lockstep version, and conventional commits are the
+source of truth — not the manifests, not the tag.** Releases are automatic:
+`semantic-release.yml` runs on every merge to `main`, reads the Conventional-Commits
+history since the last release, computes the next version, writes it into all six
+manifests + every lockfile + `CHANGELOG.md` (via `scripts/set-version.sh`), commits
+`chore(release): X.Y.Z` to `main`, and pushes tag `vX.Y.Z`. **semantic-release never
+publishes** — the tag it pushes triggers the two decoupled tag workflows: `release.yml`
+(CLI binaries → GitHub Release) and `publish.yml` (the six packages → registries). A
+registry hiccup must not block the binary release, or vice versa.
 
-- **The manifests are the source of truth for versions, not the tag.** Each
-  package publishes the version in its own manifest, and `publish.yml` skips any
-  version already live on the registry (queried per-registry before publishing).
-  So the three languages carry **independent versions** (they do today:
-  core/cli `0.1.0`, `skilltest-sdk`/`@skilltest/sdk` `0.1.0`, `skilltest-pytest`/
-  `@skilltest/vitest` `0.2.0`), partial and re-run releases are idempotent, and
-  bumping one package + tagging republishes only that package. The tag is just
-  the "release now" signal — it does **not** stamp a version onto anything.
-- **To cut a release:** bump the version in the package manifest(s) you intend to
-  publish (and, if the JSON contract changed, run `just gen-contract` and commit
-  so the SDK versions move together), then push a `v*` tag. Within each language
-  `publish.yml` publishes in dependency order: `skilltest-core` → `skilltest-cli`
-  on crates.io, `skilltest-sdk` → `skilltest-pytest` on PyPI, `@skilltest/sdk` →
-  `@skilltest/vitest` on npm.
+- **Version policy (pre-1.0).** `feat:` and any `BREAKING CHANGE` → **minor**;
+  `fix:`/`perf:`/`build:`/`refactor:`/`revert:` → **patch**; `chore`/`docs`/`ci`/
+  `test` → no release. The major is held at `0` by the `releaseRules` in
+  `.releaserc.json` (a breaking change bumps the minor, not to 1.0) until we
+  consciously go 1.0 by removing that rule. PRs are **squash-merged**, so the PR
+  **title** is the commit subject semantic-release parses — `pr-title.yml` enforces a
+  conventional title so a bad subject can't silently skip or mis-size a release.
+- **To cut a release:** merge a conventional-commit PR. That's it. The lockstep
+  version is never hand-edited; if the JSON contract changed, run `just gen-contract`
+  and commit the regenerated artifacts in the same PR — the version moves on its own at
+  release time. (`scripts/set-version.sh X.Y.Z` exists to set/realign the baseline by
+  hand; it also keeps the two cross-package pins in lockstep — the internal
+  `skilltest-core` pin in `[workspace.dependencies]` and pytest's exact
+  `skilltest-sdk==X.Y.Z` dependency.) A manual `v*` tag remains a re-publish escape
+  hatch: it fires `publish.yml`/`release.yml` directly, and `publish.yml` skips any
+  version already live, so re-fired tags are idempotent.
+- **Why a PAT.** `semantic-release.yml` pushes the bump commit + tag with `RELEASE_PAT`
+  (sourced from the `GH_TOKEN` gh-secrets item). The default `GITHUB_TOKEN` can neither
+  push to protected `main` nor trigger the downstream tag workflows; a real PAT does
+  both. The release commit deliberately omits `[skip ci]` (which could also muzzle the
+  tag workflows); instead `semantic-release.yml` guards against its own
+  `chore(release):` commits so it doesn't re-run.
 - **Tokens** come from the `gh-secrets.json` manifest — `CARGO_REGISTRY_TOKEN`,
-  `PYPI_API_TOKEN`, `NPM_TOKEN`. Each job targets the `release` GitHub
-  Environment, so adding required reviewers under Settings → Environments → release
-  gives a manual approval gate before any publish (no rules = no-op).
+  `PYPI_API_TOKEN`, `NPM_TOKEN` (publishing) and `RELEASE_PAT` (versioning). Each
+  publish job targets the `release` GitHub Environment, so adding required reviewers
+  under Settings → Environments → release gives a manual approval gate before any
+  publish (no rules = no-op).
 - **Per-registry specifics worth remembering.** crates.io must publish
   `skilltest-core` before `skilltest-cli` and wait for it to be indexed (cargo
   ≥1.66 blocks for this; the job polls as a backstop). The published `skilltest`

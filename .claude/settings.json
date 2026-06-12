@@ -11,6 +11,7 @@
       "Bash(just gen-contract)",
       "Bash(just contract-check)",
       "Bash(bash scripts/gen-contract.sh:*)",
+      "Bash(bash scripts/set-version.sh:*)",
       "Bash(just lint)",
       "Bash(just format)",
       "Bash(just format-check)",
@@ -23,6 +24,7 @@
       "Bash(cargo nextest run:*)",
       "Bash(cargo test:*)",
       "Bash(cargo run:*)",
+      "Bash(cargo update:*)",
       "Bash(uv sync:*)",
       "Bash(uv run:*)",
       "Bash(uv lock:*)",
@@ -46,6 +48,7 @@
       "Bash(git status)",
       "Bash(git diff:*)",
       "Bash(git log:*)",
+      "Bash(git tag:*)",
       "Bash(git add:*)",
       "Bash(git commit:*)"
     ],

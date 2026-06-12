@@ -1,0 +1,41 @@
+# Enforce a Conventional-Commits PR title. PRs are squash-merged, so the PR title
+# becomes the commit subject on main — which is exactly what semantic-release parses
+# to compute the next version. A non-conforming title would silently produce no
+# release (or the wrong bump), so this gate keeps the automation honest. Add `pr-title`
+# to the branch's required status checks to make it blocking.
+
+name: pr-title
+
+on:
+  pull_request_target:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    if: github.repository == 'nickderobertis/skilltest'
+    steps:
+      - uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            perf
+            refactor
+            docs
+            build
+            ci
+            chore
+            test
+            revert
+          requireScope: false
+          # Conventional subject: no leading capital, no trailing period.
+          subjectPattern: ^(?![A-Z]).+[^.]$
+          subjectPatternError: |
+            The PR title subject "{subject}" is invalid: it must start lowercase
+            and not end with a period, e.g. "feat: add lockstep versioning".
