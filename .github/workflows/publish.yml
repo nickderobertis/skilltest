@@ -49,9 +49,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Both macOS targets build on the arm runner; x86_64 cross-compiles via
+          # `--target`. The Intel runner (macos-13) queued unreliably and blocked
+          # the PyPI/npm publish (these jobs `needs: binaries`).
           - { target: x86_64-unknown-linux-gnu, os: ubuntu-latest }
           - { target: aarch64-unknown-linux-gnu, os: ubuntu-24.04-arm }
-          - { target: x86_64-apple-darwin, os: macos-13 }
+          - { target: x86_64-apple-darwin, os: macos-14 }
           - { target: aarch64-apple-darwin, os: macos-14 }
     steps:
       - uses: actions/checkout@v4
