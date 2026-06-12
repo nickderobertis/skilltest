@@ -1,9 +1,17 @@
 /**
  * `@skilltest/vitest` — run AI-skill tests and natural-language evals in vitest.
  *
- * ```ts
- * import { runSkill, assistantText } from "@skilltest/vitest";
+ * The vitest integration on top of `@skilltest/sdk`, whose API is re-exported
+ * here so a vitest suite needs only this one dependency:
  *
+ * ```ts
+ * import { skillTest, discover, runSkill, assistantText } from "@skilltest/vitest";
+ *
+ * skillTest("greeter names the patient", "cases/greet.yaml");
+ * // or auto-discover a tree of *.skilltest.yaml cases:
+ * discover("cases");
+ *
+ * // For matrices or deterministic mix-in checks, use the SDK API directly:
  * test("greeter", async () => {
  *   const report = await runSkill("cases/greet.yaml");
  *   expect(report.passed).toBe(true);
@@ -11,25 +19,8 @@
  * });
  * ```
  *
- * The one-line vitest helper lives at `@skilltest/vitest/vitest`.
+ * This module (via the helpers) imports `vitest`, so only load it inside a
+ * vitest run. `@skilltest/vitest/vitest` remains as an alias for the helpers.
  */
-export { runSkill, validateSkill, ENV_BIN, ENV_PROVIDER, type RunOptions } from "./runner.js";
-export {
-  SkilltestError,
-  SkilltestProviderError,
-  SkilltestUsageError,
-} from "./errors.js";
-export {
-  assistantText,
-  describeFailures,
-  type CaseRun,
-  type EvalDetail,
-  type EvalOutcome,
-  type Message,
-  type Report,
-  type Summary,
-  type Transcript,
-  type Usage,
-  type ValidationFinding,
-  type ValidationReport,
-} from "./schema.js";
+export { skillTest, discover, CASE_SUFFIXES } from "./vitest.js";
+export * from "@skilltest/sdk";

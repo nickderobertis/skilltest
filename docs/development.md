@@ -2,12 +2,14 @@
 
 ## Prerequisites
 
-`skilltest` is a Rust workspace with a Python plugin and a TypeScript plugin, so
+`skilltest` is a Rust workspace plus, per language, an SDK package and a
+test-framework package (Python: `sdks/python` + `plugins/pytest`; TypeScript:
+`sdks/typescript` + `plugins/vitest` in a pnpm workspace rooted at the repo), so
 `just` needs three toolchains on `PATH`:
 
 - **Rust** (stable) with `cargo`, plus [`cargo-nextest`](https://nexte.st).
-- [**uv**](https://docs.astral.sh/uv/) for the Python plugin.
-- **Node** 22+ and [**pnpm**](https://pnpm.io) for the TypeScript plugin.
+- [**uv**](https://docs.astral.sh/uv/) for the Python packages.
+- **Node** 22+ and [**pnpm**](https://pnpm.io) for the TypeScript packages.
 
 [`just`](https://github.com/casey/just) drives everything.
 
@@ -28,7 +30,7 @@ all fail the build on findings.
 
 ## How the e2e suites stay deterministic
 
-The plugins shell out to the built `skilltest` binary; all suites point the
+The SDKs shell out to the built `skilltest` binary; all suites point the
 provider at `skilltest-fake-provider`, a deterministic reference implementation
 of the [provider protocol](protocol.md). That exercises the entire pipeline —
 arg parsing, YAML loading, the conversation loop, evals, the JSON contract, exit
@@ -74,5 +76,7 @@ verdict. It covers `respond` (via oneharness's `--system` for the skill and
    end-to-end after the first release.
 
 The `--format json` output of `run` and `validate` is a stable contract the
-plugins parse; changing its shape means updating the Rust types, the Pydantic
-models, and the Zod schema together, and bumping versions.
+SDKs parse; changing its shape means changing the Rust types, running
+`just gen-schemas`, updating the Pydantic models and Zod schemas until the SDK
+contract tests pass, and bumping versions (see "Output contract" in
+[schema.md](schema.md)).

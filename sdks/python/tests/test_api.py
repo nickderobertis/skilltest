@@ -1,4 +1,4 @@
-"""Code-API tests for the pytest plugin against the built binary + fake provider."""
+"""Code-API e2e tests for the SDK against the built binary + fake provider."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from skilltest_pytest import (
+from skilltest_sdk import (
     SkilltestProviderError,
     SkilltestUsageError,
     run_skill,
@@ -65,3 +65,8 @@ def test_malformed_case_raises_usage_error(tmp_path: Path) -> None:
     bad.write_text("skill: ./x\ninput: hi\nbogus: 1\nevals: []\n")
     with pytest.raises(SkilltestUsageError):
         run_skill(bad)
+
+
+def test_missing_binary_raises_provider_error(cases: Path) -> None:
+    with pytest.raises(SkilltestProviderError):
+        run_skill(cases / "greet_pass.yaml", bin="/nonexistent/skilltest-bin")

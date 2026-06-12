@@ -10,9 +10,11 @@ keep this file for constraints, tradeoffs, and judgment.
 ## What this repo is
 
 `skilltest` is a framework for testing AI **skills** (a `SKILL.md` plus its
-assets). The artifact is a **Rust CLI** (`skilltest`) plus thin **plugins** that
-expose the same capability inside existing test runners — `pytest` (Python) and
-`vitest` (TypeScript) to start. It runs a skill on one or more harness/model
+assets). The artifact is a **Rust CLI** (`skilltest`), one thin **SDK per
+language** that wraps the CLI and nothing else (`skilltest-sdk` for Python,
+`@skilltest/sdk` for TypeScript), and one **package per test framework** built
+on its language's SDK — `pytest` and `vitest` to start, with more frameworks
+and languages to come. It runs a skill on one or more harness/model
 **platforms** via [`oneharness`](https://github.com/nickderobertis/oneharness),
 optionally driving a simulated user across multiple turns, then scores the
 transcript with built-in **natural-language evals** (boolean and numeric). It
@@ -25,10 +27,13 @@ must prove a skill still behaves.
 
 | Path | What |
 | --- | --- |
-| `crates/skilltest-core` | Library: config, skill model + validation, test-case model, provider protocol, evals, runner, report. The stable Rust API the plugins and CLI build on. |
-| `crates/skilltest-cli` | The `skilltest` binary (clap). Also ships `skilltest-fake-provider`, a deterministic reference provider used by the e2e suite. |
-| `plugins/pytest` | `skilltest-pytest`: Python API + pytest collection, wrapping the CLI's JSON contract. |
-| `plugins/vitest` | `@skilltest/vitest`: TypeScript API + vitest helpers, wrapping the same JSON contract. |
+| `crates/skilltest-core` | Library: config, skill model + validation, test-case model, provider protocol, evals, runner, report. The stable Rust API the CLI builds on, and the source of truth for the JSON contract. |
+| `crates/skilltest-cli` | The `skilltest` binary (clap), including `skilltest schema` (emits the contract's JSON Schemas). Also ships `skilltest-fake-provider`, a deterministic reference provider used by the e2e suite. |
+| `sdks/python` | `skilltest-sdk`: the Python SDK — runs the CLI as a subprocess and parses its JSON contract into Pydantic models. No framework code. |
+| `sdks/typescript` | `@skilltest/sdk`: the TypeScript SDK — same wrapper with Zod schemas. No framework code. |
+| `plugins/pytest` | `skilltest-pytest`: pytest collection of `*.skilltest.yaml` cases, built on (and re-exporting) `skilltest-sdk`. |
+| `plugins/vitest` | `@skilltest/vitest`: `skillTest`/`discover` vitest helpers, built on (and re-exporting) `@skilltest/sdk`. |
+| `schemas/` | Golden JSON Schemas for the `run`/`validate` JSON outputs, generated from the Rust types via `just gen-schemas`. The sync anchor between the CLI and the SDKs. |
 | `tests/fixtures` | Sample skills and YAML test cases shared by the e2e suites. |
 | `docs/` | The provider protocol, config/test-case schema, and live-e2e (`docs/e2e.md`) references. |
 | `scripts/install.sh` | Installs a prebuilt `skilltest` from a GitHub Release (verifies checksum). |
@@ -46,7 +51,11 @@ Use the `just` recipes; do not hand-roll equivalent commands.
 - `just check` — full quality gate (format, lint, type check, unit + e2e tests).
   Must pass before any commit or PR.
 - `just test` / `just lint` / `just format` / `just typecheck` — individual gate steps.
-- `just test-e2e` — the cross-language end-to-end suites (Rust + both plugins).
+- `just test-e2e` — the cross-language end-to-end suites (Rust + both SDKs + both framework packages).
+- `just gen-schemas` — regenerate the golden JSON Schemas in `schemas/` from the
+  Rust report types. Required whenever those types change; the Rust e2e suite
+  fails until the goldens match, and the SDK contract tests fail until the
+  Pydantic/Zod models match the goldens.
 - `just upgrade` — upgrade dependencies across all three stacks, then re-run `just check`.
 - `just install-oneharness` / `just test-live` / `just test-harness <id>` — the
   **opt-in live e2e** against a real harness (never in `just check`; needs
@@ -111,9 +120,14 @@ and the runbook for adding a harness.
   YAML, skill frontmatter, and every provider response are parsed into typed
   models (`serde` in Rust, Pydantic in Python, Zod in TS) before use. Never trust
   raw provider output.
-- The CLI's `--format json` output is a **stable contract** the plugins depend
-  on. Changing its shape is a breaking change; update the Rust types, the
-  Pydantic models, and the Zod schema together, and bump versions.
+- The CLI's `--format json` output is a **stable contract** the SDKs depend on,
+  and the Rust report types are its source of truth. The sync is enforced, not
+  aspirational: `just gen-schemas` derives golden JSON Schemas (`schemas/`) from
+  those types, a Rust e2e test fails when the goldens drift, and each SDK has
+  contract tests comparing its models field-by-field against the goldens (see
+  `docs/schema.md`). Changing the shape is a breaking change: change the Rust
+  types, run `just gen-schemas`, update the Pydantic models and Zod schemas
+  until the contract tests pass, and bump versions.
 - Keep the artifact portable across the supported platform matrix (Linux, macOS).
 - Do not commit secrets, credentials, PII, or customer data. Real provider runs
   need API keys; those live in the environment, never in fixtures or config.
@@ -151,10 +165,19 @@ and the runbook for adding a harness.
 - Rust: stable toolchain, `rustfmt` defaults, `clippy -D warnings`. Errors use
   `thiserror`; the boundary between library errors and process exit codes lives
   in the CLI, not the core.
-- Python plugin: Python 3.12+, `uv`, `ruff`, `ty`, `pytest`. Public API is
-  re-exported from `skilltest_pytest/__init__.py`; everything else is internal.
-- TS plugin: `strict` TypeScript, `biome` for lint+format, `vitest`, `pnpm`.
-  Public API is the package entry in `src/index.ts`.
+- Python packages: Python 3.12+, `uv`, `ruff`, `ty`, `pytest`. Public API is
+  re-exported from each package's `__init__.py`; everything else is internal.
+  `skilltest-pytest` consumes `skilltest-sdk` via a `[tool.uv.sources]` path
+  source in dev and a version range when published.
+- TS packages: `strict` TypeScript, `biome` (one root config) for lint+format,
+  `vitest`, a `pnpm` workspace rooted at the repo. Public API is each package's
+  `src/index.ts`. `@skilltest/vitest` consumes `@skilltest/sdk` as a
+  `workspace:*` dependency; build the SDK before typechecking/testing the
+  plugin (the `just` recipes do).
+- A new language gets one SDK under `sdks/<language>` (CLI wrapper + typed
+  models + contract tests against `schemas/`, nothing framework-specific); a
+  new test framework gets one package under `plugins/<framework>` that builds
+  on its language's SDK and re-exports it.
 - See `tests/AGENTS.md` for test-fixture conventions.
 
 ## After the main task: refine and hand off

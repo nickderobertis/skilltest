@@ -1,16 +1,15 @@
 /**
- * Shared test setup: point the plugin at the locally built Rust binaries.
+ * Shared test setup: point the SDK at the locally built Rust binaries.
  * Importing this module sets `SKILLTEST_BIN`/`SKILLTEST_PROVIDER` defaults, so
- * import it before invoking the helpers.
+ * import it before invoking the runner.
  */
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
-// plugins/vitest/tests -> repo root
+// sdks/typescript/tests -> repo root
 export const REPO_ROOT = join(here, "..", "..", "..");
-export const PLUGIN_ROOT = join(here, "..");
 const TARGET = join(REPO_ROOT, "target", "debug");
 
 export const SKILLTEST_BIN = join(TARGET, "skilltest");
@@ -21,9 +20,8 @@ export function caseFile(name: string): string {
   return join(FIXTURES, "cases", name);
 }
 
-/** Directory of self-contained `*.skilltest.yaml` cases for the discovery test. */
-export function collectedDir(): string {
-  return join(here, "collected");
+export function skillDir(name: string): string {
+  return join(FIXTURES, "skills", name);
 }
 
 process.env.SKILLTEST_BIN ??= SKILLTEST_BIN;

@@ -1,7 +1,7 @@
 {
-  "name": "@skilltest/vitest",
-  "version": "0.2.0",
-  "description": "vitest integration for skilltest: register AI-skill test cases as vitest tests, built on @skilltest/sdk.",
+  "name": "@skilltest/sdk",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for the skilltest CLI: run AI-skill tests and natural-language evals from TypeScript, with a typed (Zod) report contract.",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
@@ -10,10 +10,6 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
-    },
-    "./vitest": {
-      "types": "./dist/vitest.d.ts",
-      "default": "./dist/vitest.js"
     }
   },
   "files": ["dist"],
@@ -23,10 +19,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@skilltest/sdk": "workspace:*"
-  },
-  "peerDependencies": {
-    "vitest": ">=1.0.0"
+    "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/node": "^22.7.5",

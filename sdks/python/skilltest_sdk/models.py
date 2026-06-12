@@ -14,8 +14,14 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class _Model(BaseModel):
     # Ignore unknown keys so a newer CLI that adds fields stays readable by an
-    # older plugin; required fields are still enforced.
+    # older SDK; required fields are still enforced.
     model_config = ConfigDict(extra="ignore")
+
+
+#: How a numeric eval's score is compared to its threshold (the CLI's
+#: `Comparator` enum). Kept in sync with `schemas/report.schema.json` by the
+#: contract test.
+Comparator = Literal["gte", "gt", "lte", "lt"]
 
 
 class Message(_Model):
@@ -53,7 +59,7 @@ class NumericDetail(_Model):
     kind: Literal["numeric"]
     value: float
     threshold: float
-    comparator: str
+    comparator: Comparator
 
 
 EvalDetail = Annotated[BooleanDetail | NumericDetail, Field(discriminator="kind")]

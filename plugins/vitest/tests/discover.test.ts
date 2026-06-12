@@ -1,5 +1,5 @@
 import { beforeAll } from "vitest";
-import { discover } from "../src/vitest.js";
+import { discover } from "../src/index.js";
 // Importing helpers first sets the SKILLTEST_BIN / SKILLTEST_PROVIDER env
 // defaults the runner relies on.
 import { collectedDir, requireBinaries } from "./helpers.js";

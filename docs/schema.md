@@ -88,9 +88,9 @@ runs pass and `1` when any fail.
 
 ## Report (`--format json`)
 
-The stable JSON contract the plugins parse (Pydantic in pytest, Zod in vitest).
-Each run and the top-level summary may carry a `usage` object aggregated from
-every provider call:
+The stable JSON contract the language SDKs parse (Pydantic in `skilltest-sdk`,
+Zod in `@skilltest/sdk`). Each run and the top-level summary may carry a
+`usage` object aggregated from every provider call:
 
 ```json
 {
@@ -115,3 +115,29 @@ independently optional — `null` / absent means "this harness did not report
 the signal," not zero. The whole `usage` object is omitted when nothing
 reported usage (e.g. the fake provider in the gate). Cost is commonly absent
 on subscription auth.
+
+## Output contract: how the CLI and the SDKs stay in sync
+
+The Rust report types (`crates/skilltest-core/src/report.rs` and friends) are
+the single source of truth for the JSON contract. The sync chain is enforced by
+tests at every link, with no shared codegen pipeline to maintain:
+
+1. The types derive `schemars::JsonSchema`, and `skilltest schema
+   <report|validation>` emits their JSON Schema.
+2. `just gen-schemas` writes those schemas to `schemas/report.schema.json` and
+   `schemas/validation.schema.json` (the **goldens**). A Rust e2e test fails
+   whenever the emitted schema no longer matches the checked-in golden, so a
+   contract change always shows up as a `schemas/` diff in review.
+3. Each SDK ships **contract tests** (`sdks/python/tests/test_contract.py`,
+   `sdks/typescript/tests/contract.test.ts`) that compare its handwritten
+   Pydantic/Zod models against the goldens field-by-field, in both directions:
+   properties, required-ness, tagged-union variants, and enum values.
+
+So a field added, removed, renamed, or made optional on either side fails
+`just check` with the exact difference. To change the contract: change the Rust
+types, run `just gen-schemas`, fix the SDK models until their contract tests
+pass, and bump versions (a shape change is breaking for SDK consumers).
+
+At runtime the SDKs stay tolerant on purpose: unknown JSON keys are ignored
+(`extra="ignore"` / non-strict Zod objects) so an older SDK can read a newer
+CLI's output, while required fields are still enforced.

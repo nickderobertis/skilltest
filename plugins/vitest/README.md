@@ -2,7 +2,9 @@
 
 A [vitest](https://vitest.dev) plugin for [skilltest](../../README.md): run
 AI-skill tests and natural-language evals from vitest, and mix in your own
-deterministic checks.
+deterministic checks. Built on
+[`@skilltest/sdk`](../../sdks/typescript/README.md) — the SDK's API is
+re-exported here, so a vitest suite needs only this one dependency.
 
 ## As code
 
@@ -22,7 +24,7 @@ test("greeter names the patient", async () => {
 ## One-liner
 
 ```ts
-import { skillTest } from "@skilltest/vitest/vitest";
+import { skillTest } from "@skilltest/vitest";
 
 skillTest("greeter confirms the appointment", "cases/greet.yaml");
 ```
@@ -35,7 +37,7 @@ a single `skills.test.ts`:
 
 ```ts
 // skills.test.ts
-import { discover } from "@skilltest/vitest/vitest";
+import { discover } from "@skilltest/vitest";
 
 discover("cases"); // registers one vitest test per *.skilltest.yaml under cases/
 ```

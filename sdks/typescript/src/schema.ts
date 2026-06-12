@@ -33,11 +33,18 @@ export const BooleanDetailSchema = z.object({
   expected: z.boolean(),
 });
 
+/**
+ * How a numeric eval's score is compared to its threshold (the CLI's
+ * `Comparator` enum). Kept in sync with `schemas/report.schema.json` by the
+ * contract test.
+ */
+export const ComparatorSchema = z.enum(["gte", "gt", "lte", "lt"]);
+
 export const NumericDetailSchema = z.object({
   kind: z.literal("numeric"),
   value: z.number(),
   threshold: z.number(),
-  comparator: z.string(),
+  comparator: ComparatorSchema,
 });
 
 export const EvalDetailSchema = z.discriminatedUnion("kind", [
@@ -91,6 +98,7 @@ export const ValidationReportSchema = z.object({
 export type Message = z.infer<typeof MessageSchema>;
 export type Transcript = z.infer<typeof TranscriptSchema>;
 export type Usage = z.infer<typeof UsageSchema>;
+export type Comparator = z.infer<typeof ComparatorSchema>;
 export type EvalDetail = z.infer<typeof EvalDetailSchema>;
 export type EvalOutcome = z.infer<typeof EvalOutcomeSchema>;
 export type CaseRun = z.infer<typeof CaseRunSchema>;

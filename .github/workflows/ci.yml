@@ -1,9 +1,10 @@
 # Prove the artifact from a clean checkout: bootstrap, then the full gate.
 #
-# skilltest ships a cross-platform CLI plus Python and TypeScript plugins, so the
-# matrix covers Linux and macOS. Each job installs only what `just bootstrap`
-# needs — Rust (+ nextest), uv, and pnpm/Node — then runs `just bootstrap` and
-# `just check` (format, lint, type check, unit, and e2e). See references/ci.md.
+# skilltest ships a cross-platform CLI plus Python and TypeScript SDKs and
+# test-framework packages, so the matrix covers Linux and macOS. Each job
+# installs only what `just bootstrap` needs — Rust (+ nextest), uv, and
+# pnpm/Node — then runs `just bootstrap` and `just check` (format, lint, type
+# check, unit, and e2e). See references/ci.md.
 
 name: ci
 
@@ -48,14 +49,14 @@ jobs:
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
-          package_json_file: plugins/vitest/package.json
+          package_json_file: package.json
 
       - name: Install Node
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
-          cache-dependency-path: plugins/vitest/pnpm-lock.yaml
+          cache-dependency-path: pnpm-lock.yaml
 
       - name: Bootstrap
         run: just bootstrap

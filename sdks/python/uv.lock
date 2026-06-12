@@ -188,38 +188,18 @@ wheels = [
 ]
 
 [[package]]
-name = "skilltest-pytest"
-version = "0.2.0"
+name = "skilltest-sdk"
+version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "pytest" },
-    { name = "skilltest-sdk" },
+    { name = "pydantic" },
 ]
 
 [package.dev-dependencies]
 dev = [
+    { name = "pytest" },
     { name = "ruff" },
     { name = "ty" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "pytest", specifier = ">=8" },
-    { name = "skilltest-sdk", editable = "../../sdks/python" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "ruff", specifier = ">=0.6" },
-    { name = "ty", specifier = ">=0.0.1a1" },
-]
-
-[[package]]
-name = "skilltest-sdk"
-version = "0.1.0"
-source = { editable = "../../sdks/python" }
-dependencies = [
-    { name = "pydantic" },
 ]
 
 [package.metadata]

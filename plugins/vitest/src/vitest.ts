@@ -1,30 +1,22 @@
 /**
- * vitest integration helper. Import from `@skilltest/vitest/vitest` to register
- * a skill case as a vitest test in one line:
+ * The vitest helpers: register a skill case as a vitest test in one line with
+ * {@link skillTest}, or auto-discover a tree of cases (the recommended setup
+ * when vitest is your primary runner) with {@link discover}:
  *
  * ```ts
- * import { skillTest } from "@skilltest/vitest/vitest";
+ * import { skillTest, discover } from "@skilltest/vitest";
  * skillTest("greeter names the patient", "cases/greet.yaml");
- * ```
- *
- * Or auto-discover a tree of cases (the recommended setup when vitest is your
- * primary runner) with {@link discover}:
- *
- * ```ts
- * import { discover } from "@skilltest/vitest/vitest";
  * discover("cases");
  * ```
  *
- * For matrices or deterministic mix-in checks, call {@link runSkill} from an
- * ordinary `test()` instead. This module imports `vitest`, so only load it
+ * For matrices or deterministic mix-in checks, call the SDK's `runSkill` from
+ * an ordinary `test()` instead. This module imports `vitest`, so only load it
  * inside a vitest run.
  */
 import { type Dirent, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
+import { type RunOptions, describeFailures, runSkill } from "@skilltest/sdk";
 import { expect, test } from "vitest";
-import type { RunOptions } from "./runner.js";
-import { runSkill } from "./runner.js";
-import { describeFailures } from "./schema.js";
 
 /** Filename suffixes a case file must carry to be auto-discovered. */
 export const CASE_SUFFIXES = [".skilltest.yaml", ".skilltest.yml"] as const;

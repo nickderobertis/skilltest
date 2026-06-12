@@ -1,8 +1,8 @@
 """Run the ``skilltest`` CLI as a subprocess and parse its JSON contract.
 
-This is the code-level API the user reaches for in a pytest test: call
-[`run_skill`][skilltest_pytest.runner.run_skill], get a typed [`Report`], assert
-on ``report.passed``, and mix in any deterministic checks against the transcript.
+This is the code-level API: call [`run_skill`][skilltest_sdk.runner.run_skill],
+get a typed [`Report`], assert on ``report.passed``, and mix in any
+deterministic checks against the transcript.
 """
 
 from __future__ import annotations
@@ -17,8 +17,8 @@ from pydantic import BaseModel, ValidationError
 from .errors import SkilltestError, SkilltestProviderError, SkilltestUsageError
 from .models import Report, ValidationReport
 
-#: Environment variables that supply defaults so the pytest collector (and CI)
-#: can locate the binary and provider without per-call arguments.
+#: Environment variables that supply defaults so callers (test-framework
+#: packages, CI) can locate the binary and provider without per-call arguments.
 ENV_BIN = "SKILLTEST_BIN"
 ENV_PROVIDER = "SKILLTEST_PROVIDER"
 

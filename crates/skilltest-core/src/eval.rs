@@ -2,12 +2,13 @@
 //! asks the provider's judge to score the transcript: a boolean assertion, or a
 //! numeric score compared against a threshold.
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 
 /// How a numeric score is compared to its threshold.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Comparator {
     /// value >= threshold (the default).
@@ -202,7 +203,7 @@ pub enum JudgeValue {
 }
 
 /// The kind-specific detail of an eval outcome, for reporting.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum EvalDetail {
     Boolean {
@@ -235,7 +236,7 @@ impl EvalDetail {
 }
 
 /// The result of running one eval against a transcript.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct EvalOutcome {
     /// The eval's label (name or criterion).
     pub label: String,

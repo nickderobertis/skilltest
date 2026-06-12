@@ -1,11 +1,11 @@
-//! `skilltest-core` — the library that powers the `skilltest` CLI and the
-//! pytest/vitest plugins.
+//! `skilltest-core` — the library that powers the `skilltest` CLI and, through
+//! it, the language SDKs and test-framework packages.
 //!
 //! The flow is: load a [`Config`] and one or more [`TestCase`]s, build a
 //! [`Provider`] (the boundary to `oneharness` / a model), and hand both to a
 //! [`Runner`], which drives each case into a conversation, scores the transcript
 //! with natural-language [`Eval`]s, and returns a [`Report`]. The report's JSON
-//! form is the stable contract the language plugins consume.
+//! form is the stable contract the language SDKs consume.
 //!
 //! Everything that crosses a trust boundary — config files, test-case YAML,
 //! skill frontmatter, and every provider response — is parsed into a typed model
@@ -33,7 +33,7 @@ pub use provider::{
     supports_resume, AssistantTurn, CommandProvider, JudgeKind, JudgeQuery, JudgeVerdict,
     OneharnessProvider, Provider, SkillRef, Usage, UserTurn,
 };
-pub use report::{CaseRun, Report, Summary};
+pub use report::{CaseRun, Report, Summary, ValidationFinding, ValidationReport};
 pub use runner::Runner;
 pub use skill::{load_skill, validate_path, validate_skill, Finding, SkillDefinition};
 pub use testcase::{discover_cases, SimulatedUser, TestCase};
