@@ -11,22 +11,29 @@ test-framework package (Python: `sdks/python` + `plugins/pytest`; TypeScript:
 - [**uv**](https://docs.astral.sh/uv/) for the Python packages.
 - **Node** 22+ and [**pnpm**](https://pnpm.io) for the TypeScript packages.
 
-[`just`](https://github.com/casey/just) drives everything.
+[`just`](https://github.com/casey/just) drives everything, as a thin wrapper
+over [nx](https://nx.dev): each package has a `project.json` with its targets,
+and the default recipes run only the projects **affected** by your change
+(`just check-all` forces all). nx itself is installed by `just bootstrap`.
 
 ## The loop
 
 ```bash
-just bootstrap   # cargo fetch + uv sync + pnpm install — works from a clean clone
-just check       # the full gate: format, lint, type check, unit + e2e
+just bootstrap   # pnpm install (nx + TS workspace) + cargo fetch + uv sync — works from a clean clone
+just check       # contract drift gate + the full gate (format, lint, types, unit + e2e) over affected projects
+just check-all   # the same gate across every project
 just format      # auto-format all three stacks
 just test        # fast Rust unit tests only
-just test-e2e    # the cross-language e2e suites (builds the binaries first)
-just upgrade     # bump deps across all stacks, then re-run check
+just test-e2e    # the cross-language e2e suites (nx builds prerequisites first)
+just gen-contract # regenerate schemas/ + the generated SDK models from the Rust types
+just graph       # open the interactive nx project graph
+just upgrade     # bump deps across all stacks, then re-run check-all
 ```
 
 `just check` is the single source of truth and is exactly what CI runs after a
-clean `just bootstrap`. It is strict: `clippy`, `ruff`, `ty`, `biome`, and `tsc`
-all fail the build on findings.
+clean `just bootstrap` (CI uses `nrwl/nx-set-shas` to pick the affected base).
+It is strict: `clippy`, `ruff`, `ty`, `biome`, and `tsc` all fail the build on
+findings.
 
 ## How the e2e suites stay deterministic
 

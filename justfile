@@ -1,33 +1,47 @@
 # Canonical command surface for skilltest (Rust core + per-language SDKs +
 # per-framework test packages).
 #
-# `just bootstrap` must work from a clean clone; `just check` is the full gate
-# (format, lint, type check, unit + e2e) and fails on any issue. Each recipe
-# fans out across the three stacks. Requires `cargo`, `uv`, and `pnpm` on PATH.
-# The TypeScript packages live in a pnpm workspace rooted here.
+# `just` is a thin wrapper over **nx**: each recipe drives the per-project targets
+# defined in the `project.json` files, and the dependency graph (core <- cli <-
+# {python sdk, ts sdk} <- {pytest, vitest}) lets nx build prerequisites and skip
+# unaffected work.
+#
+# `just check` runs the gate over only the **affected** projects (vs the nx base,
+# `main`) plus the contract drift gate, which is workspace-level and always runs;
+# `just check-all` forces every project. `just bootstrap` must work from a clean
+# clone. Requires `cargo` (+ `cargo-nextest`), `uv`, and `pnpm`/`node`.
 
-py-sdk := "sdks/python"
-py-pytest := "plugins/pytest"
+nx := "pnpm exec nx"
 
 # List available recipes.
 default:
     @just --list
 
-# Set up the project from a clean clone: fetch toolchains + dependencies.
+# Set up the project from a clean clone: install nx + per-stack dependencies.
+# The root `pnpm install` covers nx and the whole TS workspace (both packages).
 bootstrap:
-    cargo fetch
-    cd {{py-sdk}} && uv sync
-    cd {{py-pytest}} && uv sync
     pnpm install
+    cargo fetch
+    cd sdks/python && uv sync
+    cd plugins/pytest && uv sync
 
-# Full quality gate: format check, lint, type check, contract drift, unit
-# tests, and e2e. Fails on any issue (no warnings-only mode).
-check: format-check lint typecheck contract-check test test-e2e
+# Full quality gate over the affected projects (format, lint, type check, unit +
+# e2e) plus the contract drift gate. Fails on any issue (no warnings-only mode).
+# Use `check-all` to force every project.
+check:
+    @bash scripts/gen-contract.sh --check
+    {{nx}} affected -t format-check lint typecheck test test-e2e
     @echo "check: all gates passed"
 
-# Build the Rust artifacts (the CLI + the fake provider the SDKs drive).
+# Same gate, but across every project regardless of what changed.
+check-all:
+    @bash scripts/gen-contract.sh --check
+    {{nx}} run-many -t format-check lint typecheck test test-e2e
+    @echo "check-all: all gates passed"
+
+# Build the artifacts for affected projects (Rust CLI + fake provider, TS dist).
 build:
-    cargo build
+    {{nx}} affected -t build
 
 # Regenerate the contract artifacts: the golden JSON Schemas in schemas/ from
 # the Rust report types, then every SDK's generated models from the schemas.
@@ -36,65 +50,53 @@ gen-contract:
     @bash scripts/gen-contract.sh
 
 # Drift gate: verify the checked-in contract artifacts match what the Rust
-# types generate (part of `just check`).
+# types generate (part of `just check`; workspace-level, not per-project).
 contract-check:
     @bash scripts/gen-contract.sh --check
 
-# Fast unit tests: the Rust library/bin unit suites.
+# Fast unit tests (Rust library/bin suites) for affected projects.
 test:
-    cargo nextest run -E 'kind(lib) | kind(bin)'
+    {{nx}} affected -t test
 
-# End-to-end suites across all stacks, driving the built CLI as users do. The
-# SDK/framework suites shell out to the freshly built binaries, so build first;
-# the vitest plugin re-exports the built @skilltest/sdk, so build that too.
-test-e2e: build
-    cargo nextest run -E 'kind(test)'
-    cd {{py-sdk}} && SKILLTEST_BIN="$PWD/../../target/debug/skilltest" SKILLTEST_PROVIDER="$PWD/../../target/debug/skilltest-fake-provider" uv run pytest
-    cd {{py-pytest}} && SKILLTEST_BIN="$PWD/../../target/debug/skilltest" SKILLTEST_PROVIDER="$PWD/../../target/debug/skilltest-fake-provider" uv run pytest
-    pnpm -r run build
-    SKILLTEST_BIN="$PWD/target/debug/skilltest" SKILLTEST_PROVIDER="$PWD/target/debug/skilltest-fake-provider" pnpm -r --workspace-concurrency=1 run test
+# End-to-end suites for affected projects, driving the built CLI as users do.
+# nx builds prerequisites first via the project graph (SDKs depend on
+# skilltest-cli; framework packages depend on their SDK).
+test-e2e:
+    {{nx}} affected -t test-e2e
 
-# Lint the codebase; fail on findings.
+# Lint affected projects; fail on findings.
 lint:
-    cargo clippy --all-targets -- -D warnings
-    cd {{py-sdk}} && uv run ruff check .
-    cd {{py-pytest}} && uv run ruff check .
-    pnpm exec biome check .
+    {{nx}} affected -t lint
 
-# Verify formatting without writing changes.
+# Verify formatting of affected projects without writing changes.
 format-check:
-    cargo fmt --check
-    cd {{py-sdk}} && uv run ruff format --check .
-    cd {{py-pytest}} && uv run ruff format --check .
-    pnpm exec biome format .
+    {{nx}} affected -t format-check
 
-# Type check the typed stacks (Rust types are enforced by clippy/build). The
-# vitest plugin's tsc resolves @skilltest/sdk from its built dist, so build it.
+# Type check affected projects (Rust types are enforced by clippy/build).
 typecheck:
-    cd {{py-sdk}} && uv run ty check
-    cd {{py-pytest}} && uv run ty check
-    pnpm --filter @skilltest/sdk run build
-    pnpm -r --workspace-concurrency=1 run typecheck
+    {{nx}} affected -t typecheck
 
-# Format the codebase in place.
+# Format every project in place.
 format:
-    cargo fmt
-    cd {{py-sdk}} && uv run ruff format .
-    cd {{py-pytest}} && uv run ruff format .
-    pnpm exec biome check --write .
+    {{nx}} run-many -t format
+
+# Show the project graph (opens the interactive nx graph).
+graph:
+    {{nx}} graph
 
 # Security + license audit of the Rust dependency tree (not in the default gate;
 # run before publishing binaries). Requires `cargo-deny`.
 audit:
     cargo deny check
 
-# Upgrade dependencies across all three stacks, then re-run the full gate.
+# Upgrade dependencies across all stacks (nx + the three toolchains), then re-run
+# the full gate across every project.
 upgrade:
-    cargo update
-    cd {{py-sdk}} && uv lock --upgrade && uv sync
-    cd {{py-pytest}} && uv lock --upgrade && uv sync
     pnpm -r update --latest
-    @just check
+    cargo update
+    cd sdks/python && uv lock --upgrade && uv sync
+    cd plugins/pytest && uv lock --upgrade && uv sync
+    @just check-all
 
 # --- Live e2e against real harnesses (opt-in; never part of `just check`) ------
 # These make real model calls (money, network, non-determinism), so they are

@@ -42,28 +42,52 @@ must prove a skill still behaves.
 | `gh-secrets.json` | Declarative secret manifest, synced from Bitwarden to the GitHub repo + a gitignored local `.env` via `gh-secrets manifest sync`. |
 | `.github/workflows/release.yml` | Tag-triggered cross-platform binary build + checksums. |
 | `.github/workflows/e2e-<id>.yml` | One live per-harness e2e each (claude, codex, goose, opencode, cursor, crush, qwen, copilot), gated to the canonical repo and non-fork PRs. |
+| `nx.json` | Nx workspace config: the `affected` base, cache/input rules, and per-target defaults (`dependsOn`, caching). |
+| `<project>/project.json` | One per package (`crates/skilltest-{core,cli}`, `sdks/{python,typescript}`, `plugins/{pytest,vitest}`): the package's nx targets and its `implicitDependencies` edge in the graph. |
 
 ## Command surface
 
-Use the `just` recipes; do not hand-roll equivalent commands.
+Use the `just` recipes; do not hand-roll equivalent commands. `just` is a thin
+wrapper over **nx** — each recipe drives the per-package targets in the
+`project.json` files. The project graph is `skilltest-core` ← `skilltest-cli` ←
+`{skilltest-sdk, @skilltest/sdk}` ← `{skilltest-pytest, @skilltest/vitest}`
+(the SDKs shell out to the built CLI; each framework package builds on its
+language's SDK), so nx builds prerequisites in order and, for the default
+recipes, runs **only the [affected](https://nx.dev/ci/features/affected)
+projects** (diffed against the `main` base in `nx.json`). A TS-only change
+never spends time on the Rust or Python suites; a core change fans out to the
+CLI, both SDKs, and both framework packages. The one workspace-level exception
+is the contract drift gate (`just contract-check`), which spans every stack and
+always runs as part of `just check`.
 
-- `just bootstrap` — set up from a clean clone (cargo fetch + `uv sync` + `pnpm install`).
-- `just check` — full quality gate (format, lint, type check, unit + e2e tests).
-  Must pass before any commit or PR.
-- `just test` / `just lint` / `just format` / `just typecheck` — individual gate steps.
-- `just test-e2e` — the cross-language end-to-end suites (Rust + both SDKs + both framework packages).
+- `just bootstrap` — set up from a clean clone (root `pnpm install` for nx and
+  the whole TS workspace, then `cargo fetch` + `uv sync` in both Python
+  packages).
+- `just check` — the contract drift gate plus the full quality gate (format,
+  lint, type check, unit + e2e) over the **affected** projects. Must pass
+  before any commit or PR.
+- `just check-all` — the same gate forced across **every** project (`nx run-many`).
+  Use when you need the whole matrix regardless of what changed.
+- `just test` / `just lint` / `just format` / `just typecheck` / `just build` —
+  individual gate steps (affected; `format` runs across all projects).
+- `just test-e2e` — the cross-language end-to-end suites; nx builds
+  prerequisites first via the graph (CLI before SDKs, SDKs before framework
+  packages).
 - `just gen-contract` — regenerate the contract artifacts: golden JSON Schemas
   in `schemas/` from the Rust report types, then every SDK's generated models
-  from the schemas. Run it whenever the report types change; `just check`
-  includes a drift gate (`just contract-check`) that fails while anything is
-  stale.
-- `just upgrade` — upgrade dependencies across all three stacks, then re-run `just check`.
+  from the schemas. Run it whenever the report types change; `just
+  contract-check` fails while anything is stale.
+- `just graph` — open the interactive nx project graph.
+- `just upgrade` — upgrade dependencies across nx + all three stacks, then
+  `just check-all`.
 - `just install-oneharness` / `just test-live` / `just test-harness <id>` — the
   **opt-in live e2e** against a real harness (never in `just check`; needs
   `oneharness`, a harness binary, a synced secret, and network). See `docs/e2e.md`.
 
-`just` needs `cargo`, `uv`, and `node`/`pnpm` on `PATH`. CI installs all three;
-locally, install them once (see `docs/development.md`).
+`just` needs `cargo` (+ `cargo-nextest`), `uv`, and `node`/`pnpm` on `PATH`; nx
+itself is a root dev-dependency installed by `just bootstrap`. CI installs the
+toolchains, then uses `nrwl/nx-set-shas` so `just check` gates only the affected
+projects per PR. Locally, install the toolchains once (see `docs/development.md`).
 
 ## The provider boundary
 

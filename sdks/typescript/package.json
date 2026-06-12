@@ -1,7 +1,7 @@
 {
   "name": "@skilltest/sdk",
   "version": "0.1.0",
-  "description": "TypeScript SDK for the skilltest CLI: run AI-skill tests and natural-language evals from TypeScript, with a typed (Zod) report contract.",
+  "description": "TypeScript SDK for the skilltest CLI: run AI-skill tests and natural-language evals from TypeScript, with a typed report contract generated from the CLI's JSON Schemas.",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
@@ -23,5 +23,8 @@
     "json-schema-to-typescript": "^15.0.4",
     "typescript": "^5.6.3",
     "vitest": "^2.1.3"
+  },
+  "nx": {
+    "includedScripts": []
   }
 }
