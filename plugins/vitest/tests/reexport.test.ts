@@ -1,6 +1,6 @@
 import { beforeAll, expect, it } from "vitest";
 // One dependency is enough for a vitest suite: the SDK's code-level API is
-// re-exported straight from @skilltest/vitest.
+// re-exported straight from @skill-test/vitest.
 import { assistantText, describeFailures, runSkill } from "../src/index.js";
 import { caseFile, requireBinaries } from "./helpers.js";
 

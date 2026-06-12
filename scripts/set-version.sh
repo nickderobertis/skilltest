@@ -13,7 +13,7 @@
 # Needs cargo, uv, and pnpm on PATH (it refreshes Cargo.lock, both uv.locks, and
 # pnpm-lock.yaml). Touches: Cargo.toml (+ the internal skilltest-core pin), both
 # pyproject.toml (+ pytest's exact skilltest-sdk pin), both package.json, and the
-# four lockfiles. @skilltest/vitest's `workspace:*` dep and pytest's editable
+# four lockfiles. @skill-test/vitest's `workspace:*` dep and pytest's editable
 # [tool.uv.sources] are intentionally left alone.
 set -euo pipefail
 

@@ -1,5 +1,5 @@
 {
-  "name": "@skilltest/sdk",
+  "name": "@skill-test/sdk",
   "version": "0.1.0",
   "description": "TypeScript SDK for the skilltest CLI: run AI-skill tests and natural-language evals from TypeScript, with a typed report contract generated from the CLI's JSON Schemas.",
   "license": "MIT",
