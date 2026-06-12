@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.2.0](https://github.com/nickderobertis/skilltest/compare/v0.1.1...v0.2.0) (2026-06-12)
+
+### Features
+
+* bundle the CLI in the SDKs so install needs no separate binary ([#13](https://github.com/nickderobertis/skilltest/issues/13)) ([2f6b0f8](https://github.com/nickderobertis/skilltest/commit/2f6b0f8fc6d19ecde5df74fd019f464e6c3d2d39))
+
 ## [0.1.1](https://github.com/nickderobertis/skilltest/compare/v0.1.0...v0.1.1) (2026-06-12)
 
 ### Bug Fixes
