@@ -6,7 +6,7 @@
  * against the transcript.
  */
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { constants, accessSync, chmodSync, existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { SkilltestError, SkilltestProviderError, SkilltestUsageError } from "./errors.js";
@@ -66,9 +66,27 @@ export function bundledBin(): string | undefined {
     const pkgJson = require.resolve(`${platformPackage()}/package.json`);
     const exe = process.platform === "win32" ? "skilltest.exe" : "skilltest";
     const bin = join(dirname(pkgJson), "bin", exe);
-    return existsSync(bin) ? bin : undefined;
+    if (!existsSync(bin)) return undefined;
+    ensureExecutable(bin);
+    return bin;
   } catch {
     return undefined;
+  }
+}
+
+// Some packers (pnpm pack) drop the executable bit; restore it best-effort. The
+// platform packages publish via `npm` (which preserves +x), so this only matters
+// as a fallback — and a read-only install keeps the packed mode regardless.
+function ensureExecutable(bin: string): void {
+  try {
+    accessSync(bin, constants.X_OK);
+  } catch {
+    try {
+      chmodSync(bin, 0o755);
+    } catch {
+      // best effort; if it is not executable and not chmod-able, the spawn fails
+      // with a clear EACCES that points at $SKILLTEST_BIN.
+    }
   }
 }
 

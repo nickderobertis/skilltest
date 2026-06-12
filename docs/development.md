@@ -117,7 +117,18 @@ the host automatically.
 job stages each into its platform package (`scripts/stage-npm-binary.sh`) and the PyPI
 job assembles the wheels (`scripts/build-python-dist.sh`). The platform packages
 publish **before** the SDK, because its `optionalDependencies` pin their exact
-versions; `set-version.sh` keeps every version in lockstep.
+versions; `set-version.sh` keeps every version in lockstep. The platform packages
+publish via `npm` (which preserves the binary's executable bit) while the SDK + vitest
+publish via `pnpm` (which rewrites their `workspace:*` deps).
+
+This path has its own gate. The normal `just check` points the SDKs at
+`$SKILLTEST_BIN`, so it never runs the bundled binary;
+[`bundle-smoke.yml`](../.github/workflows/bundle-smoke.yml) closes that gap. On every
+PR and push to `main`, for each of the four targets, it builds the CLI, installs the
+publish-shape package with the binary bundled into a fresh consumer project, and runs a
+case through the **plugin** with `SKILLTEST_BIN` unset — so a pass can only come from
+the bundle (`scripts/smoke-{python,npm}-bundle.sh`). It drives the fake provider, so
+it stays deterministic.
 
 The `--format json` output of `run` and `validate` is a stable contract the
 SDKs parse; the SDK models are generated from the Rust types, so changing the

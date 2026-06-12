@@ -226,7 +226,9 @@ jobs:
               continue
             fi
             echo "publishing: $name@$version"
-            ( cd "$dir" && pnpm publish --access public --no-git-checks )
+            # npm (not pnpm) so the binary keeps its executable bit; these
+            # packages have no workspace:* deps for pnpm to rewrite.
+            ( cd "$dir" && npm publish --access public )
           done
 
           publish_pkg() {

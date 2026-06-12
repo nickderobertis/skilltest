@@ -40,6 +40,7 @@ must prove a skill still behaves.
 | `scripts/install.sh` | Installs a prebuilt `skilltest` from a GitHub Release (verifies checksum). |
 | `scripts/stage-npm-binary.sh` | Stages a built binary into its `@skill-test/cli-*` package's `bin/` for packing/publishing. |
 | `scripts/build-python-wheel.sh`, `scripts/build-python-dist.sh` | Build a platform-tagged `skilltest-sdk` wheel that bundles the CLI (the former, one target); assemble the full dist — every platform wheel + pure wheel + sdist (the latter). |
+| `scripts/smoke-python-bundle.sh`, `scripts/smoke-npm-bundle.sh` | Bundle smoke: install the publish-shape package with the binary bundled into a fresh consumer project and run a case through the plugin with `SKILLTEST_BIN` unset, so a pass can only come from the bundled binary. Driven per platform by `bundle-smoke.yml`. |
 | `scripts/install-oneharness.sh` | Installs the prebuilt `oneharness` the live e2e drives (verifies checksum). |
 | `scripts/e2e-lib.sh`, `scripts/e2e-harness.sh` | Live, per-harness e2e: drive the built CLI against a *real* harness through oneharness. See `docs/e2e.md`. |
 | `scripts/set-version.sh` | Writes one lockstep version into all six manifests + the four `@skill-test/cli-*` platform packages + every lockfile + the two cross-package pins. Invoked by semantic-release each release; idempotent and runnable by hand. |
@@ -48,6 +49,7 @@ must prove a skill still behaves.
 | `.github/workflows/release.yml` | Tag-triggered cross-platform binary build + checksums for the GitHub Release `scripts/install.sh` consumes (fired by the `v*` tag semantic-release pushes). |
 | `.github/workflows/publish.yml` | Tag-triggered registry publish (crates.io, PyPI, npm) in dependency order; skips any version already live, so re-fired tags are idempotent. A `binaries` matrix builds the CLI per target so the npm/PyPI jobs can bundle it into the per-platform packages/wheels. See "Publishing". |
 | `.github/workflows/pr-title.yml` | Enforces a Conventional-Commits PR title (the squash-merge subject semantic-release parses). |
+| `.github/workflows/bundle-smoke.yml` | On PR + push to `main`, proves the SDKs run the **bundled** CLI (not `$SKILLTEST_BIN`): builds the CLI per target, installs the publish-shape packages, and runs a case through each plugin on every supported platform. |
 | `.github/workflows/e2e-<id>.yml` | One live per-harness e2e each (claude, codex, goose, opencode, cursor, crush, qwen, copilot), gated to the canonical repo and non-fork PRs. |
 | `nx.json` | Nx workspace config: the `affected` base, cache/input rules, and per-target defaults (`dependsOn`, caching). |
 | `<project>/project.json` | One per package (`crates/skilltest-{core,cli}`, `sdks/{python,typescript}`, `plugins/{pytest,vitest}`): the package's nx targets and its `implicitDependencies` edge in the graph. |
