@@ -24,6 +24,11 @@ export function skillDir(name: string): string {
   return join(FIXTURES, "skills", name);
 }
 
+/** Directory of self-contained `*.skilltest.yaml` cases for the discovery test. */
+export function collectedDir(): string {
+  return join(here, "collected");
+}
+
 process.env.SKILLTEST_BIN ??= SKILLTEST_BIN;
 process.env.SKILLTEST_PROVIDER ??= FAKE_PROVIDER;
 

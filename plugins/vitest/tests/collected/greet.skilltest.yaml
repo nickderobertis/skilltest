@@ -1,0 +1,10 @@
+# Auto-discovered by `discover()`: vitest turns each *.skilltest.yaml under the
+# directory into a test item. Provider/binary come from the env defaults set by
+# importing ./helpers.
+name: collected_greet
+skill: ./greeter
+input: "Greet Dr. Smith."
+evals:
+  - type: boolean
+    name: names-the-patient
+    criterion: "the reply greets `Dr. Smith` by name"
