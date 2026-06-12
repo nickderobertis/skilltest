@@ -1,6 +1,6 @@
 {
   "name": "@skill-test/cli-darwin-x64",
-  "version": "0.1.1",
+  "version": "0.2.2",
   "description": "Prebuilt skilltest CLI binary for darwin-x64. Installed automatically as an optional dependency of @skill-test/sdk on a matching host.",
   "license": "MIT",
   "repository": {

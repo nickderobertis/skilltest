@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.2.2](https://github.com/nickderobertis/skilltest/compare/v0.2.1...v0.2.2) (2026-06-12)
+
+### Bug Fixes
+
+* commit the platform package version bumps on release ([#18](https://github.com/nickderobertis/skilltest/issues/18)) ([572744a](https://github.com/nickderobertis/skilltest/commit/572744a4c54d12bc32867767d107d3780a9e55dd))
+
 ## [0.2.1](https://github.com/nickderobertis/skilltest/compare/v0.2.0...v0.2.1) (2026-06-12)
 
 ### Bug Fixes
