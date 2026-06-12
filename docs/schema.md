@@ -89,7 +89,7 @@ runs pass and `1` when any fail.
 ## Report (`--format json`)
 
 The stable JSON contract the language SDKs parse (Pydantic in `skilltest-sdk`,
-Zod in `@skilltest/sdk`). Each run and the top-level summary may carry a
+Zod in `@skill-test/sdk`). Each run and the top-level summary may carry a
 `usage` object aggregated from every provider call:
 
 ```json

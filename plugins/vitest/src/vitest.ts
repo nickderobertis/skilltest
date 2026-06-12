@@ -4,7 +4,7 @@
  * when vitest is your primary runner) with {@link discover}:
  *
  * ```ts
- * import { skillTest, discover } from "@skilltest/vitest";
+ * import { skillTest, discover } from "@skill-test/vitest";
  * skillTest("greeter names the patient", "cases/greet.yaml");
  * discover("cases");
  * ```
@@ -15,7 +15,7 @@
  */
 import { type Dirent, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
-import { type RunOptions, describeFailures, runSkill } from "@skilltest/sdk";
+import { type RunOptions, describeFailures, runSkill } from "@skill-test/sdk";
 import { expect, test } from "vitest";
 
 /** Filename suffixes a case file must carry to be auto-discovered. */

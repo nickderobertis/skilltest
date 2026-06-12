@@ -77,7 +77,7 @@ ts_banner='/* eslint-disable */
  */'
 gen_typescript() {
   local name="$1"
-  pnpm --filter @skilltest/sdk --silent exec json2ts \
+  pnpm --filter @skill-test/sdk --silent exec json2ts \
     -i "$stage/schemas/$name.schema.json" \
     -o "$stage/sdks/typescript/src/generated/$name.ts" \
     --additionalProperties false \

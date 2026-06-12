@@ -1,15 +1,15 @@
-# @skilltest/sdk
+# @skill-test/sdk
 
 The TypeScript SDK for the
 [`skilltest`](https://github.com/nickderobertis/skilltest) CLI. A thin, typed
 wrapper and nothing else: it runs the CLI as a subprocess and types the stable
 `--format json` contract with declarations generated from the CLI's own JSON
 Schemas. Test-framework integrations build on it — use
-[`@skilltest/vitest`](../../plugins/vitest) if you want the vitest helpers; use
+[`@skill-test/vitest`](../../plugins/vitest) if you want the vitest helpers; use
 this package directly from any other TypeScript/JavaScript code.
 
 ```ts
-import { runSkill, validateSkill, assistantText, describeFailures } from "@skilltest/sdk";
+import { runSkill, validateSkill, assistantText, describeFailures } from "@skill-test/sdk";
 
 const report = await runSkill("cases/greet.yaml");
 if (!report.passed) throw new Error(describeFailures(report));

@@ -6,7 +6,7 @@
 #
 #   crates.io : skilltest-core  -> skilltest-cli
 #   PyPI      : skilltest-sdk   -> skilltest-pytest
-#   npm       : @skilltest/sdk  -> @skilltest/vitest   (scope: skilltest org)
+#   npm       : @skill-test/sdk  -> @skill-test/vitest   (scope: skill-test org)
 #
 # The package MANIFESTS are the source of truth for versions, not the tag — each
 # package publishes the version in its own manifest, and any version already on
@@ -134,10 +134,10 @@ jobs:
       - name: Build the SDK then the framework package
         run: |
           pnpm install --frozen-lockfile
-          pnpm --filter @skilltest/sdk build
-          pnpm --filter @skilltest/vitest build
+          pnpm --filter @skill-test/sdk build
+          pnpm --filter @skill-test/vitest build
 
-      - name: Publish @skilltest/sdk then @skilltest/vitest (skip versions already live)
+      - name: Publish @skill-test/sdk then @skill-test/vitest (skip versions already live)
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
@@ -152,10 +152,10 @@ jobs:
               return 0
             fi
             echo "publishing: $name@$version"
-            # pnpm publish rewrites the `workspace:*` dep on @skilltest/sdk to the
+            # pnpm publish rewrites the `workspace:*` dep on @skill-test/sdk to the
             # real version; --no-git-checks because CI runs on a detached tag.
             ( cd "$dir" && pnpm publish --access public --no-git-checks )
           }
 
-          publish_pkg sdks/typescript @skilltest/sdk
-          publish_pkg plugins/vitest @skilltest/vitest
+          publish_pkg sdks/typescript @skill-test/sdk
+          publish_pkg plugins/vitest @skill-test/vitest

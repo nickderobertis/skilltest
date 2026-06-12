@@ -1,7 +1,7 @@
 {
-  "name": "@skilltest/vitest",
+  "name": "@skill-test/vitest",
   "version": "0.1.0",
-  "description": "vitest integration for skilltest: register AI-skill test cases as vitest tests, built on @skilltest/sdk.",
+  "description": "vitest integration for skilltest: register AI-skill test cases as vitest tests, built on @skill-test/sdk.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -31,7 +31,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@skilltest/sdk": "workspace:*"
+    "@skill-test/sdk": "workspace:*"
   },
   "peerDependencies": {
     "vitest": ">=1.0.0"

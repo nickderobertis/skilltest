@@ -1,14 +1,14 @@
 /**
- * `@skilltest/sdk` — the TypeScript SDK for the `skilltest` CLI.
+ * `@skill-test/sdk` — the TypeScript SDK for the `skilltest` CLI.
  *
  * A thin, typed wrapper around the CLI and nothing else: run test cases,
  * validate skills, and get back objects typed by declarations **generated from
  * the CLI's own JSON Schemas** (`just gen-contract`), so the types cannot
- * drift from the binary. Test frameworks build on this — `@skilltest/vitest`
+ * drift from the binary. Test frameworks build on this — `@skill-test/vitest`
  * adds the vitest helpers on top.
  *
  * ```ts
- * import { runSkill, assistantText, describeFailures } from "@skilltest/sdk";
+ * import { runSkill, assistantText, describeFailures } from "@skill-test/sdk";
  *
  * const report = await runSkill("cases/greet.yaml");
  * if (!report.passed) throw new Error(describeFailures(report));

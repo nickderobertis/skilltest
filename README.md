@@ -107,7 +107,7 @@ Exit codes: `0` all passed · `1` a case/skill failed · `2` bad input ·
 Same engine, surfaced as code so you can add deterministic checks alongside the
 natural-language evals. Each language has one **SDK** that wraps the CLI and
 nothing else — [`skilltest-sdk`](sdks/python) (Python, Pydantic models) and
-[`@skilltest/sdk`](sdks/typescript) (TypeScript) — and one package per test
+[`@skill-test/sdk`](sdks/typescript) (TypeScript) — and one package per test
 framework built on it, which re-exports the SDK so a test suite needs a single
 dependency. SDK models are generated from the CLI's own JSON Schemas, so they
 cannot drift from the binary.
@@ -127,7 +127,7 @@ def test_greeter():
 **vitest** ([`plugins/vitest`](plugins/vitest)):
 
 ```ts
-import { runSkill, assistantText } from "@skilltest/vitest";
+import { runSkill, assistantText } from "@skill-test/vitest";
 
 test("greeter", async () => {
   const report = await runSkill("cases/greet.yaml");

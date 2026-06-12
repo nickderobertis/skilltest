@@ -41,7 +41,7 @@ importers:
 
   plugins/vitest:
     dependencies:
-      '@skilltest/sdk':
+      '@skill-test/sdk':
         specifier: workspace:*
         version: link:../../sdks/typescript
     devDependencies:

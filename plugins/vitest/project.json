@@ -1,8 +1,8 @@
 {
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
-  "name": "@skilltest/vitest",
+  "name": "@skill-test/vitest",
   "projectType": "library",
-  "implicitDependencies": ["@skilltest/sdk"],
+  "implicitDependencies": ["@skill-test/sdk"],
   "targets": {
     "build": {
       "executor": "nx:run-commands",
