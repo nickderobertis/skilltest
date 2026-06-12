@@ -124,11 +124,13 @@ publish via `pnpm` (which rewrites their `workspace:*` deps).
 This path has its own gate. The normal `just check` points the SDKs at
 `$SKILLTEST_BIN`, so it never runs the bundled binary;
 [`bundle-smoke.yml`](../.github/workflows/bundle-smoke.yml) closes that gap. On every
-PR and push to `main`, for each of the four targets, it builds the CLI, installs the
-publish-shape package with the binary bundled into a fresh consumer project, and runs a
-case through the **plugin** with `SKILLTEST_BIN` unset — so a pass can only come from
-the bundle (`scripts/smoke-{python,npm}-bundle.sh`). It drives the fake provider, so
-it stays deterministic.
+PR and push to `main`, for each target on a native runner, it builds the CLI, installs
+the publish-shape package with the binary bundled into a fresh consumer project, and
+runs a case through the **plugin** with `SKILLTEST_BIN` unset — so a pass can only come
+from the bundle (`scripts/smoke-{python,npm}-bundle.sh`). It drives the fake provider,
+so it stays deterministic. `x86_64-apple-darwin` is still built and published but not
+smoked here — the Intel macOS runner queues unreliably and would block every PR; the
+other three targets exercise the same paths.
 
 The `--format json` output of `run` and `validate` is a stable contract the
 SDKs parse; the SDK models are generated from the Rust types, so changing the
