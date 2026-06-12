@@ -10,6 +10,10 @@ and authored for the `skilltest-fake-provider`.
   path; `invalid/` deliberately omits a `description` to exercise validation.
 - `fixtures/cases/*.yaml` — sample test cases. Each names the journey it covers
   (`greet_pass`, `greet_fail`, `greet_numeric`, `booking_multiturn`).
+- `fixtures/smoke/` — a self-contained case (`greet.skilltest.yaml`) **and its own
+  skill copy**, used by the bundle smoke (`scripts/smoke-{python,npm}-bundle.sh`).
+  Kept standalone — no shared skill, no `conftest` above it — so it can be copied into
+  a fresh consumer project that has only the published packages installed.
 
 ## Authoring fixtures for the fake provider
 

@@ -25,6 +25,12 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["skilltest_sdk"]
 
+# A platform build drops the prebuilt CLI at skilltest_sdk/_bin/skilltest (which
+# is git-ignored), then `scripts/build-python-wheel.sh` retags the wheel for the
+# target platform. Listing it as an artifact overrides the VCS-ignore so the
+# binary is packed; the pure (py3-none-any) build simply has nothing to match.
+artifacts = ["skilltest_sdk/_bin/*"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"

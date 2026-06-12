@@ -15,6 +15,11 @@ dist/
 node_modules/
 *.tsbuildinfo
 
+# Bundled CLI binaries injected at release time into the per-platform npm
+# packages and the Python wheel; never committed — built/downloaded at publish.
+/sdks/typescript/platforms/*/bin/
+/sdks/python/skilltest_sdk/_bin/
+
 # Nx
 .nx/cache
 .nx/workspace-data

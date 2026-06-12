@@ -1,12 +1,21 @@
 # Publish the skilltest packages to their registries on a version tag.
 #
 # This is the registry counterpart to release.yml (which uploads the CLI
-# binaries). Push a tag like `v0.2.0` and this publishes every package that is
-# not yet on its registry, in dependency order:
+# binaries to the GitHub Release for scripts/install.sh). Push a tag like
+# `v0.2.0` and this publishes every package that is not yet on its registry, in
+# dependency order:
 #
 #   crates.io : skilltest-core  -> skilltest-cli
 #   PyPI      : skilltest-sdk   -> skilltest-pytest
-#   npm       : @skill-test/sdk  -> @skill-test/vitest   (scope: skill-test org)
+#   npm       : @skill-test/cli-<os>-<arch> (x4) -> @skill-test/sdk -> @skill-test/vitest
+#
+# The SDKs bundle the CLI so `pip install skilltest-sdk` / `pnpm add @skill-test/sdk`
+# need no separate binary install: the `binaries` job builds the CLI for each
+# target on a native runner, then the npm job packs each into its per-platform
+# package (@skill-test/cli-<os>-<arch>, an `optionalDependencies` of the SDK that
+# the package manager installs only on a matching host) and the PyPI job bundles
+# each into a platform wheel (with a pure wheel + sdist as the fallback). The SDK
+# resolves the bundled binary at runtime, falling back to $SKILLTEST_BIN/PATH.
 #
 # The package MANIFESTS are the source of truth for versions, not the tag — each
 # package publishes the version in its own manifest, and any version already on
@@ -28,6 +37,40 @@ on:
     tags: ["v*"]
 
 jobs:
+  # Build the CLI for each target on a native runner (no cross-compilation) and
+  # hand the binaries to the npm/PyPI jobs as workflow artifacts to bundle. This
+  # mirrors release.yml's matrix; release.yml ships the GitHub-Release tarballs,
+  # this feeds the registry packages.
+  binaries:
+    name: build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    if: github.repository == 'nickderobertis/skilltest' && github.ref_name != 'v0.0.0'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-latest }
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-24.04-arm }
+          - { target: x86_64-apple-darwin, os: macos-13 }
+          - { target: aarch64-apple-darwin, os: macos-14 }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build the CLI
+        run: cargo build --release -p skilltest-cli --bin skilltest --target ${{ matrix.target }}
+
+      - name: Upload the binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: skilltest-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/skilltest
+          if-no-files-found: error
+
   crates:
     name: crates.io
     runs-on: ubuntu-latest
@@ -75,6 +118,7 @@ jobs:
   pypi:
     name: PyPI
     runs-on: ubuntu-latest
+    needs: binaries
     if: github.repository == 'nickderobertis/skilltest' && github.ref_name != 'v0.0.0'
     environment: release
     steps:
@@ -82,6 +126,12 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
+
+      - name: Download the per-target binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: skilltest-*
+          path: artifacts
 
       - name: Build & publish skilltest-sdk then skilltest-pytest (skip versions already live)
         env:
@@ -93,26 +143,33 @@ jobs:
             grep -E '^version *= *"' "$1/pyproject.toml" | head -1 \
               | sed -E 's/^version *= *"([^"]+)".*/\1/'
           }
+          on_pypi() { curl -fsS "https://pypi.org/pypi/$1/$2/json" >/dev/null 2>&1; }
 
-          publish_pkg() {
-            local dir="$1" name="$2" version
-            version=$(pyproject_version "$dir")
-            if curl -fsS "https://pypi.org/pypi/$name/$version/json" >/dev/null 2>&1; then
-              echo "skip: $name $version already on PyPI"
-              return 0
-            fi
-            echo "publishing: $name $version"
-            # uv build reads dependency metadata from [project]; the editable
-            # [tool.uv.sources] path is a local-dev hint and never reaches the wheel.
-            ( cd "$dir" && rm -rf dist && uv build && uv publish dist/* )
-          }
+          # skilltest-sdk: a platform wheel per target (binary bundled) plus a
+          # pure wheel + sdist fallback. build-python-dist.sh reads the binaries
+          # from artifacts/skilltest-<target>/skilltest.
+          sdk_version=$(pyproject_version sdks/python)
+          if on_pypi skilltest-sdk "$sdk_version"; then
+            echo "skip: skilltest-sdk $sdk_version already on PyPI"
+          else
+            echo "publishing: skilltest-sdk $sdk_version (platform wheels + sdist)"
+            bash scripts/build-python-dist.sh artifacts sdks/python/dist
+            uv publish sdks/python/dist/*
+          fi
 
-          publish_pkg sdks/python skilltest-sdk
-          publish_pkg plugins/pytest skilltest-pytest
+          # skilltest-pytest: a pure package, built straight from its project.
+          pytest_version=$(pyproject_version plugins/pytest)
+          if on_pypi skilltest-pytest "$pytest_version"; then
+            echo "skip: skilltest-pytest $pytest_version already on PyPI"
+          else
+            echo "publishing: skilltest-pytest $pytest_version"
+            ( cd plugins/pytest && rm -rf dist && uv build && uv publish dist/* )
+          fi
 
   npm:
     name: npm
     runs-on: ubuntu-latest
+    needs: binaries
     if: github.repository == 'nickderobertis/skilltest' && github.ref_name != 'v0.0.0'
     environment: release
     steps:
@@ -131,29 +188,61 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
           registry-url: https://registry.npmjs.org
 
+      - name: Download the per-target binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: skilltest-*
+          path: artifacts
+
       - name: Build the SDK then the framework package
         run: |
           pnpm install --frozen-lockfile
           pnpm --filter @skill-test/sdk build
           pnpm --filter @skill-test/vitest build
 
-      - name: Publish @skill-test/sdk then @skill-test/vitest (skip versions already live)
+      - name: Publish platform packages, then @skill-test/sdk and @skill-test/vitest
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
 
+          published_npm() { npm view "$1@$2" version >/dev/null 2>&1; }
+
+          # The per-platform binary packages must publish BEFORE the SDK: its
+          # optionalDependencies pin these exact versions (pnpm rewrites the
+          # `workspace:*` specifiers on publish).
+          for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu \
+                        x86_64-apple-darwin aarch64-apple-darwin; do
+            binary="artifacts/skilltest-$target/skilltest"
+            if [ ! -f "$binary" ]; then
+              echo "notice: no binary for $target — skipping its package"
+              continue
+            fi
+            dir=$(bash scripts/stage-npm-binary.sh "$target" "$PWD/$binary")
+            name=$(node -p "require('./$dir/package.json').name")
+            version=$(node -p "require('./$dir/package.json').version")
+            if published_npm "$name" "$version"; then
+              echo "skip: $name@$version already on npm"
+              continue
+            fi
+            echo "publishing: $name@$version"
+            # npm (not pnpm) so the binary keeps its executable bit; these
+            # packages have no workspace:* deps for pnpm to rewrite.
+            ( cd "$dir" && npm publish --access public )
+          done
+
           publish_pkg() {
             local dir="$1" name version
             name=$(node -p "require('./$dir/package.json').name")
             version=$(node -p "require('./$dir/package.json').version")
-            if npm view "$name@$version" version >/dev/null 2>&1; then
+            if published_npm "$name" "$version"; then
               echo "skip: $name@$version already on npm"
               return 0
             fi
             echo "publishing: $name@$version"
-            # pnpm publish rewrites the `workspace:*` dep on @skill-test/sdk to the
-            # real version; --no-git-checks because CI runs on a detached tag.
+            # pnpm publish rewrites the `workspace:*` deps (the SDK's optional
+            # platform packages, vitest's SDK dep) to real versions; --no-git-checks
+            # because CI runs on a detached tag.
             ( cd "$dir" && pnpm publish --access public --no-git-checks )
           }
 

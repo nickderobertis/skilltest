@@ -1,3 +1,4 @@
 packages:
   - sdks/typescript
+  - sdks/typescript/platforms/*
   - plugins/vitest

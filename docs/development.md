@@ -93,6 +93,45 @@ section of [`AGENTS.md`](../AGENTS.md) for the version policy and the PAT.
   publishes) to anchor the first release at `0.1.0`, and add `pr-title` to the branch's
   required checks.
 
+### Bundled binaries (the SDKs ship the CLI)
+
+`pip install skilltest-sdk` and `pnpm add @skill-test/sdk` need no separate binary
+install: each SDK bundles the CLI and the package manager picks the right build for
+the host automatically.
+
+- **npm.** The CLI ships in four `os`/`cpu`-scoped packages,
+  `@skill-test/cli-{linux,darwin}-{x64,arm64}`, declared as the SDK's
+  `optionalDependencies`; npm/pnpm install only the one matching the host. Each lives
+  under [`sdks/typescript/platforms`](../sdks/typescript/platforms) as a workspace
+  package whose `bin/` is git-ignored and filled at publish time.
+- **PyPI.** `skilltest-sdk` publishes a platform wheel per target with the binary at
+  `skilltest_sdk/_bin/skilltest`, plus a pure (`py3-none-any`) wheel and an sdist;
+  `pip` prefers the matching platform wheel and falls back to the pure one on an
+  unsupported platform.
+- **Resolution.** Both runners resolve the binary most-explicit-first: an explicit
+  `bin` arg, then `$SKILLTEST_BIN`, then the bundled binary, then `skilltest` on
+  `PATH`. A source checkout bundles nothing, so it falls through to `$SKILLTEST_BIN`
+  (how the e2e suites reach `target/debug/skilltest`).
+
+`publish.yml` drives this: a `binaries` matrix builds the CLI per target, then the npm
+job stages each into its platform package (`scripts/stage-npm-binary.sh`) and the PyPI
+job assembles the wheels (`scripts/build-python-dist.sh`). The platform packages
+publish **before** the SDK, because its `optionalDependencies` pin their exact
+versions; `set-version.sh` keeps every version in lockstep. The platform packages
+publish via `npm` (which preserves the binary's executable bit) while the SDK + vitest
+publish via `pnpm` (which rewrites their `workspace:*` deps).
+
+This path has its own gate. The normal `just check` points the SDKs at
+`$SKILLTEST_BIN`, so it never runs the bundled binary;
+[`bundle-smoke.yml`](../.github/workflows/bundle-smoke.yml) closes that gap. On every
+PR and push to `main`, for each target on a native runner, it builds the CLI, installs
+the publish-shape package with the binary bundled into a fresh consumer project, and
+runs a case through the **plugin** with `SKILLTEST_BIN` unset — so a pass can only come
+from the bundle (`scripts/smoke-{python,npm}-bundle.sh`). It drives the fake provider,
+so it stays deterministic. `x86_64-apple-darwin` is still built and published but not
+smoked here — the Intel macOS runner queues unreliably and would block every PR; the
+other three targets exercise the same paths.
+
 The `--format json` output of `run` and `validate` is a stable contract the
 SDKs parse; the SDK models are generated from the Rust types, so changing the
 shape means changing the types, running `just gen-contract`, and committing the

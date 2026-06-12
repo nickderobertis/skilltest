@@ -1,0 +1,12 @@
+# Bundle smoke: a self-contained happy-path case the published packages run
+# against the CLI **bundled in the SDK** (no SKILLTEST_BIN). Named
+# `*.skilltest.yaml` so the pytest plugin auto-collects it; vitest's skillTest
+# takes the path directly. Kept standalone (its own skill copy, no conftest above
+# it) so it can be copied into a fresh consumer project. See docs/development.md.
+name: bundle_smoke_greet
+skill: ./greeter
+input: "Greet Dr. Smith, who has an appointment today."
+evals:
+  - type: boolean
+    name: names-the-patient
+    criterion: "the reply greets `Dr. Smith` by name"

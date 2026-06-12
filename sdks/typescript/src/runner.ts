@@ -6,6 +6,9 @@
  * against the transcript.
  */
 import { spawn } from "node:child_process";
+import { constants, accessSync, chmodSync, existsSync } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
 import { SkilltestError, SkilltestProviderError, SkilltestUsageError } from "./errors.js";
 import type { Report } from "./generated/report.js";
 import type { ValidationReport } from "./generated/validation.js";
@@ -39,8 +42,60 @@ interface Captured {
   stderr: string;
 }
 
-function resolveBin(bin: string | undefined): string {
-  return bin ?? process.env[ENV_BIN] ?? "skilltest";
+const require = createRequire(import.meta.url);
+
+/**
+ * The optional platform package that carries the prebuilt binary for this host,
+ * e.g. `@skill-test/cli-linux-x64`. One is published per supported target and
+ * declared in `optionalDependencies`; the package manager installs only the one
+ * matching the host's `os`/`cpu`, so this name resolves to an installed package
+ * on exactly the supported platforms.
+ */
+export function platformPackage(): string {
+  return `@skill-test/cli-${process.platform}-${process.arch}`;
+}
+
+/**
+ * Absolute path to the binary bundled in the matching platform package, or
+ * `undefined` when none is installed — a source/dev checkout (the package links
+ * but ships no binary), or a platform with no published package. Callers fall
+ * back to `$SKILLTEST_BIN`/`PATH`.
+ */
+export function bundledBin(): string | undefined {
+  try {
+    const pkgJson = require.resolve(`${platformPackage()}/package.json`);
+    const exe = process.platform === "win32" ? "skilltest.exe" : "skilltest";
+    const bin = join(dirname(pkgJson), "bin", exe);
+    if (!existsSync(bin)) return undefined;
+    ensureExecutable(bin);
+    return bin;
+  } catch {
+    return undefined;
+  }
+}
+
+// Some packers (pnpm pack) drop the executable bit; restore it best-effort. The
+// platform packages publish via `npm` (which preserves +x), so this only matters
+// as a fallback — and a read-only install keeps the packed mode regardless.
+function ensureExecutable(bin: string): void {
+  try {
+    accessSync(bin, constants.X_OK);
+  } catch {
+    try {
+      chmodSync(bin, 0o755);
+    } catch {
+      // best effort; if it is not executable and not chmod-able, the spawn fails
+      // with a clear EACCES that points at $SKILLTEST_BIN.
+    }
+  }
+}
+
+/**
+ * Resolve the binary to run, most explicit first: an explicit `bin`, then
+ * `$SKILLTEST_BIN`, then the bundled platform binary, then `skilltest` on PATH.
+ */
+export function resolveBin(bin: string | undefined): string {
+  return bin ?? process.env[ENV_BIN] ?? bundledBin() ?? "skilltest";
 }
 
 function resolveProvider(provider: string | string[] | undefined): string | undefined {
