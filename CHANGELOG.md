@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.0](https://github.com/nickderobertis/skilltest/compare/v0.2.2...v0.3.0) (2026-06-12)
+
+### Features
+
+* direct-API judge backend (Anthropic + OpenAI) with strict JSON ([#17](https://github.com/nickderobertis/skilltest/issues/17)) ([2a22269](https://github.com/nickderobertis/skilltest/commit/2a22269b5d50e81a904f27254f8143591af9740b))
+
 ## [0.2.2](https://github.com/nickderobertis/skilltest/compare/v0.2.1...v0.2.2) (2026-06-12)
 
 ### Bug Fixes
