@@ -28,7 +28,7 @@ must prove a skill still behaves.
 | Path | What |
 | --- | --- |
 | `crates/skilltest-core` | Library: config, skill model + validation, test-case model, provider protocol, evals, runner, report. The stable Rust API the CLI builds on, and the source of truth for the JSON contract. |
-| `crates/skilltest-cli` | The `skilltest` binary (clap), including `skilltest schema` (emits the contract's JSON Schemas). Also ships `skilltest-fake-provider`, a deterministic reference provider used by the e2e suite. |
+| `crates/skilltest-cli` | The `skilltest` binary (clap), including `skilltest schema` (emits the contract's JSON Schemas). Also carries `skilltest-fake-provider`, a deterministic reference provider used by the e2e suite — a second `[[bin]]` gated behind the non-default `fake-provider` feature so a published `cargo install` ships only `skilltest`; the nx `build`/`lint` targets enable the feature, release builds don't. |
 | `sdks/python` | `skilltest-sdk`: the Python SDK — runs the CLI as a subprocess and parses its JSON contract into Pydantic models. No framework code. |
 | `sdks/typescript` | `@skilltest/sdk`: the TypeScript SDK — same wrapper with generated type declarations. No framework code. |
 | `plugins/pytest` | `skilltest-pytest`: pytest collection of `*.skilltest.yaml` cases, built on (and re-exporting) `skilltest-sdk`. |
@@ -41,6 +41,7 @@ must prove a skill still behaves.
 | `scripts/e2e-lib.sh`, `scripts/e2e-harness.sh` | Live, per-harness e2e: drive the built CLI against a *real* harness through oneharness. See `docs/e2e.md`. |
 | `gh-secrets.json` | Declarative secret manifest, synced from Bitwarden to the GitHub repo + a gitignored local `.env` via `gh-secrets manifest sync`. |
 | `.github/workflows/release.yml` | Tag-triggered cross-platform binary build + checksums. |
+| `.github/workflows/publish.yml` | Tag-triggered registry publish of all six packages (crates.io, PyPI, npm) in dependency order; manifest versions are the source of truth and already-published versions are skipped. See "Publishing" below. |
 | `.github/workflows/e2e-<id>.yml` | One live per-harness e2e each (claude, codex, goose, opencode, cursor, crush, qwen, copilot), gated to the canonical repo and non-fork PRs. |
 | `nx.json` | Nx workspace config: the `affected` base, cache/input rules, and per-target defaults (`dependsOn`, caching). |
 | `<project>/project.json` | One per package (`crates/skilltest-{core,cli}`, `sdks/{python,typescript}`, `plugins/{pytest,vitest}`): the package's nx targets and its `implicitDependencies` edge in the graph. |
@@ -181,6 +182,42 @@ and the runbook for adding a harness.
   rather than adding another narrow unit test.
 - Every e2e suite must cover at least one happy path **and** one meaningful
   failure/recovery path (a failing eval, a malformed config, a missing provider).
+
+## Publishing
+
+A version tag (`v*`) drives two independent workflows: `release.yml` uploads the
+CLI binaries to the GitHub Release, and `publish.yml` publishes the six library
+packages to their registries. The two are decoupled on purpose — a registry
+hiccup must not block the binary release, or vice versa.
+
+- **The manifests are the source of truth for versions, not the tag.** Each
+  package publishes the version in its own manifest, and `publish.yml` skips any
+  version already live on the registry (queried per-registry before publishing).
+  So the three languages carry **independent versions** (they do today:
+  core/cli `0.1.0`, `skilltest-sdk`/`@skilltest/sdk` `0.1.0`, `skilltest-pytest`/
+  `@skilltest/vitest` `0.2.0`), partial and re-run releases are idempotent, and
+  bumping one package + tagging republishes only that package. The tag is just
+  the "release now" signal — it does **not** stamp a version onto anything.
+- **To cut a release:** bump the version in the package manifest(s) you intend to
+  publish (and, if the JSON contract changed, run `just gen-contract` and commit
+  so the SDK versions move together), then push a `v*` tag. Within each language
+  `publish.yml` publishes in dependency order: `skilltest-core` → `skilltest-cli`
+  on crates.io, `skilltest-sdk` → `skilltest-pytest` on PyPI, `@skilltest/sdk` →
+  `@skilltest/vitest` on npm.
+- **Tokens** come from the `gh-secrets.json` manifest — `CARGO_REGISTRY_TOKEN`,
+  `PYPI_API_TOKEN`, `NPM_TOKEN`. Each job targets the `release` GitHub
+  Environment, so adding required reviewers under Settings → Environments → release
+  gives a manual approval gate before any publish (no rules = no-op).
+- **Per-registry specifics worth remembering.** crates.io must publish
+  `skilltest-core` before `skilltest-cli` and wait for it to be indexed (cargo
+  ≥1.66 blocks for this; the job polls as a backstop). The published `skilltest`
+  crate ships a single binary — `skilltest-fake-provider` is gated behind the
+  non-default `fake-provider` feature (see the layout note). npm packages are
+  scoped to the **`skilltest` org** and publish with `pnpm publish --access
+  public`: pnpm rewrites `@skilltest/vitest`'s `workspace:*` dependency to the
+  real version, and `--access public` is required for scoped packages (also set
+  via `publishConfig`). PyPI builds from `[project]` metadata, so the editable
+  `[tool.uv.sources]` path in `skilltest-pytest` never reaches the wheel.
 
 ## Keeping the allowlist current
 

@@ -1,0 +1,161 @@
+# Publish the skilltest packages to their registries on a version tag.
+#
+# This is the registry counterpart to release.yml (which uploads the CLI
+# binaries). Push a tag like `v0.2.0` and this publishes every package that is
+# not yet on its registry, in dependency order:
+#
+#   crates.io : skilltest-core  -> skilltest-cli
+#   PyPI      : skilltest-sdk   -> skilltest-pytest
+#   npm       : @skilltest/sdk  -> @skilltest/vitest   (scope: skilltest org)
+#
+# The package MANIFESTS are the source of truth for versions, not the tag — each
+# package publishes the version in its own manifest, and any version already on
+# the registry is skipped. So the three languages can carry independent versions
+# (they do today), partial/re-run releases are idempotent, and bumping a single
+# package's version + tagging republishes only that package. The tag is just the
+# "release now" signal.
+#
+# Tokens come from the gh-secrets manifest (gh-secrets.json): CARGO_REGISTRY_TOKEN,
+# PYPI_API_TOKEN, NPM_TOKEN. The jobs run only on the canonical repo. Each job
+# uses the `release` GitHub Environment, so you can add required reviewers in the
+# repo settings (Settings -> Environments -> release) for a manual approval gate
+# before anything is published; with no protection rules it is a no-op.
+
+name: publish
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  crates:
+    name: crates.io
+    runs-on: ubuntu-latest
+    if: github.repository == 'nickderobertis/skilltest'
+    environment: release
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Publish skilltest-core then skilltest-cli (skip versions already live)
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          set -euo pipefail
+          ua='skilltest-ci (https://github.com/nickderobertis/skilltest)'
+
+          on_crates_io() { # name version -> 0 if that version is already published
+            curl -fsS -A "$ua" "https://crates.io/api/v1/crates/$1/$2" >/dev/null 2>&1
+          }
+
+          publish_crate() {
+            local crate="$1" version
+            version=$(cargo metadata --no-deps --format-version 1 \
+              | jq -r ".packages[] | select(.name==\"$crate\") | .version")
+            if on_crates_io "$crate" "$version"; then
+              echo "skip: $crate@$version already on crates.io"
+              return 0
+            fi
+            echo "publishing: $crate@$version"
+            # cargo >=1.66 blocks until the new version is downloadable, so the
+            # dependent crate resolves it; poll the API too as a belt-and-braces.
+            cargo publish --locked -p "$crate"
+            for i in $(seq 1 30); do
+              on_crates_io "$crate" "$version" && { echo "live: $crate@$version"; return 0; }
+              echo "waiting for $crate@$version in the index ($i)…"; sleep 10
+            done
+            echo "error: timed out waiting for $crate@$version" >&2; return 1
+          }
+
+          publish_crate skilltest-core
+          publish_crate skilltest-cli
+
+  pypi:
+    name: PyPI
+    runs-on: ubuntu-latest
+    if: github.repository == 'nickderobertis/skilltest'
+    environment: release
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Build & publish skilltest-sdk then skilltest-pytest (skip versions already live)
+        env:
+          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          pyproject_version() { # dir -> version string from [project]
+            grep -E '^version *= *"' "$1/pyproject.toml" | head -1 \
+              | sed -E 's/^version *= *"([^"]+)".*/\1/'
+          }
+
+          publish_pkg() {
+            local dir="$1" name="$2" version
+            version=$(pyproject_version "$dir")
+            if curl -fsS "https://pypi.org/pypi/$name/$version/json" >/dev/null 2>&1; then
+              echo "skip: $name $version already on PyPI"
+              return 0
+            fi
+            echo "publishing: $name $version"
+            # uv build reads dependency metadata from [project]; the editable
+            # [tool.uv.sources] path is a local-dev hint and never reaches the wheel.
+            ( cd "$dir" && rm -rf dist && uv build && uv publish dist/* )
+          }
+
+          publish_pkg sdks/python skilltest-sdk
+          publish_pkg plugins/pytest skilltest-pytest
+
+  npm:
+    name: npm
+    runs-on: ubuntu-latest
+    if: github.repository == 'nickderobertis/skilltest'
+    environment: release
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          package_json_file: package.json
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+          registry-url: https://registry.npmjs.org
+
+      - name: Build the SDK then the framework package
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --filter @skilltest/sdk build
+          pnpm --filter @skilltest/vitest build
+
+      - name: Publish @skilltest/sdk then @skilltest/vitest (skip versions already live)
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          publish_pkg() {
+            local dir="$1" name version
+            name=$(node -p "require('./$dir/package.json').name")
+            version=$(node -p "require('./$dir/package.json').version")
+            if npm view "$name@$version" version >/dev/null 2>&1; then
+              echo "skip: $name@$version already on npm"
+              return 0
+            fi
+            echo "publishing: $name@$version"
+            # pnpm publish rewrites the `workspace:*` dep on @skilltest/sdk to the
+            # real version; --no-git-checks because CI runs on a detached tag.
+            ( cd "$dir" && pnpm publish --access public --no-git-checks )
+          }
+
+          publish_pkg sdks/typescript @skilltest/sdk
+          publish_pkg plugins/vitest @skilltest/vitest
