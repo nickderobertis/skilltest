@@ -93,6 +93,32 @@ section of [`AGENTS.md`](../AGENTS.md) for the version policy and the PAT.
   publishes) to anchor the first release at `0.1.0`, and add `pr-title` to the branch's
   required checks.
 
+### Bundled binaries (the SDKs ship the CLI)
+
+`pip install skilltest-sdk` and `pnpm add @skill-test/sdk` need no separate binary
+install: each SDK bundles the CLI and the package manager picks the right build for
+the host automatically.
+
+- **npm.** The CLI ships in four `os`/`cpu`-scoped packages,
+  `@skill-test/cli-{linux,darwin}-{x64,arm64}`, declared as the SDK's
+  `optionalDependencies`; npm/pnpm install only the one matching the host. Each lives
+  under [`sdks/typescript/platforms`](../sdks/typescript/platforms) as a workspace
+  package whose `bin/` is git-ignored and filled at publish time.
+- **PyPI.** `skilltest-sdk` publishes a platform wheel per target with the binary at
+  `skilltest_sdk/_bin/skilltest`, plus a pure (`py3-none-any`) wheel and an sdist;
+  `pip` prefers the matching platform wheel and falls back to the pure one on an
+  unsupported platform.
+- **Resolution.** Both runners resolve the binary most-explicit-first: an explicit
+  `bin` arg, then `$SKILLTEST_BIN`, then the bundled binary, then `skilltest` on
+  `PATH`. A source checkout bundles nothing, so it falls through to `$SKILLTEST_BIN`
+  (how the e2e suites reach `target/debug/skilltest`).
+
+`publish.yml` drives this: a `binaries` matrix builds the CLI per target, then the npm
+job stages each into its platform package (`scripts/stage-npm-binary.sh`) and the PyPI
+job assembles the wheels (`scripts/build-python-dist.sh`). The platform packages
+publish **before** the SDK, because its `optionalDependencies` pin their exact
+versions; `set-version.sh` keeps every version in lockstep.
+
 The `--format json` output of `run` and `validate` is a stable contract the
 SDKs parse; the SDK models are generated from the Rust types, so changing the
 shape means changing the types, running `just gen-contract`, and committing the

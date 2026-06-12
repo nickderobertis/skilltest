@@ -21,6 +21,12 @@
     }
   },
   "files": ["dist"],
+  "optionalDependencies": {
+    "@skill-test/cli-linux-x64": "workspace:*",
+    "@skill-test/cli-linux-arm64": "workspace:*",
+    "@skill-test/cli-darwin-x64": "workspace:*",
+    "@skill-test/cli-darwin-arm64": "workspace:*"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json",

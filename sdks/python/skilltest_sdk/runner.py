@@ -7,6 +7,7 @@ deterministic checks against the transcript.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import subprocess
 from collections.abc import Sequence
@@ -26,10 +27,37 @@ ENV_PROVIDER = "SKILLTEST_PROVIDER"
 _REPORTING_CODES = frozenset({0, 1})
 
 
+#: Name of the bundled binary inside the wheel's ``_bin/`` directory.
+_BIN_NAME = "skilltest.exe" if os.name == "nt" else "skilltest"
+
+
+def _bundled_bin() -> str | None:
+    """Path to the binary bundled in this wheel, or ``None`` when absent.
+
+    Platform wheels ship the prebuilt CLI at ``skilltest_sdk/_bin/skilltest``;
+    the pure (``py3-none-any``) wheel and a source checkout ship none, so callers
+    fall back to ``$SKILLTEST_BIN``/``PATH``. Wheel packing can drop the
+    executable bit, so restore it best-effort before handing back the path.
+    """
+    candidate = Path(__file__).resolve().parent / "_bin" / _BIN_NAME
+    if not candidate.is_file():
+        return None
+    if not os.access(candidate, os.X_OK):
+        with contextlib.suppress(OSError):
+            candidate.chmod(0o755)
+    return str(candidate)
+
+
 def _resolve_bin(bin: str | Path | None) -> str:
+    """Resolve the binary, most explicit first: an explicit ``bin``, then
+    ``$SKILLTEST_BIN``, then the binary bundled in a platform wheel, then
+    ``skilltest`` on ``PATH``."""
     if bin is not None:
         return str(bin)
-    return os.environ.get(ENV_BIN, "skilltest")
+    env = os.environ.get(ENV_BIN)
+    if env:
+        return env
+    return _bundled_bin() or "skilltest"
 
 
 def _resolve_provider(provider: str | Sequence[str] | None) -> str | None:

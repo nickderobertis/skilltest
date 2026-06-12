@@ -69,6 +69,27 @@ importers:
       vitest:
         specifier: ^2.1.3
         version: 2.1.9(@types/node@22.19.21)
+    optionalDependencies:
+      '@skill-test/cli-darwin-arm64':
+        specifier: workspace:*
+        version: link:platforms/cli-darwin-arm64
+      '@skill-test/cli-darwin-x64':
+        specifier: workspace:*
+        version: link:platforms/cli-darwin-x64
+      '@skill-test/cli-linux-arm64':
+        specifier: workspace:*
+        version: link:platforms/cli-linux-arm64
+      '@skill-test/cli-linux-x64':
+        specifier: workspace:*
+        version: link:platforms/cli-linux-x64
+
+  sdks/typescript/platforms/cli-darwin-arm64: {}
+
+  sdks/typescript/platforms/cli-darwin-x64: {}
+
+  sdks/typescript/platforms/cli-linux-arm64: {}
+
+  sdks/typescript/platforms/cli-linux-x64: {}
 
 packages:
 

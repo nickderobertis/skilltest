@@ -12,9 +12,9 @@
 #
 # Needs cargo, uv, and pnpm on PATH (it refreshes Cargo.lock, both uv.locks, and
 # pnpm-lock.yaml). Touches: Cargo.toml (+ the internal skilltest-core pin), both
-# pyproject.toml (+ pytest's exact skilltest-sdk pin), both package.json, and the
-# four lockfiles. @skill-test/vitest's `workspace:*` dep and pytest's editable
-# [tool.uv.sources] are intentionally left alone.
+# pyproject.toml (+ pytest's exact skilltest-sdk pin), both package.json, the four
+# @skill-test/cli-* platform package.json, and the four lockfiles. The SDK's and
+# vitest's `workspace:*` deps and pytest's editable [tool.uv.sources] are left alone.
 set -euo pipefail
 
 VERSION="${1:-}"
@@ -59,9 +59,16 @@ perl -i -pe 's/"skilltest-sdk[^"]*"/"skilltest-sdk=='"$VERSION"'"/' plugins/pyte
 run "refresh sdks/python/uv.lock" uv_lock_in sdks/python
 run "refresh plugins/pytest/uv.lock" uv_lock_in plugins/pytest
 
-# --- TypeScript: both package versions, then pnpm-lock.yaml --------------------------
+# --- TypeScript: SDK + framework + the four optional platform packages, then lock ----
+# The platform packages (@skill-test/cli-<os>-<arch>) carry the binary; the SDK
+# pins them via `workspace:*`, so they must stay on the same version. The SDK's
+# `workspace:*` optional deps and vitest's `workspace:*` dep are left alone (pnpm
+# rewrites them to the version on publish).
 perl -i -pe 's/"version": "[^"]*"/"version": "'"$VERSION"'"/' sdks/typescript/package.json
 perl -i -pe 's/"version": "[^"]*"/"version": "'"$VERSION"'"/' plugins/vitest/package.json
+for pkg in sdks/typescript/platforms/*/package.json; do
+  perl -i -pe 's/"version": "[^"]*"/"version": "'"$VERSION"'"/' "$pkg"
+done
 run "refresh pnpm-lock.yaml" pnpm install --lockfile-only --reporter=silent
 
 echo "set-version: all packages pinned to $VERSION"
