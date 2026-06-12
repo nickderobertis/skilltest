@@ -1,6 +1,6 @@
 {
   "name": "@skill-test/vitest",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "vitest integration for skilltest: register AI-skill test cases as vitest tests, built on @skill-test/sdk.",
   "license": "MIT",
   "repository": {

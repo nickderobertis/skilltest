@@ -1,6 +1,6 @@
 {
   "name": "@skill-test/sdk",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "TypeScript SDK for the skilltest CLI: run AI-skill tests and natural-language evals from TypeScript, with a typed report contract generated from the CLI's JSON Schemas.",
   "license": "MIT",
   "repository": {

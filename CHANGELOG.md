@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.2.1](https://github.com/nickderobertis/skilltest/compare/v0.2.0...v0.2.1) (2026-06-12)
+
+### Bug Fixes
+
+* absolutize out-dir in the python dist scripts ([#16](https://github.com/nickderobertis/skilltest/issues/16)) ([9ca8f47](https://github.com/nickderobertis/skilltest/commit/9ca8f47f1e64ca69af02aac4c6dc6738eb21d489))
+
 ## [0.2.0](https://github.com/nickderobertis/skilltest/compare/v0.1.1...v0.2.0) (2026-06-12)
 
 ### Features

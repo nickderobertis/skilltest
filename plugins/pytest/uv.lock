@@ -189,7 +189,7 @@ wheels = [
 
 [[package]]
 name = "skilltest-pytest"
-version = "0.2.0"
+version = "0.2.1"
 source = { editable = "." }
 dependencies = [
     { name = "pytest" },
@@ -216,7 +216,7 @@ dev = [
 
 [[package]]
 name = "skilltest-sdk"
-version = "0.2.0"
+version = "0.2.1"
 source = { editable = "../../sdks/python" }
 dependencies = [
     { name = "pydantic" },
