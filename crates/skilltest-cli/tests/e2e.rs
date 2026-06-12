@@ -159,6 +159,39 @@ fn validate_rejects_an_invalid_skill() {
     );
 }
 
+/// Assert that `skilltest schema <target>` matches the golden in `schemas/`.
+/// The goldens are what the SDK models are generated from, so drift here means
+/// the Rust types changed without regenerating the contract.
+fn assert_schema_matches_golden(target: &str, golden: &str) {
+    let out = Command::new(skilltest())
+        .args(["schema", target])
+        .output()
+        .expect("executes");
+    assert!(out.status.success(), "schema {target} exits 0");
+    let emitted: Value = serde_json::from_slice(&out.stdout).expect("schema is valid JSON");
+    let golden_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../schemas")
+        .join(golden);
+    let golden_text = std::fs::read_to_string(&golden_path)
+        .unwrap_or_else(|e| panic!("cannot read {}: {e}", golden_path.display()));
+    let golden_json: Value = serde_json::from_str(&golden_text).expect("golden is valid JSON");
+    assert_eq!(
+        emitted, golden_json,
+        "schemas/{golden} is out of date with the Rust report types — run `just gen-contract` \
+         and commit the regenerated artifacts"
+    );
+}
+
+#[test]
+fn schema_report_matches_checked_in_golden() {
+    assert_schema_matches_golden("report", "report.schema.json");
+}
+
+#[test]
+fn schema_validation_matches_checked_in_golden() {
+    assert_schema_matches_golden("validation", "validation.schema.json");
+}
+
 #[test]
 fn help_exits_zero() {
     let out = Command::new(skilltest())

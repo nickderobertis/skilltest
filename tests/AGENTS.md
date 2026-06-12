@@ -45,5 +45,5 @@ stays out of the deterministic gate. Do **not** add `#[ignore]` to any other e2e
 test to speed up the gate — split genuinely slow journeys into a target CI still
 runs instead.
 
-When the JSON contract changes, update fixtures and the three stacks' parsers
-(serde / Pydantic / Zod) together.
+When the JSON contract changes, run `just gen-contract` (the SDK models are
+generated from the Rust types) and update the fixtures to match.

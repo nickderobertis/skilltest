@@ -2,7 +2,7 @@
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
   "name": "skilltest-pytest",
   "projectType": "library",
-  "implicitDependencies": ["skilltest-cli"],
+  "implicitDependencies": ["skilltest-sdk"],
   "targets": {
     "lint": {
       "executor": "nx:run-commands",

@@ -1,0 +1,339 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Report",
+  "description": "The top-level report for a `skilltest run` invocation.",
+  "type": "object",
+  "properties": {
+    "passed": {
+      "description": "True iff every run passed.",
+      "type": "boolean"
+    },
+    "runs": {
+      "description": "Every individual run.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/CaseRun"
+      }
+    },
+    "summary": {
+      "description": "Aggregate counts.",
+      "allOf": [
+        {
+          "$ref": "#/definitions/Summary"
+        }
+      ]
+    }
+  },
+  "required": [
+    "passed",
+    "summary",
+    "runs"
+  ],
+  "definitions": {
+    "CaseRun": {
+      "description": "The result of running one test case on one (platform, model) pair.",
+      "type": "object",
+      "properties": {
+        "case": {
+          "description": "The test case name.",
+          "type": "string"
+        },
+        "evals": {
+          "description": "Per-eval outcomes, in declaration order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/EvalOutcome"
+          }
+        },
+        "model": {
+          "description": "The model this run used.",
+          "type": "string"
+        },
+        "passed": {
+          "description": "True iff every eval in this run passed.",
+          "type": "boolean"
+        },
+        "platform": {
+          "description": "The harness platform this run used.",
+          "type": "string"
+        },
+        "skill": {
+          "description": "Absolute-ish path to the skill that was exercised.",
+          "type": "string"
+        },
+        "transcript": {
+          "description": "The full conversation, for debugging and deterministic mix-in checks.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/Transcript"
+            }
+          ]
+        },
+        "turns": {
+          "description": "Number of assistant turns produced.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "usage": {
+          "description": "Aggregated token/cost usage across every provider call in this run\n(skill turns + simulated-user turns + judge calls). Omitted when no\nusage was reported (e.g. the fake provider or a harness that doesn't\nsurface usage).",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Usage"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "case",
+        "skill",
+        "platform",
+        "model",
+        "passed",
+        "turns",
+        "evals",
+        "transcript"
+      ]
+    },
+    "Comparator": {
+      "description": "How a numeric score is compared to its threshold.",
+      "oneOf": [
+        {
+          "description": "value >= threshold (the default).",
+          "type": "string",
+          "const": "gte"
+        },
+        {
+          "description": "value > threshold.",
+          "type": "string",
+          "const": "gt"
+        },
+        {
+          "description": "value <= threshold.",
+          "type": "string",
+          "const": "lte"
+        },
+        {
+          "description": "value < threshold.",
+          "type": "string",
+          "const": "lt"
+        }
+      ]
+    },
+    "EvalDetail": {
+      "description": "The kind-specific detail of an eval outcome, for reporting.\n\nThe variant titles name the generated SDK model for each union arm, so keep\nthem stable: they are part of the SDK API surface.",
+      "oneOf": [
+        {
+          "title": "BooleanDetail",
+          "type": "object",
+          "properties": {
+            "expected": {
+              "type": "boolean"
+            },
+            "kind": {
+              "type": "string",
+              "const": "boolean"
+            },
+            "value": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "kind",
+            "value",
+            "expected"
+          ]
+        },
+        {
+          "title": "NumericDetail",
+          "type": "object",
+          "properties": {
+            "comparator": {
+              "$ref": "#/definitions/Comparator"
+            },
+            "kind": {
+              "type": "string",
+              "const": "numeric"
+            },
+            "threshold": {
+              "type": "number",
+              "format": "double"
+            },
+            "value": {
+              "type": "number",
+              "format": "double"
+            }
+          },
+          "required": [
+            "kind",
+            "value",
+            "threshold",
+            "comparator"
+          ]
+        }
+      ]
+    },
+    "EvalOutcome": {
+      "description": "The result of running one eval against a transcript.",
+      "type": "object",
+      "properties": {
+        "detail": {
+          "description": "Kind-specific verdict detail.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/EvalDetail"
+            }
+          ]
+        },
+        "label": {
+          "description": "The eval's label (name or criterion).",
+          "type": "string"
+        },
+        "passed": {
+          "description": "Whether the eval passed.",
+          "type": "boolean"
+        },
+        "reason": {
+          "description": "The judge's stated reason.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "passed",
+        "detail",
+        "reason"
+      ]
+    },
+    "Message": {
+      "description": "A single turn in the conversation.",
+      "type": "object",
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "role": {
+          "$ref": "#/definitions/Role"
+        }
+      },
+      "required": [
+        "role",
+        "content"
+      ]
+    },
+    "Role": {
+      "description": "Who produced a message.",
+      "oneOf": [
+        {
+          "description": "The (real or simulated) user driving the skill.",
+          "type": "string",
+          "const": "user"
+        },
+        {
+          "description": "The skill / assistant under test.",
+          "type": "string",
+          "const": "assistant"
+        },
+        {
+          "description": "System-level framing, if a provider chooses to surface it.",
+          "type": "string",
+          "const": "system"
+        }
+      ]
+    },
+    "Summary": {
+      "description": "Aggregate pass/fail counts for a report.",
+      "type": "object",
+      "properties": {
+        "cases": {
+          "description": "Distinct test cases represented.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "failed": {
+          "description": "Runs that failed.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "passed": {
+          "description": "Runs that passed.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "runs": {
+          "description": "Total (case × platform × model) runs.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "usage": {
+          "description": "Aggregated token/cost usage across every run in the report. Omitted\nwhen no run reported usage.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Usage"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "cases",
+        "runs",
+        "passed",
+        "failed"
+      ]
+    },
+    "Transcript": {
+      "description": "An ordered list of messages. Thin wrapper so the type reads clearly at call\nsites and so we can grow conversation-level helpers without churn.",
+      "type": "object",
+      "properties": {
+        "messages": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Message"
+          }
+        }
+      },
+      "required": [
+        "messages"
+      ]
+    },
+    "Usage": {
+      "description": "Token / cost usage for one provider call.\n\nEach field is independently optional because not every harness reports every\nsignal (cost is commonly absent on subscription auth; some harnesses report\nno usage at all). The whole struct is `Option<Usage>` on a turn — `None`\nmeans \"no signal,\" not \"zero.\"",
+      "type": "object",
+      "properties": {
+        "cost_usd": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "input_tokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "output_tokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}

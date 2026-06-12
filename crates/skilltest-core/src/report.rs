@@ -1,15 +1,18 @@
 //! Run results and the JSON report. The serialized shape here is the **stable
-//! contract** the pytest and vitest plugins parse, so changes must be made in
-//! lockstep with the Pydantic models and the Zod schema.
+//! contract** the language SDKs parse. These types are the source of truth:
+//! their JSON Schemas (via `skilltest schema`, goldens in `schemas/`) are what
+//! the SDK contract tests compare their Pydantic/Zod models against.
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::conversation::Transcript;
 use crate::eval::EvalOutcome;
 use crate::provider::Usage;
+use crate::skill::Finding;
 
 /// The result of running one test case on one (platform, model) pair.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct CaseRun {
     /// The test case name.
     pub case: String,
@@ -36,7 +39,7 @@ pub struct CaseRun {
 }
 
 /// Aggregate pass/fail counts for a report.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Summary {
     /// Distinct test cases represented.
     pub cases: usize,
@@ -53,7 +56,7 @@ pub struct Summary {
 }
 
 /// The top-level report for a `skilltest run` invocation.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Report {
     /// True iff every run passed.
     pub passed: bool,
@@ -147,5 +150,50 @@ impl Report {
             }
         }
         out
+    }
+}
+
+/// One problem found while validating a skill, as serialized in the
+/// `skilltest validate --format json` output.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ValidationFinding {
+    /// The skill directory the finding is about.
+    pub skill: String,
+    /// What is wrong and how to fix it.
+    pub message: String,
+}
+
+/// The top-level report for a `skilltest validate` invocation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ValidationReport {
+    /// True iff no findings were produced.
+    pub valid: bool,
+    /// Every finding, in discovery order.
+    pub findings: Vec<ValidationFinding>,
+}
+
+impl ValidationReport {
+    /// Build a validation report from raw findings.
+    #[must_use]
+    pub fn new(findings: &[Finding]) -> Self {
+        ValidationReport {
+            valid: findings.is_empty(),
+            findings: findings
+                .iter()
+                .map(|f| ValidationFinding {
+                    skill: f.skill.to_string_lossy().into_owned(),
+                    message: f.message.clone(),
+                })
+                .collect(),
+        }
+    }
+
+    /// Serialize to pretty JSON (the `--format json` output).
+    ///
+    /// # Errors
+    /// [`serde_json::Error`] only if a contained value cannot serialize, which
+    /// should not happen for these types.
+    pub fn to_json(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string_pretty(self)
     }
 }

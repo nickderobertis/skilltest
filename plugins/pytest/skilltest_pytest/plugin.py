@@ -3,7 +3,7 @@
 Drop a ``greets.skilltest.yaml`` next to your other tests and `pytest` will run
 it as a case, failing with the judge's reasons when an eval does not pass. For
 finer control — multiple platforms/models, or deterministic mix-in assertions on
-the transcript — call [`run_skill`][skilltest_pytest.runner.run_skill] from an
+the transcript — call [`run_skill`][skilltest_sdk.runner.run_skill] from an
 ordinary test function instead.
 
 Settings come from ``pytest.ini``/``pyproject.toml`` (``skilltest_bin``,
@@ -16,9 +16,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
-
-from .models import Report
-from .runner import run_skill
+from skilltest_sdk import Report, describe_failures, run_skill
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -56,7 +54,7 @@ class SkilltestFailure(Exception):
     """Raised when a collected case fails, carrying the report for reporting."""
 
     def __init__(self, report: Report) -> None:
-        super().__init__(report.describe_failures())
+        super().__init__(describe_failures(report))
         self.report = report
 
 

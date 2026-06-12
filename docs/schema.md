@@ -88,9 +88,9 @@ runs pass and `1` when any fail.
 
 ## Report (`--format json`)
 
-The stable JSON contract the plugins parse (Pydantic in pytest, Zod in vitest).
-Each run and the top-level summary may carry a `usage` object aggregated from
-every provider call:
+The stable JSON contract the language SDKs parse (Pydantic in `skilltest-sdk`,
+Zod in `@skilltest/sdk`). Each run and the top-level summary may carry a
+`usage` object aggregated from every provider call:
 
 ```json
 {
@@ -115,3 +115,48 @@ independently optional — `null` / absent means "this harness did not report
 the signal," not zero. The whole `usage` object is omitted when nothing
 reported usage (e.g. the fake provider in the gate). Cost is commonly absent
 on subscription auth.
+
+## Output contract: how the CLI and the SDKs stay in sync
+
+The Rust report types (`crates/skilltest-core/src/report.rs` and friends) are
+the single source of truth for the JSON contract, and every SDK's models are
+**generated** from them — no per-language model code is written or reviewed by
+hand. The chain, all driven by `scripts/gen-contract.sh` (`just gen-contract`):
+
+1. The types derive `schemars::JsonSchema`, and `skilltest schema
+   <report|validation>` emits their JSON Schema (draft-07 on purpose — the
+   dialect the generators below digest reliably).
+2. The script writes those schemas to `schemas/report.schema.json` and
+   `schemas/validation.schema.json` (the **goldens**), then generates each
+   SDK's models from them:
+   - Python: [`datamodel-code-generator`](https://github.com/koxudaxi/datamodel-code-generator)
+     → Pydantic v2 models in `skilltest_sdk/_report.py` / `_validation.py`, so
+     Python keeps full runtime validation for free.
+   - TypeScript: [`json-schema-to-typescript`](https://www.npmjs.com/package/json-schema-to-typescript)
+     → type declarations in `src/generated/` (types only by design; the drift
+     gate is what guarantees the shape, so the runner casts after `JSON.parse`
+     instead of re-validating).
+3. **Drift gate**: `just contract-check` (part of `just check`) regenerates
+   everything into a staging dir and diffs it against the checked-in
+   artifacts, so a contract change that skips regeneration — or a hand-edit of
+   generated code — fails CI with the exact diff. A Rust e2e test additionally
+   pins the binary to the checked-in goldens.
+
+Hand-written code never restates the contract's shape: helpers like
+`describe_failures`/`assistantText` live in thin facades (`models.py`,
+`helpers.ts`) typed against the generated models, so `ty`/`tsc` catch any
+helper that mentions a field that no longer exists.
+
+To change the contract: change the Rust types, run `just gen-contract`, commit
+the regenerated artifacts, and bump versions (a shape change is breaking for
+SDK consumers). Generated files are excluded from lint/format style rules (they
+are not hand-maintained), but type checkers still cover them.
+
+To add a language: pick the language's standard JSON-Schema-to-types generator
+(quicktype as the fallback), add its invocation and output paths to
+`scripts/gen-contract.sh`, and pin its version in that SDK's lockfile so the
+drift gate is deterministic.
+
+At runtime the SDKs stay tolerant on purpose: unknown JSON keys are ignored so
+an older SDK can read a newer CLI's output, while required fields are still
+enforced where validation exists.

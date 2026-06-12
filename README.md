@@ -16,7 +16,7 @@ models.
 │  skilltest   │ ───────────────────────▶ │ skilltest-core                │
 │  CLI         │                          │  load → converse → eval → report
 └──────────────┘                          └───────────────┬───────────────┘
-        ▲  pytest / vitest plugins                        │ Provider
+        ▲  SDKs + pytest / vitest packages                │ Provider
         │  (same JSON contract)                           ▼
         │                          ┌───────────────────────────────────────┐
    your test suite                 │ oneharness ──▶ claude-code / codex / … │
@@ -38,7 +38,8 @@ installing.
 
 ### Build from source
 
-skilltest is a Rust workspace with Python and TypeScript plugins. You need
+skilltest is a Rust workspace with Python and TypeScript SDKs and
+test-framework packages. You need
 `cargo` (+ `cargo-nextest`), [`uv`](https://docs.astral.sh/uv/), and
 `node`/[`pnpm`](https://pnpm.io), plus [`just`](https://github.com/casey/just).
 
@@ -101,10 +102,15 @@ example skill, and an example case (refusing to overwrite existing files).
 Exit codes: `0` all passed · `1` a case/skill failed · `2` bad input ·
 `3` provider failure.
 
-## Use as a plugin
+## Use from your language and test runner
 
-Same engine, surfaced as code in your existing test runner so you can add
-deterministic checks alongside the natural-language evals.
+Same engine, surfaced as code so you can add deterministic checks alongside the
+natural-language evals. Each language has one **SDK** that wraps the CLI and
+nothing else — [`skilltest-sdk`](sdks/python) (Python, Pydantic models) and
+[`@skilltest/sdk`](sdks/typescript) (TypeScript) — and one package per test
+framework built on it, which re-exports the SDK so a test suite needs a single
+dependency. SDK models are generated from the CLI's own JSON Schemas, so they
+cannot drift from the binary.
 
 **pytest** ([`plugins/pytest`](plugins/pytest)) — auto-collects
 `*.skilltest.yaml`, or call the API:
@@ -138,7 +144,12 @@ test("greeter", async () => {
 - **`crates/skilltest-cli`** — the `skilltest` binary, plus
   `skilltest-fake-provider`, a deterministic reference provider that lets the
   whole pipeline be tested without a live model.
-- **`plugins/{pytest,vitest}`** — thin, typed wrappers over that JSON contract.
+- **`sdks/{python,typescript}`** — one SDK per language: a thin, typed wrapper
+  over that JSON contract, with models generated from the golden schemas in
+  `schemas/` (themselves generated from the Rust types) and a CI drift gate —
+  see [`docs/schema.md`](docs/schema.md).
+- **`plugins/{pytest,vitest}`** — one package per test framework, built on its
+  language's SDK.
 
 The boundary to a model is the `Provider` trait ([`docs/protocol.md`](docs/protocol.md))
 with two backends: the default **oneharness** provider runs each skill on a
@@ -147,9 +158,9 @@ harness (Claude Code, Codex, …) by passing the skill via `--system`, threading
 and surfacing each result's normalized `usage` (token + cost totals) and
 `failure_kind` (auth / rate-limit / … classification). A **custom command**
 provider speaks a small JSON-lines protocol (this is how the deterministic
-`skilltest-fake-provider` keeps the test gate model-free). Today the plugin
-lineup is pytest and vitest; the architecture is built to grow to other
-languages and test frameworks.
+`skilltest-fake-provider` keeps the test gate model-free). Today the lineup is
+Python/pytest and TypeScript/vitest; adding a language means one new SDK under
+`sdks/`, and adding a test framework means one new package under `plugins/`.
 
 ## License
 

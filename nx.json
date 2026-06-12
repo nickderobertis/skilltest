@@ -10,7 +10,12 @@
       "{workspaceRoot}/Cargo.lock",
       "{workspaceRoot}/rustfmt.toml",
       "{workspaceRoot}/deny.toml",
-      "{workspaceRoot}/nx.json"
+      "{workspaceRoot}/nx.json",
+      "{workspaceRoot}/biome.json",
+      "{workspaceRoot}/pnpm-workspace.yaml",
+      "{workspaceRoot}/pnpm-lock.yaml",
+      "{workspaceRoot}/schemas/**/*",
+      "{workspaceRoot}/tests/fixtures/**/*"
     ]
   },
   "targetDefaults": {

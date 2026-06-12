@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use skilltest_core::{
     discover_cases, validate_path, CommandProvider, Config, Error, ExitCode, OneharnessProvider,
-    Overrides, Provider, ProviderConfig, Report, Result, Runner, TestCase,
+    Overrides, Provider, ProviderConfig, Report, Result, Runner, TestCase, ValidationReport,
 };
 
 /// Test AI skills across harness/model platforms with natural-language evals.
@@ -33,6 +33,8 @@ enum Command {
     Validate(ValidateArgs),
     /// Scaffold a starter project: a config, an example skill, and a case.
     Init(InitArgs),
+    /// Print the JSON Schema for a machine-readable output (the SDK contract).
+    Schema(SchemaArgs),
 }
 
 #[derive(Args)]
@@ -98,6 +100,21 @@ struct InitArgs {
     dir: PathBuf,
 }
 
+#[derive(Args)]
+struct SchemaArgs {
+    /// Which output contract to describe.
+    #[arg(value_enum, value_name = "TARGET")]
+    target: SchemaTarget,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum SchemaTarget {
+    /// The `skilltest run --format json` report.
+    Report,
+    /// The `skilltest validate --format json` report.
+    Validation,
+}
+
 #[derive(Clone, Copy, ValueEnum)]
 enum Format {
     /// A compact, human-readable summary.
@@ -133,6 +150,7 @@ where
         Command::Run(args) => cmd_run(cli.config.as_deref(), args),
         Command::Validate(args) => cmd_validate(args),
         Command::Init(args) => cmd_init(args),
+        Command::Schema(args) => cmd_schema(args),
     };
 
     match result {
@@ -213,17 +231,9 @@ fn cmd_validate(args: &ValidateArgs) -> Result<ExitCode> {
 
     match args.format {
         Format::Json => {
-            let report = serde_json::json!({
-                "valid": valid,
-                "findings": findings
-                    .iter()
-                    .map(|f| serde_json::json!({
-                        "skill": f.skill.to_string_lossy(),
-                        "message": f.message,
-                    }))
-                    .collect::<Vec<_>>(),
-            });
-            let json = serde_json::to_string_pretty(&report)
+            let report = ValidationReport::new(&findings);
+            let json = report
+                .to_json()
                 .map_err(|e| Error::Invalid(format!("could not serialize findings: {e}")))?;
             println!("{json}");
         }
@@ -255,6 +265,20 @@ fn cmd_init(args: &InitArgs) -> Result<ExitCode> {
         "\nNext: skilltest run cases/example.yaml\n\
          Try it offline:  skilltest run cases/example.yaml --provider skilltest-fake-provider"
     );
+    Ok(ExitCode::Success)
+}
+
+fn cmd_schema(args: &SchemaArgs) -> Result<ExitCode> {
+    // Draft-07 on purpose: it is the dialect the SDK model generators
+    // (datamodel-code-generator, json-schema-to-typescript) digest reliably.
+    let generator = schemars::generate::SchemaSettings::draft07().into_generator();
+    let schema = match args.target {
+        SchemaTarget::Report => generator.into_root_schema_for::<Report>(),
+        SchemaTarget::Validation => generator.into_root_schema_for::<ValidationReport>(),
+    };
+    let json = serde_json::to_string_pretty(&schema)
+        .map_err(|e| Error::Invalid(format!("could not serialize schema: {e}")))?;
+    println!("{json}");
     Ok(ExitCode::Success)
 }
 

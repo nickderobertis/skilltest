@@ -2,7 +2,9 @@
 
 A [pytest](https://pytest.org) plugin for [skilltest](../../README.md): run
 AI-skill tests and natural-language evals as ordinary pytest tests, and mix in
-your own deterministic checks.
+your own deterministic checks. Built on
+[`skilltest-sdk`](../../sdks/python/README.md) — the SDK's code API is
+re-exported here, so a pytest suite needs only this one dependency.
 
 ## Two ways to use it
 

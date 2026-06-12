@@ -1,12 +1,15 @@
-# Canonical command surface for skilltest (Rust core + pytest & vitest plugins).
+# Canonical command surface for skilltest (Rust core + per-language SDKs +
+# per-framework test packages).
 #
 # `just` is a thin wrapper over **nx**: each recipe drives the per-project targets
 # defined in the `project.json` files, and the dependency graph (core <- cli <-
-# {pytest, vitest}) lets nx build prerequisites and skip unaffected work.
+# {python sdk, ts sdk} <- {pytest, vitest}) lets nx build prerequisites and skip
+# unaffected work.
 #
 # `just check` runs the gate over only the **affected** projects (vs the nx base,
-# `main`); `just check-all` forces every project. `just bootstrap` must work from
-# a clean clone. Requires `cargo` (+ `cargo-nextest`), `uv`, and `pnpm`/`node`.
+# `main`) plus the contract drift gate, which is workspace-level and always runs;
+# `just check-all` forces every project. `just bootstrap` must work from a clean
+# clone. Requires `cargo` (+ `cargo-nextest`), `uv`, and `pnpm`/`node`.
 
 nx := "pnpm exec nx"
 
@@ -15,20 +18,24 @@ default:
     @just --list
 
 # Set up the project from a clean clone: install nx + per-stack dependencies.
+# The root `pnpm install` covers nx and the whole TS workspace (both packages).
 bootstrap:
     pnpm install
     cargo fetch
+    cd sdks/python && uv sync
     cd plugins/pytest && uv sync
-    cd plugins/vitest && pnpm install
 
-# Full quality gate over the affected projects: format, lint, type check, unit +
-# e2e. Fails on any issue (no warnings-only mode). Use `check-all` to force all.
+# Full quality gate over the affected projects (format, lint, type check, unit +
+# e2e) plus the contract drift gate. Fails on any issue (no warnings-only mode).
+# Use `check-all` to force every project.
 check:
+    @bash scripts/gen-contract.sh --check
     {{nx}} affected -t format-check lint typecheck test test-e2e
     @echo "check: all gates passed"
 
 # Same gate, but across every project regardless of what changed.
 check-all:
+    @bash scripts/gen-contract.sh --check
     {{nx}} run-many -t format-check lint typecheck test test-e2e
     @echo "check-all: all gates passed"
 
@@ -36,12 +43,24 @@ check-all:
 build:
     {{nx}} affected -t build
 
+# Regenerate the contract artifacts: the golden JSON Schemas in schemas/ from
+# the Rust report types, then every SDK's generated models from the schemas.
+# Run this whenever the report types change; `check` fails while it is stale.
+gen-contract:
+    @bash scripts/gen-contract.sh
+
+# Drift gate: verify the checked-in contract artifacts match what the Rust
+# types generate (part of `just check`; workspace-level, not per-project).
+contract-check:
+    @bash scripts/gen-contract.sh --check
+
 # Fast unit tests (Rust library/bin suites) for affected projects.
 test:
     {{nx}} affected -t test
 
 # End-to-end suites for affected projects, driving the built CLI as users do.
-# nx builds the CLI first via the project graph (plugins depend on skilltest-cli).
+# nx builds prerequisites first via the project graph (SDKs depend on
+# skilltest-cli; framework packages depend on their SDK).
 test-e2e:
     {{nx}} affected -t test-e2e
 
@@ -73,10 +92,10 @@ audit:
 # Upgrade dependencies across all stacks (nx + the three toolchains), then re-run
 # the full gate across every project.
 upgrade:
-    pnpm update --latest
+    pnpm -r update --latest
     cargo update
+    cd sdks/python && uv lock --upgrade && uv sync
     cd plugins/pytest && uv lock --upgrade && uv sync
-    cd plugins/vitest && pnpm update --latest
     @just check-all
 
 # --- Live e2e against real harnesses (opt-in; never part of `just check`) ------

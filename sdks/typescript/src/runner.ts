@@ -1,19 +1,14 @@
 /**
  * Run the `skilltest` CLI as a subprocess and parse its JSON contract.
  *
- * This is the code-level API a vitest test reaches for: call {@link runSkill},
- * get a typed {@link Report}, assert on `report.passed`, and mix in deterministic
- * checks against the transcript.
+ * This is the code-level API: call {@link runSkill}, get a typed
+ * {@link Report}, assert on `report.passed`, and mix in deterministic checks
+ * against the transcript.
  */
 import { spawn } from "node:child_process";
-import type { z } from "zod";
 import { SkilltestError, SkilltestProviderError, SkilltestUsageError } from "./errors.js";
-import {
-  type Report,
-  ReportSchema,
-  type ValidationReport,
-  ValidationReportSchema,
-} from "./schema.js";
+import type { Report } from "./generated/report.js";
+import type { ValidationReport } from "./generated/validation.js";
 
 /** Environment variables supplying defaults for the binary and provider. */
 export const ENV_BIN = "SKILLTEST_BIN";
@@ -85,20 +80,16 @@ function raiseForStatus(result: Captured): void {
   throw new SkilltestError(`skilltest exited ${result.status}: ${detail}`);
 }
 
-function parse<T>(schema: z.ZodType<T>, stdout: string): T {
-  let json: unknown;
+// The cast is sound by construction: the SDK's types are generated from the
+// CLI's own JSON Schemas and the contract drift gate (`just gen-contract
+// --check` in CI) fails when they diverge, so the shape is not re-validated
+// here at runtime.
+function parse<T>(stdout: string): T {
   try {
-    json = JSON.parse(stdout);
+    return JSON.parse(stdout) as T;
   } catch (err) {
     throw new SkilltestError(`skilltest did not emit JSON: ${(err as Error).message}`);
   }
-  const result = schema.safeParse(json);
-  if (!result.success) {
-    throw new SkilltestError(
-      `skilltest output did not match the expected schema: ${result.error.message}`,
-    );
-  }
-  return result.data;
 }
 
 /**
@@ -121,7 +112,7 @@ export async function runSkill(casePath: string, options: RunOptions = {}): Prom
 
   const result = await capture(resolveBin(options.bin), args, options.cwd);
   raiseForStatus(result);
-  return parse(ReportSchema, result.stdout);
+  return parse<Report>(result.stdout);
 }
 
 /** Validate a skill directory (or a folder of them) and return findings. */
@@ -132,5 +123,5 @@ export async function validateSkill(
   const args = ["validate", path, "--format", "json"];
   const result = await capture(resolveBin(options.bin), args, options.cwd);
   raiseForStatus(result);
-  return parse(ValidationReportSchema, result.stdout);
+  return parse<ValidationReport>(result.stdout);
 }

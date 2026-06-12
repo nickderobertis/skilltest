@@ -51,6 +51,12 @@ describe("runSkill", () => {
       runSkill(caseFile("greet_pass.yaml"), { provider: "/nonexistent/provider-bin" }),
     ).rejects.toBeInstanceOf(SkilltestProviderError);
   });
+
+  it("throws a provider error when the binary is missing", async () => {
+    await expect(
+      runSkill(caseFile("greet_pass.yaml"), { bin: "/nonexistent/skilltest-bin" }),
+    ).rejects.toBeInstanceOf(SkilltestProviderError);
+  });
 });
 
 describe("validateSkill", () => {

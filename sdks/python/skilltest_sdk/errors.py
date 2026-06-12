@@ -10,7 +10,7 @@ from __future__ import annotations
 
 
 class SkilltestError(Exception):
-    """Base class for skilltest plugin errors."""
+    """Base class for skilltest SDK errors."""
 
 
 class SkilltestUsageError(SkilltestError):

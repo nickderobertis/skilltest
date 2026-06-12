@@ -3,6 +3,10 @@
 These tests exercise the *real* `skilltest` binary and the deterministic
 `skilltest-fake-provider`, both built by `cargo build` (run via `just bootstrap`
 / `just check` before the Python suite). Only the model is faked.
+
+`pytester` is enabled so the suite can run the collector end-to-end in a child
+pytest process and assert on its outcome — including failures, which cannot be
+asserted from inside the same run.
 """
 
 from __future__ import annotations
@@ -12,14 +16,16 @@ from pathlib import Path
 
 import pytest
 
+pytest_plugins = ["pytester"]
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 TARGET = REPO_ROOT / "target" / "debug"
 SKILLTEST_BIN = TARGET / "skilltest"
 FAKE_PROVIDER = TARGET / "skilltest-fake-provider"
 FIXTURES = REPO_ROOT / "tests" / "fixtures"
 
-# Defaults so both the code-API tests and the auto-collected case file find the
-# binary and provider without per-call wiring.
+# Defaults so the collector (and the child pytest runs) find the binary and
+# provider without per-call wiring.
 os.environ.setdefault("SKILLTEST_BIN", str(SKILLTEST_BIN))
 os.environ.setdefault("SKILLTEST_PROVIDER", str(FAKE_PROVIDER))
 

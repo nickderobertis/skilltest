@@ -2,7 +2,7 @@
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
   "name": "@skilltest/vitest",
   "projectType": "library",
-  "implicitDependencies": ["skilltest-cli"],
+  "implicitDependencies": ["@skilltest/sdk"],
   "targets": {
     "build": {
       "executor": "nx:run-commands",
@@ -14,25 +14,23 @@
     "lint": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "pnpm exec biome check .",
-        "cwd": "{projectRoot}"
+        "command": "pnpm exec biome check {projectRoot}"
       }
     },
     "format-check": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "pnpm exec biome format .",
-        "cwd": "{projectRoot}"
+        "command": "pnpm exec biome format {projectRoot}"
       }
     },
     "format": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "pnpm exec biome check --write .",
-        "cwd": "{projectRoot}"
+        "command": "pnpm exec biome check --write {projectRoot}"
       }
     },
     "typecheck": {
+      "dependsOn": ["^build"],
       "executor": "nx:run-commands",
       "options": {
         "command": "pnpm exec tsc -p tsconfig.json",

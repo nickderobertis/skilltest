@@ -56,7 +56,7 @@ pub struct JudgeQuery<'a> {
 /// signal (cost is commonly absent on subscription auth; some harnesses report
 /// no usage at all). The whole struct is `Option<Usage>` on a turn — `None`
 /// means "no signal," not "zero."
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Usage {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input_tokens: Option<u64>,

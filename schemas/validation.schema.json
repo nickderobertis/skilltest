@@ -1,0 +1,43 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ValidationReport",
+  "description": "The top-level report for a `skilltest validate` invocation.",
+  "type": "object",
+  "properties": {
+    "findings": {
+      "description": "Every finding, in discovery order.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/ValidationFinding"
+      }
+    },
+    "valid": {
+      "description": "True iff no findings were produced.",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "valid",
+    "findings"
+  ],
+  "definitions": {
+    "ValidationFinding": {
+      "description": "One problem found while validating a skill, as serialized in the\n`skilltest validate --format json` output.",
+      "type": "object",
+      "properties": {
+        "message": {
+          "description": "What is wrong and how to fix it.",
+          "type": "string"
+        },
+        "skill": {
+          "description": "The skill directory the finding is about.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "skill",
+        "message"
+      ]
+    }
+  }
+}

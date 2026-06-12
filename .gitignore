@@ -13,7 +13,6 @@ dist/
 
 # Node / TypeScript
 node_modules/
-plugins/vitest/dist/
 *.tsbuildinfo
 
 # Nx
