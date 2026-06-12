@@ -14,7 +14,9 @@ permissions:
   pull-requests: read
 
 jobs:
-  lint:
+  # Job id is the status-check context. Keep it `pr-title` (not `lint`) so it reads
+  # clearly in the branch's required checks.
+  pr-title:
     runs-on: ubuntu-latest
     if: github.repository == 'nickderobertis/skilltest'
     steps:
