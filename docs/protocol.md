@@ -126,6 +126,7 @@ judge:
   # base_url: https://...            # optional (proxy / OpenAI-compatible gateway)
   # timeout_secs: 60
   # curl_bin: curl
+  # strict_json: true                # structured-outputs verdict (default on)
 judge_model: claude-opus-4-8   # MUST be a valid API model id for the vendor
 ```
 
@@ -134,9 +135,18 @@ Details and rationale:
 - **Model.** The judge uses the run's `judge_model`; with `vendor: api` it must
   be a real API model id (`claude-opus-4-8`, `gpt-4o`, …), not an oneharness
   model alias. `platforms`/`models` (the skill under test) are unaffected.
-- **Same prompts, same parsing.** The judge and simulated-user prompts and the
-  tolerant `{…}` verdict extraction are identical to the oneharness path, so the
-  two backends are directly comparable — only the transport differs.
+- **Same prompts.** The judge and simulated-user prompts are identical to the
+  oneharness path, so the two backends are directly comparable — only the
+  transport and (for the judge) the output constraint differ.
+- **Strict JSON (default on).** With `strict_json: true`, the judge verdict is
+  constrained to the `{value, reason}` schema via the vendor's structured-outputs
+  feature (Anthropic `output_config.format`, OpenAI `response_format:
+  json_schema` with `strict: true`), so the reply is guaranteed parseable instead
+  of scraped. The tolerant `{…}` extraction still runs as a backstop; set
+  `strict_json: false` for a model/endpoint that doesn't support structured
+  outputs. The simulated user is never schema-constrained.
+- **Retries.** Transient API failures (rate limit, overload) are retried with
+  exponential backoff before surfacing; auth/quota/not-found errors fail fast.
 - **Transport.** The request is sent with `curl` (Rust has no official vendor
   SDK): Anthropic `POST /v1/messages`, OpenAI `POST /v1/chat/completions`. The
   API key is read from `api_key_env` at run time and passed through a private

@@ -123,3 +123,9 @@ test-harness id:
 # Convenience: the claude-code live smoke via the generic per-harness path.
 test-claude:
     @bash scripts/e2e-harness.sh claude-code
+
+# Live check of the direct-API judge against the real Anthropic + OpenAI APIs
+# (needs ANTHROPIC_API_KEY and/or OPENAI_API_KEY + network). Each vendor's test
+# self-skips when its key is absent. This is the suite CI's e2e-judge-api runs.
+test-judge-api:
+    cargo test -p skilltest-cli --test live_api_judge -- --ignored --nocapture

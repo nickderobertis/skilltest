@@ -720,7 +720,12 @@ pub struct ApiJudgeProvider {
     endpoint: String,
     timeout_secs: u64,
     curl_bin: String,
+    strict_json: bool,
 }
+
+/// How many times a transient API failure (rate limit / overload) is retried
+/// before giving up, with exponential backoff between attempts.
+const MAX_RETRIES: u32 = 2;
 
 /// One model reply plus the usage the API reported for it.
 #[derive(Debug)]
@@ -759,11 +764,21 @@ impl ApiJudgeProvider {
             endpoint,
             timeout_secs: config.timeout_secs,
             curl_bin: config.curl_bin.clone(),
+            strict_json: config.strict_json,
         }
     }
 
     /// One chat round trip: build the vendor request, POST it, parse the reply.
-    fn chat(&self, model: &str, system: &str, user: &str) -> Result<ChatOutcome> {
+    /// `schema`, when set, constrains the reply to that JSON schema via the
+    /// vendor's structured-outputs feature. Transient failures (rate limit /
+    /// overload) are retried with exponential backoff.
+    fn chat(
+        &self,
+        model: &str,
+        system: &str,
+        user: &str,
+        schema: Option<serde_json::Value>,
+    ) -> Result<ChatOutcome> {
         let key = std::env::var(&self.api_key_env).map_err(|_| {
             Error::provider_classified(
                 "api-judge",
@@ -771,11 +786,24 @@ impl ApiJudgeProvider {
                 "auth",
             )
         })?;
-        let body = build_chat_body(self.vendor, model, system, user);
+        let body = build_chat_body(self.vendor, model, system, user, schema);
         let payload = serde_json::to_vec(&body)
             .map_err(|e| Error::provider("api-judge", format!("could not encode request: {e}")))?;
-        let raw = self.run_curl(&key, &payload)?;
-        parse_chat_response(self.vendor, &raw)
+
+        let mut attempt = 0;
+        loop {
+            let result = self
+                .run_curl(&key, &payload)
+                .and_then(|raw| parse_chat_response(self.vendor, &raw));
+            match result {
+                Ok(outcome) => return Ok(outcome),
+                Err(err) if attempt < MAX_RETRIES && is_retryable(&err) => {
+                    attempt += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(500 * (1 << attempt)));
+                }
+                Err(err) => return Err(err),
+            }
+        }
     }
 
     /// Per-vendor request headers.
@@ -867,7 +895,8 @@ impl Provider for ApiJudgeProvider {
 
     fn simulate_user(&self, model: &str, persona: &str, messages: &[Message]) -> Result<UserTurn> {
         let prompt = build_user_prompt(persona, messages);
-        let outcome = self.chat(model, JUDGE_SYSTEM, &prompt)?;
+        // Free-form text reply — never schema-constrained.
+        let outcome = self.chat(model, JUDGE_SYSTEM, &prompt, None)?;
         Ok(UserTurn {
             message: outcome.text.trim().to_string(),
             stop: false,
@@ -882,7 +911,10 @@ impl Provider for ApiJudgeProvider {
         messages: &[Message],
     ) -> Result<JudgeVerdict> {
         let prompt = build_judge_prompt(query, messages);
-        let outcome = self.chat(model, JUDGE_SYSTEM, &prompt)?;
+        // Constrain the verdict to the `{value, reason}` schema when strict JSON
+        // is on, so the reply is guaranteed parseable rather than scraped.
+        let schema = self.strict_json.then(|| verdict_schema(query.kind));
+        let outcome = self.chat(model, JUDGE_SYSTEM, &prompt, schema)?;
         let mut verdict = parse_verdict(query.kind, &outcome.text)?;
         verdict.usage = outcome.usage;
         Ok(verdict)
@@ -984,25 +1016,77 @@ fn write_curl_config(
     Ok(())
 }
 
+/// The JSON schema a judge verdict must match: `{value, reason}` with `value`
+/// typed by the eval kind. Numeric bounds are intentionally omitted — vendor
+/// structured outputs don't enforce `minimum`/`maximum`, and the runner already
+/// range-checks the parsed value.
+fn verdict_schema(kind: JudgeKind) -> serde_json::Value {
+    let value_type = match kind {
+        JudgeKind::Boolean => "boolean",
+        JudgeKind::Numeric => "number",
+    };
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "value": { "type": value_type },
+            "reason": { "type": "string" },
+        },
+        "required": ["value", "reason"],
+        "additionalProperties": false,
+    })
+}
+
 /// Build the JSON request body for one chat completion. Outgoing data, so it is
-/// constructed directly; responses are parsed into typed models below.
-fn build_chat_body(vendor: ApiVendor, model: &str, system: &str, user: &str) -> serde_json::Value {
+/// constructed directly; responses are parsed into typed models below. When
+/// `schema` is set, the vendor's structured-outputs field is added so the reply
+/// is guaranteed to match it.
+fn build_chat_body(
+    vendor: ApiVendor,
+    model: &str,
+    system: &str,
+    user: &str,
+    schema: Option<serde_json::Value>,
+) -> serde_json::Value {
     match vendor {
-        ApiVendor::Anthropic => serde_json::json!({
-            "model": model,
-            "max_tokens": 1024,
-            "system": system,
-            "messages": [{ "role": "user", "content": user }],
-        }),
-        ApiVendor::Openai => serde_json::json!({
-            "model": model,
-            "max_tokens": 1024,
-            "messages": [
-                { "role": "system", "content": system },
-                { "role": "user", "content": user },
-            ],
-        }),
+        ApiVendor::Anthropic => {
+            let mut body = serde_json::json!({
+                "model": model,
+                "max_tokens": 1024,
+                "system": system,
+                "messages": [{ "role": "user", "content": user }],
+            });
+            if let Some(schema) = schema {
+                body["output_config"] =
+                    serde_json::json!({ "format": { "type": "json_schema", "schema": schema } });
+            }
+            body
+        }
+        ApiVendor::Openai => {
+            let mut body = serde_json::json!({
+                "model": model,
+                "max_tokens": 1024,
+                "messages": [
+                    { "role": "system", "content": system },
+                    { "role": "user", "content": user },
+                ],
+            });
+            if let Some(schema) = schema {
+                body["response_format"] = serde_json::json!({
+                    "type": "json_schema",
+                    "json_schema": { "name": "verdict", "strict": true, "schema": schema },
+                });
+            }
+            body
+        }
     }
+}
+
+/// True iff the error is a transient API condition worth retrying.
+fn is_retryable(err: &Error) -> bool {
+    matches!(
+        err,
+        Error::Provider { kind: Some(k), .. } if k == "rate_limit" || k == "overloaded"
+    )
 }
 
 // Typed views of the vendor responses (trust-boundary input — always parsed,
@@ -1082,6 +1166,11 @@ fn classify_api_error(kind: Option<&str>) -> Option<String> {
         "rate_limit_error" | "rate_limit_exceeded" => Some("rate_limit".to_string()),
         "insufficient_quota" | "billing_error" => Some("quota".to_string()),
         "not_found_error" => Some("model_not_found".to_string()),
+        // Transient server-side conditions — surfaced as `overloaded` so the
+        // runner retries them (see `is_retryable`).
+        "overloaded_error" | "api_error" | "server_error" | "service_unavailable" => {
+            Some("overloaded".to_string())
+        }
         _ => None,
     }
 }
@@ -1446,6 +1535,7 @@ mod tests {
             base_url: None,
             timeout_secs: 60,
             curl_bin: "curl".to_string(),
+            strict_json: true,
         }
     }
 
@@ -1471,6 +1561,7 @@ mod tests {
             base_url: Some("https://proxy.example/v1/chat/completions".to_string()),
             timeout_secs: 5,
             curl_bin: "curl".to_string(),
+            strict_json: true,
         });
         assert_eq!(provider.api_key_env, "MY_KEY");
         assert_eq!(
@@ -1481,17 +1572,61 @@ mod tests {
 
     #[test]
     fn build_chat_body_shapes_per_vendor() {
-        let anthropic = build_chat_body(ApiVendor::Anthropic, "claude-x", "sys", "hi");
+        let anthropic = build_chat_body(ApiVendor::Anthropic, "claude-x", "sys", "hi", None);
         assert_eq!(anthropic["model"], "claude-x");
         assert_eq!(anthropic["system"], "sys");
         assert_eq!(anthropic["messages"][0]["role"], "user");
         // Anthropic carries the system prompt in its own top-level field.
-        assert!(anthropic.get("messages").unwrap().as_array().unwrap().len() == 1);
+        assert_eq!(anthropic["messages"].as_array().unwrap().len(), 1);
+        // No schema requested → no structured-outputs field.
+        assert!(anthropic.get("output_config").is_none());
 
-        let openai = build_chat_body(ApiVendor::Openai, "gpt-x", "sys", "hi");
+        let openai = build_chat_body(ApiVendor::Openai, "gpt-x", "sys", "hi", None);
         assert_eq!(openai["messages"][0]["role"], "system");
         assert_eq!(openai["messages"][1]["role"], "user");
         assert!(openai.get("system").is_none());
+        assert!(openai.get("response_format").is_none());
+    }
+
+    #[test]
+    fn build_chat_body_attaches_strict_schema_per_vendor() {
+        let schema = verdict_schema(JudgeKind::Boolean);
+        let anthropic = build_chat_body(
+            ApiVendor::Anthropic,
+            "claude-x",
+            "sys",
+            "hi",
+            Some(schema.clone()),
+        );
+        // Anthropic uses output_config.format.
+        assert_eq!(anthropic["output_config"]["format"]["type"], "json_schema");
+        assert_eq!(
+            anthropic["output_config"]["format"]["schema"]["properties"]["value"]["type"],
+            "boolean"
+        );
+
+        let numeric = verdict_schema(JudgeKind::Numeric);
+        let openai = build_chat_body(ApiVendor::Openai, "gpt-x", "sys", "hi", Some(numeric));
+        // OpenAI uses response_format.json_schema with strict: true.
+        assert_eq!(openai["response_format"]["type"], "json_schema");
+        assert_eq!(openai["response_format"]["json_schema"]["strict"], true);
+        assert_eq!(
+            openai["response_format"]["json_schema"]["schema"]["properties"]["value"]["type"],
+            "number"
+        );
+    }
+
+    #[test]
+    fn verdict_schema_requires_value_and_reason_with_no_extras() {
+        let schema = verdict_schema(JudgeKind::Numeric);
+        assert_eq!(schema["additionalProperties"], false);
+        let required: Vec<&str> = schema["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert_eq!(required, ["value", "reason"]);
     }
 
     #[test]
@@ -1548,8 +1683,27 @@ mod tests {
             classify_api_error(Some("not_found_error")).as_deref(),
             Some("model_not_found")
         );
+        assert_eq!(
+            classify_api_error(Some("overloaded_error")).as_deref(),
+            Some("overloaded")
+        );
         assert_eq!(classify_api_error(Some("something_else")), None);
         assert_eq!(classify_api_error(None), None);
+    }
+
+    #[test]
+    fn retryable_covers_transient_errors_only() {
+        let overloaded = r#"{"error":{"type":"overloaded_error","message":"busy"}}"#;
+        let err = parse_chat_response(ApiVendor::Anthropic, overloaded).unwrap_err();
+        assert!(is_retryable(&err), "overload should retry");
+
+        let rate = r#"{"error":{"type":"rate_limit_error","message":"slow"}}"#;
+        let err = parse_chat_response(ApiVendor::Anthropic, rate).unwrap_err();
+        assert!(is_retryable(&err), "rate limit should retry");
+
+        let auth = r#"{"error":{"type":"authentication_error","message":"bad key"}}"#;
+        let err = parse_chat_response(ApiVendor::Anthropic, auth).unwrap_err();
+        assert!(!is_retryable(&err), "auth must not retry");
     }
 
     #[test]

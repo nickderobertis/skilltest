@@ -30,6 +30,10 @@ fn default_curl_bin() -> String {
     "curl".to_string()
 }
 
+fn default_true() -> bool {
+    true
+}
+
 /// Settings for the default [`oneharness`](https://github.com/nickderobertis/oneharness)
 /// provider, which runs each prompt on a harness via `oneharness run`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -121,6 +125,13 @@ pub struct ApiJudgeConfig {
     /// The `curl` binary (resolved on `PATH`).
     #[serde(default = "default_curl_bin")]
     pub curl_bin: String,
+    /// Constrain the judge's verdict to the `{value, reason}` JSON schema via the
+    /// vendor's structured-outputs feature (Anthropic `output_config.format`,
+    /// OpenAI `response_format: json_schema`). On by default — it removes a class
+    /// of judge-parse fragility. Turn it off for a model/endpoint that doesn't
+    /// support structured outputs (the tolerant `{…}` extraction still applies).
+    #[serde(default = "default_true")]
+    pub strict_json: bool,
 }
 
 /// How evals and the simulated user are judged, independent of the provider that
@@ -420,6 +431,7 @@ provider:\n  kind: oneharness\njudge:\n  kind: api\n  vendor: anthropic\n  timeo
         // Unspecified fields fall back to defaults.
         assert_eq!(api.curl_bin, "curl");
         assert!(api.api_key_env.is_none());
+        assert!(api.strict_json, "strict JSON is on by default");
         config.validate().unwrap();
     }
 

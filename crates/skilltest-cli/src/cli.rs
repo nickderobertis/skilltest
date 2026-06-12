@@ -303,6 +303,7 @@ fn report_error(err: &Error) -> ExitCode {
                     "hint: the harness does not recognize this model — check `--model` and `oneharness list`"
                 }
                 Some("quota") => "hint: provider quota exhausted — check your account limits",
+                Some("overloaded") => "hint: the API is temporarily overloaded — retried already; try again shortly",
                 Some(other) => {
                     eprintln!("classified as: {other}");
                     "hint: see provider docs for this failure class"

@@ -51,6 +51,7 @@ must prove a skill still behaves.
 | `.github/workflows/pr-title.yml` | Enforces a Conventional-Commits PR title (the squash-merge subject semantic-release parses). |
 | `.github/workflows/bundle-smoke.yml` | On PR + push to `main`, proves the SDKs run the **bundled** CLI (not `$SKILLTEST_BIN`): builds the CLI per target, installs the publish-shape packages, and runs a case through each plugin on a native runner. Covers linux x64/arm64 + darwin arm64; the Intel-macOS (`macos-13`) runner is skipped here (unreliable queue) though that binary is still built/published. |
 | `.github/workflows/e2e-<id>.yml` | One live per-harness e2e each (claude, codex, goose, opencode, cursor, crush, qwen, copilot), gated to the canonical repo and non-fork PRs. |
+| `.github/workflows/e2e-judge-api.yml` | Live e2e for the **direct-API judge** (`ApiJudgeProvider`): calls the real Anthropic + OpenAI APIs (strict-JSON structured outputs, verdict parsing, usage), needs `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`, gated to the canonical repo and non-fork PRs. No oneharness/harness CLI. |
 | `nx.json` | Nx workspace config: the `affected` base, cache/input rules, and per-target defaults (`dependsOn`, caching). |
 | `<project>/project.json` | One per package (`crates/skilltest-{core,cli}`, `sdks/{python,typescript}`, `plugins/{pytest,vitest}`): the package's nx targets and its `implicitDependencies` edge in the graph. |
 
