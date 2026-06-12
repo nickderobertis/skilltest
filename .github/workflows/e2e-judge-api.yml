@@ -1,0 +1,69 @@
+name: E2E (API Judge)
+
+# Live end-to-end check for the direct-API judge (ApiJudgeProvider): it calls the
+# real Anthropic and OpenAI APIs through curl, exercising strict-JSON structured
+# outputs, verdict parsing, and usage normalization end to end. Unlike ci.yml this
+# needs network, paid model calls, and the ANTHROPIC_API_KEY / OPENAI_API_KEY
+# secrets, so it lives in its own workflow gated to trusted contexts only.
+#
+# It does NOT need oneharness or any harness CLI — the API judge talks to the
+# vendor APIs directly. Each vendor's test self-skips when its key is absent, so a
+# missing key degrades to a skip rather than a hard failure.
+#
+# Security: a secret in a public repo must never be reachable by untrusted code.
+# GitHub already withholds secrets from fork pull requests; the job `if` below is
+# defense in depth — it runs only in the canonical repo and never for a PR whose
+# head is a fork, so this workflow can be edited in a fork PR without exposing the
+# keys.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-judge-api-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  live:
+    name: api-judge live e2e
+    if: >-
+      github.repository == 'nickderobertis/skilltest' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify at least one judge key is present
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [ -z "${ANTHROPIC_API_KEY:-}" ] && [ -z "${OPENAI_API_KEY:-}" ]; then
+            echo "::error::Neither ANTHROPIC_API_KEY nor OPENAI_API_KEY is set. Sync them with 'gh-secrets manifest sync' (they live in Bitwarden), or set one directly: gh secret set ANTHROPIC_API_KEY --repo ${{ github.repository }}"
+            exit 1
+          fi
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install just
+        uses: extractions/setup-just@v2
+
+      - name: Live e2e against the real Anthropic + OpenAI APIs
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: just test-judge-api

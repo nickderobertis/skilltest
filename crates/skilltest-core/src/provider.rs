@@ -15,7 +15,7 @@ use std::process::{Command, Stdio};
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::OneharnessConfig;
+use crate::config::{ApiJudgeConfig, ApiVendor, OneharnessConfig};
 use crate::conversation::{Message, Role};
 use crate::error::{Error, Result};
 use crate::eval::JudgeValue;
@@ -693,6 +693,574 @@ pub fn supports_resume(harness: &str) -> bool {
     matches!(harness, "claude-code" | "opencode" | "cursor")
 }
 
+// ---------------------------------------------------------------------------
+// ApiJudgeProvider + SplitProvider
+// ---------------------------------------------------------------------------
+
+/// A judge-only [`Provider`] that scores evals and plays the simulated user with
+/// a *direct* model API call (Anthropic or OpenAI), rather than running them
+/// through a harness.
+///
+/// Why this exists: routing the judge through a full agentic harness pays an
+/// agent-loop cold start on every short verdict. A direct API call is one HTTP
+/// round trip — faster and cheaper on API-key auth — and still reuses the exact
+/// same judge/user prompts and tolerant verdict parsing as
+/// [`OneharnessProvider`], so the two are directly comparable.
+///
+/// It does not run skills: `respond` returns an error. Compose it with a
+/// skill-running provider via [`SplitProvider`] so the harness under test still
+/// drives `respond`, while the judge runs on the API.
+///
+/// The request is sent with `curl` (Rust has no official vendor SDK). The API
+/// key is read from an env var and passed through a private (`0600`) `curl`
+/// config file, so it never appears in `argv` / `ps`.
+pub struct ApiJudgeProvider {
+    vendor: ApiVendor,
+    api_key_env: String,
+    endpoint: String,
+    timeout_secs: u64,
+    curl_bin: String,
+    strict_json: bool,
+}
+
+/// How many times a transient API failure (rate limit / overload) is retried
+/// before giving up, with exponential backoff between attempts.
+const MAX_RETRIES: u32 = 2;
+
+/// One model reply plus the usage the API reported for it.
+#[derive(Debug)]
+struct ChatOutcome {
+    text: String,
+    usage: Option<Usage>,
+}
+
+/// A minimal system prompt; the full judge / user-simulation instructions live
+/// in the shared prompt builders, so this stays identical across vendors.
+const JUDGE_SYSTEM: &str =
+    "Follow the user's instructions exactly and respond with only what they ask for.";
+
+impl ApiJudgeProvider {
+    /// Build a provider from its configuration, resolving per-vendor defaults
+    /// for the API-key env var and endpoint.
+    #[must_use]
+    pub fn new(config: &ApiJudgeConfig) -> Self {
+        let api_key_env = config
+            .api_key_env
+            .clone()
+            .unwrap_or_else(|| match config.vendor {
+                ApiVendor::Anthropic => "ANTHROPIC_API_KEY".to_string(),
+                ApiVendor::Openai => "OPENAI_API_KEY".to_string(),
+            });
+        let endpoint = config
+            .base_url
+            .clone()
+            .unwrap_or_else(|| match config.vendor {
+                ApiVendor::Anthropic => "https://api.anthropic.com/v1/messages".to_string(),
+                ApiVendor::Openai => "https://api.openai.com/v1/chat/completions".to_string(),
+            });
+        Self {
+            vendor: config.vendor,
+            api_key_env,
+            endpoint,
+            timeout_secs: config.timeout_secs,
+            curl_bin: config.curl_bin.clone(),
+            strict_json: config.strict_json,
+        }
+    }
+
+    /// One chat round trip: build the vendor request, POST it, parse the reply.
+    /// `schema`, when set, constrains the reply to that JSON schema via the
+    /// vendor's structured-outputs feature. Transient failures (rate limit /
+    /// overload) are retried with exponential backoff.
+    fn chat(
+        &self,
+        model: &str,
+        system: &str,
+        user: &str,
+        schema: Option<serde_json::Value>,
+    ) -> Result<ChatOutcome> {
+        let key = std::env::var(&self.api_key_env).map_err(|_| {
+            Error::provider_classified(
+                "api-judge",
+                format!("API key env var `{}` is not set", self.api_key_env),
+                "auth",
+            )
+        })?;
+        let body = build_chat_body(self.vendor, model, system, user, schema);
+        let payload = serde_json::to_vec(&body)
+            .map_err(|e| Error::provider("api-judge", format!("could not encode request: {e}")))?;
+
+        let mut attempt = 0;
+        loop {
+            let result = self
+                .run_curl(&key, &payload)
+                .and_then(|raw| parse_chat_response(self.vendor, &raw));
+            match result {
+                Ok(outcome) => return Ok(outcome),
+                Err(err) if attempt < MAX_RETRIES && is_retryable(&err) => {
+                    attempt += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(500 * (1 << attempt)));
+                }
+                Err(err) => return Err(err),
+            }
+        }
+    }
+
+    /// Per-vendor request headers.
+    fn headers(&self, key: &str) -> Vec<(String, String)> {
+        match self.vendor {
+            ApiVendor::Anthropic => vec![
+                ("x-api-key".to_string(), key.to_string()),
+                ("anthropic-version".to_string(), "2023-06-01".to_string()),
+                ("content-type".to_string(), "application/json".to_string()),
+            ],
+            ApiVendor::Openai => vec![
+                ("authorization".to_string(), format!("Bearer {key}")),
+                ("content-type".to_string(), "application/json".to_string()),
+            ],
+        }
+    }
+
+    /// POST `body` via `curl`, with the URL + headers (including the API key) in
+    /// a private config file so the key stays out of `argv`. Returns stdout.
+    fn run_curl(&self, key: &str, body: &[u8]) -> Result<String> {
+        let path = std::env::temp_dir().join(format!(
+            "skilltest-judge-{}-{}.cfg",
+            std::process::id(),
+            curl_config_nonce()
+        ));
+        write_curl_config(&path, &self.endpoint, &self.headers(key), self.timeout_secs)?;
+        let outcome = self.exec_curl(&path, body);
+        // The key-bearing config is needed only for this one invocation.
+        let _ = std::fs::remove_file(&path);
+        outcome
+    }
+
+    fn exec_curl(&self, config_path: &std::path::Path, body: &[u8]) -> Result<String> {
+        let mut child = Command::new(&self.curl_bin)
+            .arg("--config")
+            .arg(config_path)
+            .arg("--data-binary")
+            .arg("@-")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| {
+                Error::provider(
+                    "api-judge",
+                    format!(
+                        "could not run `{}`: {e}. Is curl installed and on PATH?",
+                        self.curl_bin
+                    ),
+                )
+            })?;
+
+        child
+            .stdin
+            .as_mut()
+            .ok_or_else(|| Error::provider("api-judge", "could not open curl stdin"))?
+            .write_all(body)
+            .map_err(|e| Error::provider("api-judge", format!("could not write request: {e}")))?;
+
+        let output = child
+            .wait_with_output()
+            .map_err(|e| Error::provider("api-judge", format!("curl did not complete: {e}")))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(Error::provider(
+                "api-judge",
+                format!("curl failed ({}): {}", output.status, stderr.trim()),
+            ));
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    }
+}
+
+impl Provider for ApiJudgeProvider {
+    fn respond(
+        &self,
+        _platform: &str,
+        _model: &str,
+        _skill: &SkillRef<'_>,
+        _messages: &[Message],
+        _session: Option<&str>,
+    ) -> Result<AssistantTurn> {
+        Err(Error::provider(
+            "api-judge",
+            "the API judge does not run skills; use it as the judge in a SplitProvider",
+        ))
+    }
+
+    fn simulate_user(&self, model: &str, persona: &str, messages: &[Message]) -> Result<UserTurn> {
+        let prompt = build_user_prompt(persona, messages);
+        // Free-form text reply — never schema-constrained.
+        let outcome = self.chat(model, JUDGE_SYSTEM, &prompt, None)?;
+        Ok(UserTurn {
+            message: outcome.text.trim().to_string(),
+            stop: false,
+            usage: outcome.usage,
+        })
+    }
+
+    fn judge(
+        &self,
+        model: &str,
+        query: &JudgeQuery<'_>,
+        messages: &[Message],
+    ) -> Result<JudgeVerdict> {
+        let prompt = build_judge_prompt(query, messages);
+        // Constrain the verdict to the `{value, reason}` schema when strict JSON
+        // is on, so the reply is guaranteed parseable rather than scraped.
+        let schema = self.strict_json.then(|| verdict_schema(query.kind));
+        let outcome = self.chat(model, JUDGE_SYSTEM, &prompt, schema)?;
+        let mut verdict = parse_verdict(query.kind, &outcome.text)?;
+        verdict.usage = outcome.usage;
+        Ok(verdict)
+    }
+}
+
+/// A [`Provider`] that runs skills with one provider and judges with another:
+/// `respond` (and `supports_resume`) go to the skill-running provider; `judge`
+/// and `simulate_user` go to the judge. This keeps harness fidelity for the
+/// thing under test while letting the judge run on a fast, cheap, deterministic
+/// backend (typically [`ApiJudgeProvider`]).
+pub struct SplitProvider {
+    responder: Box<dyn Provider>,
+    judge: ApiJudgeProvider,
+}
+
+impl SplitProvider {
+    /// Compose a skill-running `responder` with an API `judge`.
+    #[must_use]
+    pub fn new(responder: Box<dyn Provider>, judge: ApiJudgeProvider) -> Self {
+        Self { responder, judge }
+    }
+}
+
+impl Provider for SplitProvider {
+    fn respond(
+        &self,
+        platform: &str,
+        model: &str,
+        skill: &SkillRef<'_>,
+        messages: &[Message],
+        session: Option<&str>,
+    ) -> Result<AssistantTurn> {
+        self.responder
+            .respond(platform, model, skill, messages, session)
+    }
+
+    fn simulate_user(&self, model: &str, persona: &str, messages: &[Message]) -> Result<UserTurn> {
+        self.judge.simulate_user(model, persona, messages)
+    }
+
+    fn judge(
+        &self,
+        model: &str,
+        query: &JudgeQuery<'_>,
+        messages: &[Message],
+    ) -> Result<JudgeVerdict> {
+        self.judge.judge(model, query, messages)
+    }
+
+    fn supports_resume(&self, platform: &str) -> bool {
+        self.responder.supports_resume(platform)
+    }
+}
+
+/// A process-local monotonic counter, combined with the pid to make a unique
+/// temp-file name for each concurrent `curl` config.
+fn curl_config_nonce() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    COUNTER.fetch_add(1, Ordering::Relaxed)
+}
+
+/// Escape a value for a double-quoted `curl` config entry.
+fn curl_escape(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+/// Write a `curl` config file (`0600` on Unix) carrying the URL, headers, and
+/// timeout. The request body is streamed separately on stdin (`--data-binary
+/// @-`), so it never needs escaping into this file.
+fn write_curl_config(
+    path: &std::path::Path,
+    url: &str,
+    headers: &[(String, String)],
+    timeout_secs: u64,
+) -> Result<()> {
+    let mut config = String::new();
+    config.push_str(&format!("url = \"{}\"\n", curl_escape(url)));
+    config.push_str("request = \"POST\"\n");
+    for (name, value) in headers {
+        config.push_str(&format!("header = \"{}: {}\"\n", name, curl_escape(value)));
+    }
+    config.push_str(&format!("max-time = {timeout_secs}\n"));
+    config.push_str("silent\nshow-error\n");
+
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(0o600);
+    }
+    let mut file = options
+        .open(path)
+        .map_err(|e| Error::provider("api-judge", format!("could not write curl config: {e}")))?;
+    file.write_all(config.as_bytes())
+        .map_err(|e| Error::provider("api-judge", format!("could not write curl config: {e}")))?;
+    Ok(())
+}
+
+/// The JSON schema a judge verdict must match: `{value, reason}` with `value`
+/// typed by the eval kind. Numeric bounds are intentionally omitted — vendor
+/// structured outputs don't enforce `minimum`/`maximum`, and the runner already
+/// range-checks the parsed value.
+fn verdict_schema(kind: JudgeKind) -> serde_json::Value {
+    let value_type = match kind {
+        JudgeKind::Boolean => "boolean",
+        JudgeKind::Numeric => "number",
+    };
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "value": { "type": value_type },
+            "reason": { "type": "string" },
+        },
+        "required": ["value", "reason"],
+        "additionalProperties": false,
+    })
+}
+
+/// Build the JSON request body for one chat completion. Outgoing data, so it is
+/// constructed directly; responses are parsed into typed models below. When
+/// `schema` is set, the vendor's structured-outputs field is added so the reply
+/// is guaranteed to match it.
+fn build_chat_body(
+    vendor: ApiVendor,
+    model: &str,
+    system: &str,
+    user: &str,
+    schema: Option<serde_json::Value>,
+) -> serde_json::Value {
+    match vendor {
+        ApiVendor::Anthropic => {
+            let mut body = serde_json::json!({
+                "model": model,
+                "max_tokens": 1024,
+                "system": system,
+                "messages": [{ "role": "user", "content": user }],
+            });
+            if let Some(schema) = schema {
+                body["output_config"] =
+                    serde_json::json!({ "format": { "type": "json_schema", "schema": schema } });
+            }
+            body
+        }
+        ApiVendor::Openai => {
+            let mut body = serde_json::json!({
+                "model": model,
+                "max_tokens": 1024,
+                "messages": [
+                    { "role": "system", "content": system },
+                    { "role": "user", "content": user },
+                ],
+            });
+            if let Some(schema) = schema {
+                body["response_format"] = serde_json::json!({
+                    "type": "json_schema",
+                    "json_schema": { "name": "verdict", "strict": true, "schema": schema },
+                });
+            }
+            body
+        }
+    }
+}
+
+/// True iff the error is a transient API condition worth retrying.
+fn is_retryable(err: &Error) -> bool {
+    matches!(
+        err,
+        Error::Provider { kind: Some(k), .. } if k == "rate_limit" || k == "overloaded"
+    )
+}
+
+// Typed views of the vendor responses (trust-boundary input — always parsed,
+// never string-matched).
+
+#[derive(Deserialize)]
+struct ApiErrorBody {
+    #[serde(rename = "type", default)]
+    kind: Option<String>,
+    #[serde(default)]
+    message: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct AnthropicBlock {
+    #[serde(rename = "type")]
+    kind: String,
+    #[serde(default)]
+    text: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct AnthropicUsage {
+    #[serde(default)]
+    input_tokens: Option<u64>,
+    #[serde(default)]
+    output_tokens: Option<u64>,
+}
+
+#[derive(Deserialize)]
+struct AnthropicResponse {
+    #[serde(default)]
+    content: Vec<AnthropicBlock>,
+    #[serde(default)]
+    usage: Option<AnthropicUsage>,
+    #[serde(default)]
+    stop_reason: Option<String>,
+    #[serde(default)]
+    error: Option<ApiErrorBody>,
+}
+
+#[derive(Deserialize)]
+struct OpenAiMessage {
+    #[serde(default)]
+    content: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct OpenAiChoice {
+    #[serde(default)]
+    message: Option<OpenAiMessage>,
+}
+
+#[derive(Deserialize)]
+struct OpenAiUsage {
+    #[serde(default)]
+    prompt_tokens: Option<u64>,
+    #[serde(default)]
+    completion_tokens: Option<u64>,
+}
+
+#[derive(Deserialize)]
+struct OpenAiResponse {
+    #[serde(default)]
+    choices: Vec<OpenAiChoice>,
+    #[serde(default)]
+    usage: Option<OpenAiUsage>,
+    #[serde(default)]
+    error: Option<ApiErrorBody>,
+}
+
+/// Map a vendor error `type` onto skilltest's classified provider-error kinds so
+/// the CLI can give the same pointed hints it gives for harness failures.
+fn classify_api_error(kind: Option<&str>) -> Option<String> {
+    match kind? {
+        "authentication_error" | "invalid_api_key" | "permission_error" => Some("auth".to_string()),
+        "rate_limit_error" | "rate_limit_exceeded" => Some("rate_limit".to_string()),
+        "insufficient_quota" | "billing_error" => Some("quota".to_string()),
+        "not_found_error" => Some("model_not_found".to_string()),
+        // Transient server-side conditions — surfaced as `overloaded` so the
+        // runner retries them (see `is_retryable`).
+        "overloaded_error" | "api_error" | "server_error" | "service_unavailable" => {
+            Some("overloaded".to_string())
+        }
+        _ => None,
+    }
+}
+
+fn api_error(err: ApiErrorBody) -> Error {
+    let message = err
+        .message
+        .unwrap_or_else(|| "API returned an error".to_string());
+    match classify_api_error(err.kind.as_deref()) {
+        Some(kind) => Error::provider_classified("api-judge", message, kind),
+        None => Error::provider("api-judge", message),
+    }
+}
+
+/// Take the first chars of `raw` for an error message, on a UTF-8 boundary.
+fn truncate_for_error(raw: &str) -> String {
+    raw.chars().take(500).collect()
+}
+
+/// Parse a vendor chat response into the reply text plus normalized usage.
+fn parse_chat_response(vendor: ApiVendor, raw: &str) -> Result<ChatOutcome> {
+    match vendor {
+        ApiVendor::Anthropic => {
+            let resp: AnthropicResponse = serde_json::from_str(raw.trim()).map_err(|e| {
+                Error::provider(
+                    "api-judge",
+                    format!(
+                        "could not parse API response: {e}; got: {}",
+                        truncate_for_error(raw)
+                    ),
+                )
+            })?;
+            if let Some(err) = resp.error {
+                return Err(api_error(err));
+            }
+            let text = resp
+                .content
+                .iter()
+                .filter(|b| b.kind == "text")
+                .filter_map(|b| b.text.as_deref())
+                .collect::<String>();
+            if text.trim().is_empty() {
+                return Err(Error::provider(
+                    "api-judge",
+                    format!(
+                        "judge returned no text (stop_reason: {:?})",
+                        resp.stop_reason
+                    ),
+                ));
+            }
+            let usage = resp.usage.map(|u| Usage {
+                input_tokens: u.input_tokens,
+                output_tokens: u.output_tokens,
+                cost_usd: None,
+            });
+            Ok(ChatOutcome { text, usage })
+        }
+        ApiVendor::Openai => {
+            let resp: OpenAiResponse = serde_json::from_str(raw.trim()).map_err(|e| {
+                Error::provider(
+                    "api-judge",
+                    format!(
+                        "could not parse API response: {e}; got: {}",
+                        truncate_for_error(raw)
+                    ),
+                )
+            })?;
+            if let Some(err) = resp.error {
+                return Err(api_error(err));
+            }
+            let text = resp
+                .choices
+                .into_iter()
+                .next()
+                .and_then(|c| c.message)
+                .and_then(|m| m.content)
+                .unwrap_or_default();
+            if text.trim().is_empty() {
+                return Err(Error::provider("api-judge", "judge returned no text"));
+            }
+            let usage = resp.usage.map(|u| Usage {
+                input_tokens: u.prompt_tokens,
+                output_tokens: u.completion_tokens,
+                cost_usd: None,
+            });
+            Ok(ChatOutcome { text, usage })
+        }
+    }
+}
+
 /// Render the conversation as `Role: content` lines for inlining in a prompt.
 /// Used by the judge, the simulated user, and the no-resume fallback path of
 /// `respond`.
@@ -958,5 +1526,261 @@ mod tests {
         assert!(supports_resume("cursor"));
         assert!(!supports_resume("codex"));
         assert!(!supports_resume("goose"));
+    }
+
+    fn api_config(vendor: ApiVendor) -> ApiJudgeConfig {
+        ApiJudgeConfig {
+            vendor,
+            api_key_env: None,
+            base_url: None,
+            timeout_secs: 60,
+            curl_bin: "curl".to_string(),
+            strict_json: true,
+        }
+    }
+
+    #[test]
+    fn api_judge_resolves_vendor_defaults() {
+        let anthropic = ApiJudgeProvider::new(&api_config(ApiVendor::Anthropic));
+        assert_eq!(anthropic.api_key_env, "ANTHROPIC_API_KEY");
+        assert_eq!(anthropic.endpoint, "https://api.anthropic.com/v1/messages");
+
+        let openai = ApiJudgeProvider::new(&api_config(ApiVendor::Openai));
+        assert_eq!(openai.api_key_env, "OPENAI_API_KEY");
+        assert_eq!(
+            openai.endpoint,
+            "https://api.openai.com/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn api_judge_honors_overrides() {
+        let provider = ApiJudgeProvider::new(&ApiJudgeConfig {
+            vendor: ApiVendor::Openai,
+            api_key_env: Some("MY_KEY".to_string()),
+            base_url: Some("https://proxy.example/v1/chat/completions".to_string()),
+            timeout_secs: 5,
+            curl_bin: "curl".to_string(),
+            strict_json: true,
+        });
+        assert_eq!(provider.api_key_env, "MY_KEY");
+        assert_eq!(
+            provider.endpoint,
+            "https://proxy.example/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn build_chat_body_shapes_per_vendor() {
+        let anthropic = build_chat_body(ApiVendor::Anthropic, "claude-x", "sys", "hi", None);
+        assert_eq!(anthropic["model"], "claude-x");
+        assert_eq!(anthropic["system"], "sys");
+        assert_eq!(anthropic["messages"][0]["role"], "user");
+        // Anthropic carries the system prompt in its own top-level field.
+        assert_eq!(anthropic["messages"].as_array().unwrap().len(), 1);
+        // No schema requested → no structured-outputs field.
+        assert!(anthropic.get("output_config").is_none());
+
+        let openai = build_chat_body(ApiVendor::Openai, "gpt-x", "sys", "hi", None);
+        assert_eq!(openai["messages"][0]["role"], "system");
+        assert_eq!(openai["messages"][1]["role"], "user");
+        assert!(openai.get("system").is_none());
+        assert!(openai.get("response_format").is_none());
+    }
+
+    #[test]
+    fn build_chat_body_attaches_strict_schema_per_vendor() {
+        let schema = verdict_schema(JudgeKind::Boolean);
+        let anthropic = build_chat_body(
+            ApiVendor::Anthropic,
+            "claude-x",
+            "sys",
+            "hi",
+            Some(schema.clone()),
+        );
+        // Anthropic uses output_config.format.
+        assert_eq!(anthropic["output_config"]["format"]["type"], "json_schema");
+        assert_eq!(
+            anthropic["output_config"]["format"]["schema"]["properties"]["value"]["type"],
+            "boolean"
+        );
+
+        let numeric = verdict_schema(JudgeKind::Numeric);
+        let openai = build_chat_body(ApiVendor::Openai, "gpt-x", "sys", "hi", Some(numeric));
+        // OpenAI uses response_format.json_schema with strict: true.
+        assert_eq!(openai["response_format"]["type"], "json_schema");
+        assert_eq!(openai["response_format"]["json_schema"]["strict"], true);
+        assert_eq!(
+            openai["response_format"]["json_schema"]["schema"]["properties"]["value"]["type"],
+            "number"
+        );
+    }
+
+    #[test]
+    fn verdict_schema_requires_value_and_reason_with_no_extras() {
+        let schema = verdict_schema(JudgeKind::Numeric);
+        assert_eq!(schema["additionalProperties"], false);
+        let required: Vec<&str> = schema["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert_eq!(required, ["value", "reason"]);
+    }
+
+    #[test]
+    fn parses_anthropic_success_with_usage() {
+        let raw = r#"{"content":[{"type":"text","text":"{\"value\": true}"}],
+            "stop_reason":"end_turn","usage":{"input_tokens":12,"output_tokens":3}}"#;
+        let outcome = parse_chat_response(ApiVendor::Anthropic, raw).unwrap();
+        assert_eq!(outcome.text, "{\"value\": true}");
+        let usage = outcome.usage.unwrap();
+        assert_eq!(usage.input_tokens, Some(12));
+        assert_eq!(usage.output_tokens, Some(3));
+        assert!(usage.cost_usd.is_none());
+    }
+
+    #[test]
+    fn parses_openai_success_with_usage() {
+        let raw = r#"{"choices":[{"message":{"content":"{\"value\": 8}"}}],
+            "usage":{"prompt_tokens":20,"completion_tokens":4}}"#;
+        let outcome = parse_chat_response(ApiVendor::Openai, raw).unwrap();
+        assert_eq!(outcome.text, "{\"value\": 8}");
+        let usage = outcome.usage.unwrap();
+        assert_eq!(usage.input_tokens, Some(20));
+        assert_eq!(usage.output_tokens, Some(4));
+    }
+
+    #[test]
+    fn parses_and_classifies_api_errors() {
+        let auth = r#"{"error":{"type":"authentication_error","message":"bad key"}}"#;
+        let err = parse_chat_response(ApiVendor::Anthropic, auth).unwrap_err();
+        assert!(matches!(err, Error::Provider { kind: Some(k), .. } if k == "auth"));
+
+        let rate = r#"{"error":{"type":"rate_limit_exceeded","message":"slow down"}}"#;
+        let err = parse_chat_response(ApiVendor::Openai, rate).unwrap_err();
+        assert!(matches!(err, Error::Provider { kind: Some(k), .. } if k == "rate_limit"));
+    }
+
+    #[test]
+    fn empty_reply_is_an_error() {
+        let raw = r#"{"content":[],"stop_reason":"refusal"}"#;
+        assert!(parse_chat_response(ApiVendor::Anthropic, raw).is_err());
+    }
+
+    #[test]
+    fn classify_api_error_maps_known_kinds() {
+        assert_eq!(
+            classify_api_error(Some("invalid_api_key")).as_deref(),
+            Some("auth")
+        );
+        assert_eq!(
+            classify_api_error(Some("insufficient_quota")).as_deref(),
+            Some("quota")
+        );
+        assert_eq!(
+            classify_api_error(Some("not_found_error")).as_deref(),
+            Some("model_not_found")
+        );
+        assert_eq!(
+            classify_api_error(Some("overloaded_error")).as_deref(),
+            Some("overloaded")
+        );
+        assert_eq!(classify_api_error(Some("something_else")), None);
+        assert_eq!(classify_api_error(None), None);
+    }
+
+    #[test]
+    fn retryable_covers_transient_errors_only() {
+        let overloaded = r#"{"error":{"type":"overloaded_error","message":"busy"}}"#;
+        let err = parse_chat_response(ApiVendor::Anthropic, overloaded).unwrap_err();
+        assert!(is_retryable(&err), "overload should retry");
+
+        let rate = r#"{"error":{"type":"rate_limit_error","message":"slow"}}"#;
+        let err = parse_chat_response(ApiVendor::Anthropic, rate).unwrap_err();
+        assert!(is_retryable(&err), "rate limit should retry");
+
+        let auth = r#"{"error":{"type":"authentication_error","message":"bad key"}}"#;
+        let err = parse_chat_response(ApiVendor::Anthropic, auth).unwrap_err();
+        assert!(!is_retryable(&err), "auth must not retry");
+    }
+
+    #[test]
+    fn curl_escape_handles_quotes_and_backslashes() {
+        assert_eq!(curl_escape(r#"a"b\c"#), r#"a\"b\\c"#);
+    }
+
+    /// A skill-running provider stub so the SplitProvider's delegation can be
+    /// checked without touching the network.
+    struct StubResponder;
+
+    impl Provider for StubResponder {
+        fn respond(
+            &self,
+            _platform: &str,
+            _model: &str,
+            _skill: &SkillRef<'_>,
+            _messages: &[Message],
+            _session: Option<&str>,
+        ) -> Result<AssistantTurn> {
+            Ok(AssistantTurn {
+                message: "stub reply".to_string(),
+                ..Default::default()
+            })
+        }
+
+        fn simulate_user(
+            &self,
+            _model: &str,
+            _persona: &str,
+            _messages: &[Message],
+        ) -> Result<UserTurn> {
+            unreachable!("split provider routes user simulation to the judge")
+        }
+
+        fn judge(
+            &self,
+            _model: &str,
+            _query: &JudgeQuery<'_>,
+            _messages: &[Message],
+        ) -> Result<JudgeVerdict> {
+            unreachable!("split provider routes judging to the judge")
+        }
+
+        fn supports_resume(&self, platform: &str) -> bool {
+            platform == "claude-code"
+        }
+    }
+
+    #[test]
+    fn split_provider_delegates_respond_and_resume() {
+        let split = SplitProvider::new(
+            Box::new(StubResponder),
+            ApiJudgeProvider::new(&api_config(ApiVendor::Anthropic)),
+        );
+        // respond + supports_resume go to the responder...
+        assert!(split.supports_resume("claude-code"));
+        assert!(!split.supports_resume("codex"));
+        let skill = SkillRef {
+            name: "s",
+            dir: "/tmp/s",
+            instructions: "do things",
+        };
+        let turn = split
+            .respond("claude-code", "m", &skill, &[], None)
+            .unwrap();
+        assert_eq!(turn.message, "stub reply");
+    }
+
+    #[test]
+    fn api_judge_does_not_run_skills() {
+        let provider = ApiJudgeProvider::new(&api_config(ApiVendor::Anthropic));
+        let skill = SkillRef {
+            name: "s",
+            dir: "/tmp/s",
+            instructions: "x",
+        };
+        assert!(provider.respond("p", "m", &skill, &[], None).is_err());
     }
 }

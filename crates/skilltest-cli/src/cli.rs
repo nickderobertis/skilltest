@@ -8,8 +8,9 @@ use std::path::{Path, PathBuf};
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use skilltest_core::{
-    discover_cases, validate_path, CommandProvider, Config, Error, ExitCode, OneharnessProvider,
-    Overrides, Provider, ProviderConfig, Report, Result, Runner, TestCase, ValidationReport,
+    discover_cases, validate_path, ApiJudgeProvider, CommandProvider, Config, Error, ExitCode,
+    JudgeConfig, OneharnessProvider, Overrides, Provider, ProviderConfig, Report, Result, Runner,
+    SplitProvider, TestCase, ValidationReport,
 };
 
 /// Test AI skills across harness/model platforms with natural-language evals.
@@ -181,7 +182,7 @@ fn cmd_run(config_path: Option<&Path>, args: &RunArgs) -> Result<ExitCode> {
         max_turns: args.max_turns,
     })?;
 
-    let provider = build_provider(&config.provider)?;
+    let provider = build_provider(&config)?;
 
     let mut cases = Vec::new();
     for path in &args.paths {
@@ -202,10 +203,19 @@ fn cmd_run(config_path: Option<&Path>, args: &RunArgs) -> Result<ExitCode> {
     })
 }
 
-fn build_provider(config: &ProviderConfig) -> Result<Box<dyn Provider>> {
-    match config {
-        ProviderConfig::Oneharness(oh) => Ok(Box::new(OneharnessProvider::new(oh))),
-        ProviderConfig::Command(c) => Ok(Box::new(CommandProvider::new(c.command.clone())?)),
+fn build_provider(config: &Config) -> Result<Box<dyn Provider>> {
+    let base: Box<dyn Provider> = match &config.provider {
+        ProviderConfig::Oneharness(oh) => Box::new(OneharnessProvider::new(oh)),
+        ProviderConfig::Command(c) => Box::new(CommandProvider::new(c.command.clone())?),
+    };
+    // An optional judge backend overrides judging/user-simulation while the base
+    // provider keeps running the skill under test.
+    match &config.judge {
+        Some(JudgeConfig::Api(api)) => Ok(Box::new(SplitProvider::new(
+            base,
+            ApiJudgeProvider::new(api),
+        ))),
+        None => Ok(base),
     }
 }
 
@@ -293,6 +303,7 @@ fn report_error(err: &Error) -> ExitCode {
                     "hint: the harness does not recognize this model — check `--model` and `oneharness list`"
                 }
                 Some("quota") => "hint: provider quota exhausted — check your account limits",
+                Some("overloaded") => "hint: the API is temporarily overloaded — retried already; try again shortly",
                 Some(other) => {
                     eprintln!("classified as: {other}");
                     "hint: see provider docs for this failure class"

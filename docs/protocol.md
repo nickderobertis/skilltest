@@ -105,3 +105,65 @@ the bundled fake) simply omits them and the report's usage totals stay empty.
 
 A reference implementation is
 [`crates/skilltest-cli/src/bin/fake_provider.rs`](../crates/skilltest-cli/src/bin/fake_provider.rs).
+
+## 3. The direct-API judge (`judge:` override)
+
+By default the provider that runs the skill also judges (the oneharness
+`judge_harness`). Every `judge`/`user` call then pays an agent-loop cold start
+just to produce one short verdict. The optional `judge:` config swaps the judge
+(and the simulated user) onto a **direct model API call** — one HTTP round trip,
+no harness — while the base provider keeps running the skill under test. It is a
+composition (`SplitProvider`): `respond` stays on the configured provider;
+`judge` and `simulate_user` go to the API.
+
+```yaml
+provider:
+  kind: oneharness          # the skill still runs on a real harness
+judge:
+  kind: api
+  vendor: anthropic         # anthropic | openai
+  # api_key_env: ANTHROPIC_API_KEY   # default per vendor (or OPENAI_API_KEY)
+  # base_url: https://...            # optional (proxy / OpenAI-compatible gateway)
+  # timeout_secs: 60
+  # curl_bin: curl
+  # strict_json: true                # structured-outputs verdict (default on)
+judge_model: claude-opus-4-8   # MUST be a valid API model id for the vendor
+```
+
+Details and rationale:
+
+- **Model.** The judge uses the run's `judge_model`; with `vendor: api` it must
+  be a real API model id (`claude-opus-4-8`, `gpt-4o`, …), not an oneharness
+  model alias. `platforms`/`models` (the skill under test) are unaffected.
+- **Same prompts.** The judge and simulated-user prompts are identical to the
+  oneharness path, so the two backends are directly comparable — only the
+  transport and (for the judge) the output constraint differ.
+- **Strict JSON (default on).** With `strict_json: true`, the judge verdict is
+  constrained to the `{value, reason}` schema via the vendor's structured-outputs
+  feature (Anthropic `output_config.format`, OpenAI `response_format:
+  json_schema` with `strict: true`), so the reply is guaranteed parseable instead
+  of scraped. The tolerant `{…}` extraction still runs as a backstop; set
+  `strict_json: false` for a model/endpoint that doesn't support structured
+  outputs. The simulated user is never schema-constrained.
+- **Retries.** Transient API failures (rate limit, overload) are retried with
+  exponential backoff before surfacing; auth/quota/not-found errors fail fast.
+- **Transport.** The request is sent with `curl` (Rust has no official vendor
+  SDK): Anthropic `POST /v1/messages`, OpenAI `POST /v1/chat/completions`. The
+  API key is read from `api_key_env` at run time and passed through a private
+  (`0600`) `curl` config file, so it never lands in `argv`/`ps` or on disk in
+  config. Failures are classified (`auth`/`rate_limit`/`quota`/`model_not_found`)
+  so the CLI gives the same pointed hints as a harness failure.
+- **Usage.** Token usage (`input_tokens`/`output_tokens`) is parsed from the API
+  response into the report's totals, so judge cost is visible. (Cost in USD is
+  not reported by either API and stays empty.)
+
+**Benchmarking the two paths.** Run the same case with and without the `judge:`
+override and compare the JSON report's `usage` totals (and wall-clock, e.g.
+`time skilltest run …`). The skill-running half is byte-for-byte identical, so
+the delta is the judge backend.
+
+> Why a default of harness judging at all: the harness judge works on
+> *subscription* auth (e.g. claude-code with no API key) and can judge with any
+> oneharness model. The API judge needs an API key, but on API-key auth it is
+> faster and cheaper per verdict. Keep harness judging as the portable default;
+> opt into the API judge where the keys exist and judge throughput matters.
