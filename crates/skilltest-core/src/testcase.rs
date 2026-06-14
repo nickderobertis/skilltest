@@ -213,4 +213,150 @@ evals:
         let yaml = "skill: ./x\ninput: hi\nbogus: 1\nevals: []\n";
         assert!(serde_yaml::from_str::<TestCase>(yaml).is_err());
     }
+
+    /// Write `yaml` into a unique temp dir as `name`, returning the file path.
+    fn case_file(tag: &str, name: &str, yaml: &str) -> PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static N: AtomicU64 = AtomicU64::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "skilltest-case-{}-{tag}-{}",
+            std::process::id(),
+            N.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(name);
+        std::fs::write(&path, yaml).unwrap();
+        path
+    }
+
+    #[test]
+    fn load_defaults_name_from_stem_and_resolves_skill_path() {
+        let path = case_file(
+            "load",
+            "greet_pass.yaml",
+            "skill: ./greeter\ninput: \"hi\"\nevals:\n  - type: boolean\n    criterion: \"greets\"\n",
+        );
+        let case = TestCase::load(&path).unwrap();
+        assert_eq!(case.name, "greet_pass");
+        // The relative skill path is resolved against the case file's directory.
+        assert!(case.skill.is_absolute());
+        assert!(case.skill.ends_with("greeter"));
+    }
+
+    #[test]
+    fn load_keeps_explicit_name() {
+        let path = case_file(
+            "named",
+            "x.yaml",
+            "name: custom\nskill: ./s\ninput: hi\nevals:\n  - type: boolean\n    criterion: c\n",
+        );
+        assert_eq!(TestCase::load(&path).unwrap().name, "custom");
+    }
+
+    #[test]
+    fn load_missing_file_is_io_error() {
+        let path =
+            std::env::temp_dir().join(format!("skilltest-nocase-{}.yaml", std::process::id()));
+        assert!(matches!(TestCase::load(&path), Err(Error::Io { .. })));
+    }
+
+    #[test]
+    fn load_malformed_yaml_is_yaml_error() {
+        let path = case_file("bad", "bad.yaml", "input: [unterminated\n");
+        assert!(matches!(TestCase::load(&path), Err(Error::Yaml { .. })));
+    }
+
+    #[test]
+    fn load_inconsistent_case_is_invalid_error() {
+        // Parses, but an empty input fails validation.
+        let path = case_file(
+            "blank",
+            "blank.yaml",
+            "skill: ./s\ninput: \"\"\nevals:\n  - type: boolean\n    criterion: c\n",
+        );
+        assert!(matches!(TestCase::load(&path), Err(Error::Invalid(_))));
+    }
+
+    #[test]
+    fn validate_rejects_empty_input_and_evals() {
+        let mut case = TestCase {
+            name: "t".into(),
+            skill: PathBuf::from("./s"),
+            input: "   ".into(),
+            user: None,
+            evals: vec![Eval::Boolean {
+                criterion: "c".into(),
+                expected: true,
+                name: None,
+            }],
+        };
+        assert!(case.validate().is_err(), "blank input");
+        case.input = "ok".into();
+        case.evals.clear();
+        assert!(case.validate().is_err(), "no evals");
+    }
+
+    #[test]
+    fn validate_rejects_blank_persona_and_zero_user_max_turns() {
+        let base = TestCase {
+            name: "t".into(),
+            skill: PathBuf::from("./s"),
+            input: "ok".into(),
+            user: None,
+            evals: vec![Eval::Boolean {
+                criterion: "c".into(),
+                expected: true,
+                name: None,
+            }],
+        };
+        let mut blank_persona = base.clone();
+        blank_persona.user = Some(SimulatedUser {
+            persona: "  ".into(),
+            done_when: None,
+            max_turns: None,
+        });
+        assert!(blank_persona.validate().is_err());
+
+        let mut zero_turns = base;
+        zero_turns.user = Some(SimulatedUser {
+            persona: "a patient".into(),
+            done_when: None,
+            max_turns: Some(0),
+        });
+        assert!(zero_turns.validate().is_err());
+    }
+
+    #[test]
+    fn discover_cases_returns_single_file() {
+        let path = case_file("one", "only.yaml", "skill: ./s\ninput: hi\nevals: []\n");
+        let found = discover_cases(&path).unwrap();
+        assert_eq!(found, vec![path]);
+    }
+
+    #[test]
+    fn discover_cases_lists_yaml_in_a_directory_sorted() {
+        let first = case_file("dir", "b.yaml", "skill: ./s\ninput: hi\nevals: []\n");
+        let dir = first.parent().unwrap().to_path_buf();
+        std::fs::write(dir.join("a.yml"), "skill: ./s\ninput: hi\nevals: []\n").unwrap();
+        // A non-YAML file is ignored.
+        std::fs::write(dir.join("notes.txt"), "ignore me").unwrap();
+        let found = discover_cases(&dir).unwrap();
+        assert_eq!(found.len(), 2);
+        // Sorted: a.yml before b.yaml.
+        assert!(found[0].ends_with("a.yml"));
+        assert!(found[1].ends_with("b.yaml"));
+    }
+
+    #[test]
+    fn discover_cases_empty_directory_is_invalid() {
+        let dir = std::env::temp_dir().join(format!("skilltest-emptycases-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(matches!(discover_cases(&dir), Err(Error::Invalid(_))));
+    }
+
+    #[test]
+    fn discover_cases_missing_path_is_invalid() {
+        let path = std::env::temp_dir().join(format!("skilltest-nopath-{}", std::process::id()));
+        assert!(matches!(discover_cases(&path), Err(Error::Invalid(_))));
+    }
 }

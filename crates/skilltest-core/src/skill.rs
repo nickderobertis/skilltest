@@ -236,4 +236,171 @@ mod tests {
         assert!(fm.is_none());
         assert_eq!(body, "# Just a heading\n");
     }
+
+    #[test]
+    fn unclosed_fence_yields_no_frontmatter() {
+        // Opening `---` but no closing fence falls back to "no frontmatter".
+        let (fm, body) = split_frontmatter("---\nname: x\nstill going\n");
+        assert!(fm.is_none());
+        assert_eq!(body, "---\nname: x\nstill going\n");
+    }
+
+    /// Make a unique temp skill directory with a `SKILL.md` of `contents`.
+    fn skill_dir(tag: &str, name: &str, contents: &str) -> PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static N: AtomicU64 = AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "skilltest-skill-{}-{tag}-{}",
+            std::process::id(),
+            N.fetch_add(1, Ordering::Relaxed)
+        ));
+        let dir = root.join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("SKILL.md"), contents).unwrap();
+        dir
+    }
+
+    #[test]
+    fn load_skill_reads_frontmatter_and_body() {
+        let dir = skill_dir(
+            "load",
+            "greeter",
+            "---\nname: greeter\ndescription: a friendly greeter\n---\nGreet warmly.\n",
+        );
+        let skill = load_skill(&dir).unwrap();
+        assert_eq!(skill.name, "greeter");
+        assert_eq!(skill.description, "a friendly greeter");
+        assert_eq!(skill.instructions, "Greet warmly.");
+    }
+
+    #[test]
+    fn load_skill_without_frontmatter_uses_defaults() {
+        let dir = skill_dir("nofm", "bare", "# Just a body\nNo frontmatter here.\n");
+        let skill = load_skill(&dir).unwrap();
+        assert_eq!(skill.name, "");
+        assert_eq!(skill.description, "");
+        assert!(skill.instructions.contains("No frontmatter here."));
+    }
+
+    #[test]
+    fn load_skill_missing_file_is_io_error() {
+        let dir = std::env::temp_dir().join(format!("skilltest-missing-{}", std::process::id()));
+        assert!(matches!(load_skill(&dir), Err(Error::Io { .. })));
+    }
+
+    #[test]
+    fn load_skill_bad_frontmatter_is_yaml_error() {
+        let dir = skill_dir("badyaml", "x", "---\nname: [unterminated\n---\nbody\n");
+        assert!(matches!(load_skill(&dir), Err(Error::Yaml { .. })));
+    }
+
+    #[test]
+    fn validate_skill_accepts_a_good_skill() {
+        let dir = skill_dir(
+            "good",
+            "greeter",
+            "---\nname: greeter\ndescription: a sufficiently long description\n---\nDo the thing.\n",
+        );
+        assert!(validate_skill(&dir).unwrap().is_empty());
+    }
+
+    #[test]
+    fn validate_skill_flags_missing_skill_md() {
+        let root = std::env::temp_dir().join(format!("skilltest-empty-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let findings = validate_skill(&root).unwrap();
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0].message.contains("missing SKILL.md"));
+    }
+
+    #[test]
+    fn validate_skill_flags_missing_frontmatter() {
+        let dir = skill_dir("nofm2", "x", "Just a body, no fence.\n");
+        let findings = validate_skill(&dir).unwrap();
+        assert!(findings
+            .iter()
+            .any(|f| f.message.contains("no YAML frontmatter")));
+    }
+
+    #[test]
+    fn validate_skill_flags_name_mismatch_and_short_description() {
+        let dir = skill_dir(
+            "mismatch",
+            "actual-folder",
+            "---\nname: declared-name\ndescription: short\n---\nbody\n",
+        );
+        let findings = validate_skill(&dir).unwrap();
+        assert!(findings
+            .iter()
+            .any(|f| f.message.contains("does not match the directory name")));
+        assert!(findings.iter().any(|f| f.message.contains("too short")));
+    }
+
+    #[test]
+    fn validate_skill_flags_missing_name_description_and_body() {
+        let dir = skill_dir("blank", "blank", "---\nlicense: MIT\n---\n\n");
+        let findings = validate_skill(&dir).unwrap();
+        assert!(findings
+            .iter()
+            .any(|f| f.message.contains("non-empty `name`")));
+        assert!(findings
+            .iter()
+            .any(|f| f.message.contains("non-empty `description`")));
+        assert!(findings
+            .iter()
+            .any(|f| f.message.contains("no instruction body")));
+    }
+
+    #[test]
+    fn validate_skill_flags_invalid_frontmatter_yaml() {
+        let dir = skill_dir("invalidyaml", "x", "---\nname: [unterminated\n---\nbody\n");
+        let findings = validate_skill(&dir).unwrap();
+        assert!(findings
+            .iter()
+            .any(|f| f.message.contains("not valid YAML")));
+    }
+
+    #[test]
+    fn validate_path_on_a_single_skill_dir() {
+        let dir = skill_dir(
+            "single",
+            "greeter",
+            "---\nname: greeter\ndescription: a long enough description\n---\nbody\n",
+        );
+        assert!(validate_path(&dir).unwrap().is_empty());
+    }
+
+    #[test]
+    fn validate_path_over_a_folder_of_skills() {
+        // Build a parent dir holding two skill subdirs (one good, one bad).
+        let good = skill_dir(
+            "folder-good",
+            "greeter",
+            "---\nname: greeter\ndescription: a long enough description\n---\nbody\n",
+        );
+        let parent = good.parent().unwrap().to_path_buf();
+        let bad = parent.join("broken");
+        std::fs::create_dir_all(&bad).unwrap();
+        std::fs::write(bad.join("SKILL.md"), "no frontmatter at all\n").unwrap();
+        let findings = validate_path(&parent).unwrap();
+        // The bad skill contributes a finding; the good one doesn't.
+        assert!(findings
+            .iter()
+            .any(|f| f.message.contains("no YAML frontmatter")));
+    }
+
+    #[test]
+    fn validate_path_reports_empty_folder() {
+        let root = std::env::temp_dir().join(format!("skilltest-noskills-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let findings = validate_path(&root).unwrap();
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0].message.contains("no skills found"));
+    }
+
+    #[test]
+    fn validate_path_missing_dir_is_io_error() {
+        let dir = std::env::temp_dir().join(format!("skilltest-nodir-{}", std::process::id()));
+        assert!(matches!(validate_path(&dir), Err(Error::Io { .. })));
+    }
 }

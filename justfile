@@ -26,15 +26,19 @@ bootstrap:
     cd plugins/pytest && uv sync
 
 # Full quality gate over the affected projects (format, lint, type check, unit +
-# e2e) plus the contract drift gate. Fails on any issue (no warnings-only mode).
+# e2e), plus the contract drift gate and the Rust coverage gate. Fails on any
+# issue (no warnings-only mode). `test`/`test-e2e` run first as prerequisites
+# (so the test suite is unambiguously part of the gate), then the static gates,
+# then `coverage` enforces the line-coverage floor on the artifact's Rust core.
 # Use `check-all` to force every project.
-check:
+check: test test-e2e
     @bash scripts/gen-contract.sh --check
-    {{nx}} affected -t format-check lint typecheck test test-e2e
+    {{nx}} affected -t format-check lint typecheck
+    @just coverage
     @echo "check: all gates passed"
 
 # Same gate, but across every project regardless of what changed.
-check-all:
+check-all: coverage
     @bash scripts/gen-contract.sh --check
     {{nx}} run-many -t format-check lint typecheck test test-e2e
     @echo "check-all: all gates passed"
@@ -63,6 +67,18 @@ test:
 # skilltest-cli; framework packages depend on their SDK).
 test-e2e:
     {{nx}} affected -t test-e2e
+
+# Coverage gate on the artifact's Rust core (skilltest-core + the skilltest CLI,
+# including the binary e2e suite and the bundled fake provider). Measured with
+# `cargo llvm-cov` over `cargo nextest` and FAILS below 95% line coverage — the
+# create-repo default bar (see AGENTS.md "Stack and composition"). Always runs
+# the whole Rust workspace (not nx-affected): the binary is the published
+# artifact, so its coverage floor is proven on every gate run, not only when a
+# Rust file changed. The non-default `fake-provider` feature is enabled so the
+# e2e suite (which drives the bundled provider) is included in the measurement.
+# Requires `cargo-llvm-cov` and `cargo-nextest`.
+coverage:
+    cargo llvm-cov nextest --workspace --features fake-provider --no-tests=pass --fail-under-lines 95
 
 # Lint affected projects; fail on findings.
 lint:

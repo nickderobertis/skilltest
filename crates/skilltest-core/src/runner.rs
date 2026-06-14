@@ -429,4 +429,157 @@ mod tests {
             .unwrap();
         assert_eq!(runs.len(), 4);
     }
+
+    fn usage(input: u64) -> Option<Usage> {
+        Some(Usage {
+            input_tokens: Some(input),
+            output_tokens: None,
+            cost_usd: None,
+        })
+    }
+
+    #[test]
+    fn multi_turn_loops_through_simulated_user_and_aggregates_usage() {
+        // No early stop: the done_when check returns false, so the simulated
+        // user speaks after turn 1, then turn 2 satisfies done_when and the loop
+        // ends. Every provider call reports usage, so totals must accumulate.
+        let mut case = boolean_case(temp_skill("loop"));
+        case.user = Some(crate::testcase::SimulatedUser {
+            persona: "a chatty patient".into(),
+            done_when: Some("the booking is confirmed".into()),
+            max_turns: Some(8),
+        });
+        let provider = ScriptedProvider {
+            assistant: vec![
+                AssistantTurn {
+                    message: "Hello, how can I help?".into(),
+                    done: false,
+                    usage: usage(3),
+                    // A session id the runner should capture for the next turn.
+                    session_id: Some("sess-1".into()),
+                },
+                AssistantTurn {
+                    message: "Booked!".into(),
+                    done: false,
+                    usage: usage(4),
+                    session_id: Some("sess-2".into()),
+                },
+            ],
+            user: vec![UserTurn {
+                message: "Please book me in.".into(),
+                stop: false,
+                usage: usage(2),
+            }],
+            judge: vec![
+                // done_when after assistant turn 1 -> not done yet.
+                JudgeVerdict {
+                    value: JudgeValue::Bool(false),
+                    reason: "not yet".into(),
+                    usage: usage(1),
+                },
+                // done_when after assistant turn 2 -> done, the loop ends.
+                JudgeVerdict {
+                    value: JudgeValue::Bool(true),
+                    reason: "confirmed".into(),
+                    usage: usage(1),
+                },
+                // The final eval.
+                JudgeVerdict {
+                    value: JudgeValue::Bool(true),
+                    reason: "greeted".into(),
+                    usage: usage(5),
+                },
+            ],
+            calls: RefCell::new(Calls::default()),
+        };
+        let config = Config::default();
+        let runner = Runner::new(&provider, &config);
+        let runs = runner.run_case(&case).unwrap();
+        assert!(runs[0].passed);
+        // Two assistant turns; the user spoke exactly once between them.
+        assert_eq!(provider.calls.borrow().assistant, 2);
+        assert_eq!(provider.calls.borrow().user, 1);
+        assert_eq!(provider.calls.borrow().judge, 3);
+        // Usage across every call:
+        // 3(resp) + 1(done_when) + 2(user) + 4(resp) + 1(done_when) + 5(eval) = 16.
+        assert_eq!(runs[0].usage.as_ref().unwrap().input_tokens, Some(16));
+    }
+
+    #[test]
+    fn multi_turn_threads_session_when_resume_supported() {
+        // A provider that supports resume should be handed the session id the
+        // previous respond returned. Capture the session arg each respond sees.
+        #[derive(Default)]
+        struct Sessions(RefCell<Vec<Option<String>>>);
+        struct ResumeProvider {
+            sessions: Sessions,
+        }
+        impl Provider for ResumeProvider {
+            fn respond(
+                &self,
+                _platform: &str,
+                _model: &str,
+                _skill: &SkillRef<'_>,
+                _messages: &[Message],
+                session: Option<&str>,
+            ) -> Result<AssistantTurn> {
+                self.sessions
+                    .0
+                    .borrow_mut()
+                    .push(session.map(str::to_string));
+                let n = self.sessions.0.borrow().len();
+                Ok(AssistantTurn {
+                    message: format!("turn {n}"),
+                    done: false,
+                    usage: None,
+                    session_id: Some(format!("sess-{n}")),
+                })
+            }
+            fn simulate_user(
+                &self,
+                _model: &str,
+                _persona: &str,
+                _messages: &[Message],
+            ) -> Result<UserTurn> {
+                Ok(UserTurn {
+                    message: "go on".into(),
+                    stop: false,
+                    usage: None,
+                })
+            }
+            fn judge(
+                &self,
+                _model: &str,
+                _query: &JudgeQuery<'_>,
+                _messages: &[Message],
+            ) -> Result<JudgeVerdict> {
+                Ok(JudgeVerdict {
+                    value: JudgeValue::Bool(true),
+                    reason: String::new(),
+                    usage: None,
+                })
+            }
+            fn supports_resume(&self, _platform: &str) -> bool {
+                true
+            }
+        }
+        let mut case = boolean_case(temp_skill("resume"));
+        case.user = Some(crate::testcase::SimulatedUser {
+            persona: "a patient".into(),
+            // No done_when, so the loop runs to max_turns.
+            done_when: None,
+            max_turns: Some(2),
+        });
+        let provider = ResumeProvider {
+            sessions: Sessions::default(),
+        };
+        let config = Config::default();
+        let runner = Runner::new(&provider, &config);
+        let runs = runner.run_case(&case).unwrap();
+        assert_eq!(runs[0].turns, 2);
+        // First respond saw no session; the second saw the id from the first.
+        let seen = provider.sessions.0.borrow();
+        assert_eq!(seen[0], None);
+        assert_eq!(seen[1].as_deref(), Some("sess-1"));
+    }
 }

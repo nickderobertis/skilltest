@@ -197,3 +197,200 @@ impl ValidationReport {
         serde_json::to_string_pretty(self)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::conversation::Transcript;
+    use crate::eval::{Comparator, EvalDetail, EvalOutcome};
+
+    fn run(case: &str, passed: bool, evals: Vec<EvalOutcome>, usage: Option<Usage>) -> CaseRun {
+        CaseRun {
+            case: case.to_string(),
+            skill: "/tmp/skill".to_string(),
+            platform: "claude-code".to_string(),
+            model: "sonnet".to_string(),
+            passed,
+            turns: 1,
+            evals,
+            transcript: Transcript::from_input("hi"),
+            usage,
+        }
+    }
+
+    fn bool_eval(label: &str, passed: bool) -> EvalOutcome {
+        EvalOutcome {
+            label: label.to_string(),
+            passed,
+            detail: EvalDetail::Boolean {
+                value: passed,
+                expected: true,
+            },
+            reason: "because".to_string(),
+        }
+    }
+
+    #[test]
+    fn new_computes_summary_and_dedups_cases() {
+        let report = Report::new(vec![
+            run("a", true, vec![bool_eval("x", true)], None),
+            run("a", false, vec![bool_eval("y", false)], None),
+            run("b", true, vec![bool_eval("z", true)], None),
+        ]);
+        // Two distinct cases, three runs, one failure -> overall fail.
+        assert_eq!(report.summary.cases, 2);
+        assert_eq!(report.summary.runs, 3);
+        assert_eq!(report.summary.passed, 2);
+        assert_eq!(report.summary.failed, 1);
+        assert!(!report.passed);
+        // No run reported usage, so the summary omits it.
+        assert!(report.summary.usage.is_none());
+    }
+
+    #[test]
+    fn empty_report_is_not_passed() {
+        let report = Report::new(vec![]);
+        assert!(!report.passed, "an empty run set is not a pass");
+        assert_eq!(report.summary.runs, 0);
+    }
+
+    #[test]
+    fn new_aggregates_usage_across_runs() {
+        let report = Report::new(vec![
+            run(
+                "a",
+                true,
+                vec![bool_eval("x", true)],
+                Some(Usage {
+                    input_tokens: Some(10),
+                    output_tokens: Some(2),
+                    cost_usd: Some(0.01),
+                }),
+            ),
+            run(
+                "b",
+                true,
+                vec![bool_eval("y", true)],
+                Some(Usage {
+                    input_tokens: Some(5),
+                    output_tokens: None,
+                    cost_usd: Some(0.02),
+                }),
+            ),
+        ]);
+        let usage = report.summary.usage.unwrap();
+        assert_eq!(usage.input_tokens, Some(15));
+        assert_eq!(usage.output_tokens, Some(2));
+        assert!((usage.cost_usd.unwrap() - 0.03).abs() < 1e-9);
+    }
+
+    #[test]
+    fn to_json_round_trips() {
+        let report = Report::new(vec![run("a", true, vec![bool_eval("x", true)], None)]);
+        let json = report.to_json().unwrap();
+        let parsed: Report = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, report);
+    }
+
+    #[test]
+    fn to_human_lists_runs_and_failed_evals() {
+        let numeric = EvalOutcome {
+            label: "warmth".to_string(),
+            passed: false,
+            detail: EvalDetail::Numeric {
+                value: 4.0,
+                threshold: 7.0,
+                comparator: Comparator::Gte,
+            },
+            reason: "too cold".to_string(),
+        };
+        let report = Report::new(vec![
+            run("greets", true, vec![bool_eval("names", true)], None),
+            run("warm", false, vec![numeric], None),
+        ]);
+        let human = report.to_human();
+        assert!(human.contains("PASS  greets [claude-code/sonnet]"));
+        assert!(human.contains("FAIL  warm"));
+        // Only the failing eval is itemized, with its summary and reason.
+        assert!(human.contains("warmth: 4 >= 7 (too cold)"), "got:\n{human}");
+        assert!(human.contains("1/2 runs passed"));
+    }
+
+    #[test]
+    fn to_human_renders_usage_line_variants() {
+        // Cost + both token counts.
+        let full = Report::new(vec![run(
+            "a",
+            true,
+            vec![bool_eval("x", true)],
+            Some(Usage {
+                input_tokens: Some(100),
+                output_tokens: Some(50),
+                cost_usd: Some(0.1234),
+            }),
+        )]);
+        let human = full.to_human();
+        assert!(
+            human.contains("usage: $0.1234, 100 in / 50 out tokens"),
+            "got:\n{human}"
+        );
+
+        // Only an input-token count (no cost, no output) hits the singular branch.
+        let partial = Report::new(vec![run(
+            "a",
+            true,
+            vec![bool_eval("x", true)],
+            Some(Usage {
+                input_tokens: Some(7),
+                output_tokens: None,
+                cost_usd: None,
+            }),
+        )]);
+        assert!(partial.to_human().contains("usage: 7 input tokens"));
+
+        // Only an output-token count.
+        let out_only = Report::new(vec![run(
+            "a",
+            true,
+            vec![bool_eval("x", true)],
+            Some(Usage {
+                input_tokens: None,
+                output_tokens: Some(9),
+                cost_usd: None,
+            }),
+        )]);
+        assert!(out_only.to_human().contains("usage: 9 output tokens"));
+    }
+
+    #[test]
+    fn to_human_without_usage_has_no_usage_line() {
+        let report = Report::new(vec![run("a", true, vec![bool_eval("x", true)], None)]);
+        assert!(!report.to_human().contains("usage:"));
+    }
+
+    #[test]
+    fn validation_report_new_and_json() {
+        use crate::skill::Finding;
+        let empty = ValidationReport::new(&[]);
+        assert!(empty.valid);
+        assert!(empty.findings.is_empty());
+
+        let findings = vec![
+            Finding {
+                skill: std::path::PathBuf::from("/tmp/a"),
+                message: "missing name".to_string(),
+            },
+            Finding {
+                skill: std::path::PathBuf::from("/tmp/b"),
+                message: "no body".to_string(),
+            },
+        ];
+        let report = ValidationReport::new(&findings);
+        assert!(!report.valid);
+        assert_eq!(report.findings.len(), 2);
+        assert_eq!(report.findings[0].skill, "/tmp/a");
+        let json = report.to_json().unwrap();
+        let parsed: ValidationReport = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, report);
+    }
+}

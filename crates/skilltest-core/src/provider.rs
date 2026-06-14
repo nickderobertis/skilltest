@@ -1783,4 +1783,693 @@ mod tests {
         };
         assert!(provider.respond("p", "m", &skill, &[], None).is_err());
     }
+
+    // -----------------------------------------------------------------------
+    // Subprocess-driven coverage: these spawn small shell scripts standing in
+    // for the provider command / oneharness / curl, so the actual process
+    // plumbing (`CommandProvider::call`, `OneharnessProvider::run`,
+    // `ApiJudgeProvider::run_curl`/`exec_curl`/`write_curl_config`) is exercised
+    // end to end without any network. Unix-only; the whole crate ships to a
+    // Linux/macOS matrix (see AGENTS.md "Stack and composition").
+
+    #[cfg(unix)]
+    mod subprocess {
+        // `std::io::Write` is already in scope via `super::*` (the module-level
+        // `use std::io::Write as _`), so `write_all` resolves without a re-import.
+        use super::*;
+        use std::os::unix::fs::PermissionsExt as _;
+        use std::path::PathBuf;
+
+        /// Write an executable shell script into a unique temp dir and return its
+        /// path. Each call gets its own directory so concurrent tests never race.
+        fn script(tag: &str, body: &str) -> PathBuf {
+            use std::sync::atomic::{AtomicU64, Ordering};
+            static N: AtomicU64 = AtomicU64::new(0);
+            let dir = std::env::temp_dir().join(format!(
+                "skilltest-prov-{}-{tag}-{}",
+                std::process::id(),
+                N.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir_all(&dir).unwrap();
+            let path = dir.join("script.sh");
+            let mut f = std::fs::File::create(&path).unwrap();
+            f.write_all(format!("#!/bin/sh\n{body}").as_bytes())
+                .unwrap();
+            let mut perms = std::fs::metadata(&path).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&path, perms).unwrap();
+            path
+        }
+
+        fn skill_ref() -> SkillRef<'static> {
+            SkillRef {
+                name: "greeter",
+                dir: "/tmp/greeter",
+                instructions: "Be nice.",
+            }
+        }
+
+        // ---- CommandProvider over a real subprocess ----
+
+        #[test]
+        fn command_provider_respond_parses_response() {
+            // Echo a fixed respond payload; ignore stdin.
+            let bin = script(
+                "respond",
+                "cat >/dev/null\necho '{\"message\":\"hi there\",\"done\":true,\
+                 \"usage\":{\"input_tokens\":4,\"output_tokens\":2},\"session_id\":\"s1\"}'\n",
+            );
+            let provider = CommandProvider::new(vec![bin.to_string_lossy().into_owned()]).unwrap();
+            let turn = provider
+                .respond("demo", "fake", &skill_ref(), &[Message::user("hi")], None)
+                .unwrap();
+            assert_eq!(turn.message, "hi there");
+            assert!(turn.done);
+            assert_eq!(turn.session_id.as_deref(), Some("s1"));
+            assert_eq!(turn.usage.unwrap().input_tokens, Some(4));
+        }
+
+        #[test]
+        fn command_provider_user_and_judge_parse_responses() {
+            let user_bin = script(
+                "user",
+                "cat >/dev/null\necho '{\"message\":\"more please\",\"stop\":true}'\n",
+            );
+            let user_provider =
+                CommandProvider::new(vec![user_bin.to_string_lossy().into_owned()]).unwrap();
+            let user = user_provider.simulate_user("m", "persona", &[]).unwrap();
+            assert_eq!(user.message, "more please");
+            assert!(user.stop);
+
+            let judge_bin = script(
+                "judge",
+                "cat >/dev/null\necho '{\"value\":7.5,\"reason\":\"ok\"}'\n",
+            );
+            let judge_provider =
+                CommandProvider::new(vec![judge_bin.to_string_lossy().into_owned()]).unwrap();
+            let query = JudgeQuery {
+                kind: JudgeKind::Numeric,
+                criterion: "polite",
+                scale: Some((0.0, 10.0)),
+            };
+            let verdict = judge_provider.judge("m", &query, &[]).unwrap();
+            assert!(matches!(verdict.value, JudgeValue::Number(v) if (v - 7.5).abs() < 1e-9));
+            assert_eq!(verdict.reason, "ok");
+        }
+
+        #[test]
+        fn command_provider_surfaces_nonzero_exit() {
+            let bin = script("fail", "cat >/dev/null\necho 'boom' 1>&2\nexit 2\n");
+            let provider = CommandProvider::new(vec![bin.to_string_lossy().into_owned()]).unwrap();
+            let err = provider.simulate_user("m", "p", &[]).unwrap_err();
+            let msg = err.to_string();
+            assert!(msg.contains("provider exited"), "got: {msg}");
+            assert!(msg.contains("boom"), "stderr is surfaced: {msg}");
+        }
+
+        #[test]
+        fn command_provider_rejects_empty_and_bad_output() {
+            let empty = script("empty", "cat >/dev/null\n");
+            let provider =
+                CommandProvider::new(vec![empty.to_string_lossy().into_owned()]).unwrap();
+            assert!(provider
+                .judge(
+                    "m",
+                    &JudgeQuery {
+                        kind: JudgeKind::Boolean,
+                        criterion: "x",
+                        scale: None
+                    },
+                    &[],
+                )
+                .unwrap_err()
+                .to_string()
+                .contains("no output"));
+
+            let garbage = script("garbage", "cat >/dev/null\necho 'not json'\n");
+            let provider =
+                CommandProvider::new(vec![garbage.to_string_lossy().into_owned()]).unwrap();
+            assert!(provider
+                .respond("demo", "m", &skill_ref(), &[], None)
+                .unwrap_err()
+                .to_string()
+                .contains("not valid JSON"));
+        }
+
+        #[test]
+        fn command_provider_reports_missing_binary() {
+            let provider =
+                CommandProvider::new(vec!["/no/such/skilltest-provider-binary".to_string()])
+                    .unwrap();
+            let err = provider.simulate_user("m", "p", &[]).unwrap_err();
+            assert!(err.to_string().contains("could not run provider"));
+        }
+
+        #[test]
+        fn command_provider_session_is_threaded_into_request() {
+            // The script writes the request it received to a sidecar file so the
+            // test can assert the `session` field made it onto the wire.
+            let dir =
+                std::env::temp_dir().join(format!("skilltest-prov-sess-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let seen = dir.join("seen.json");
+            let bin = script(
+                "session",
+                &format!(
+                    "cat > '{}'\necho '{{\"message\":\"ok\"}}'\n",
+                    seen.display()
+                ),
+            );
+            let provider = CommandProvider::new(vec![bin.to_string_lossy().into_owned()]).unwrap();
+            provider
+                .respond(
+                    "demo",
+                    "m",
+                    &skill_ref(),
+                    &[Message::user("hi")],
+                    Some("session-xyz"),
+                )
+                .unwrap();
+            let request = std::fs::read_to_string(&seen).unwrap();
+            assert!(
+                request.contains("\"session\":\"session-xyz\""),
+                "got: {request}"
+            );
+            assert!(request.contains("\"op\":\"respond\""));
+        }
+
+        // ---- OneharnessProvider over a fake oneharness ----
+
+        fn oh_provider(bin: PathBuf) -> OneharnessProvider {
+            OneharnessProvider::new(&OneharnessConfig {
+                bin: bin.to_string_lossy().into_owned(),
+                judge_harness: "claude-code".to_string(),
+                timeout_secs: 30,
+            })
+        }
+
+        #[test]
+        fn oneharness_respond_extracts_text_and_session() {
+            let bin = script(
+                "oh-ok",
+                "cat >/dev/null\necho '{\"results\":[{\"status\":\"ok\",\
+                 \"text\":\"  hello back  \",\"session_id\":\"oh1\",\
+                 \"usage\":{\"input_tokens\":5}}]}'\n",
+            );
+            let turn = oh_provider(bin)
+                .respond(
+                    "claude-code",
+                    "sonnet",
+                    &skill_ref(),
+                    &[Message::user("hi")],
+                    None,
+                )
+                .unwrap();
+            assert_eq!(turn.message, "hello back");
+            assert_eq!(turn.session_id.as_deref(), Some("oh1"));
+            assert_eq!(turn.usage.unwrap().input_tokens, Some(5));
+        }
+
+        #[test]
+        fn oneharness_falls_back_to_stdout_when_text_null() {
+            let bin = script(
+                "oh-fallback",
+                "cat >/dev/null\necho '{\"results\":[{\"status\":\"ok\",\
+                 \"stdout\":\"raw reply\"}]}'\n",
+            );
+            let user = oh_provider(bin).simulate_user("m", "persona", &[]).unwrap();
+            assert_eq!(user.message, "raw reply");
+        }
+
+        #[test]
+        fn oneharness_judge_parses_verdict() {
+            let bin = script(
+                "oh-judge",
+                "cat >/dev/null\necho '{\"results\":[{\"status\":\"ok\",\
+                 \"text\":\"{\\\"value\\\": true, \\\"reason\\\": \\\"good\\\"}\"}]}'\n",
+            );
+            let query = JudgeQuery {
+                kind: JudgeKind::Boolean,
+                criterion: "polite",
+                scale: None,
+            };
+            let verdict = oh_provider(bin).judge("m", &query, &[]).unwrap();
+            assert!(matches!(verdict.value, JudgeValue::Bool(true)));
+            assert_eq!(verdict.reason, "good");
+        }
+
+        #[test]
+        fn oneharness_classifies_failure_kind() {
+            let bin = script(
+                "oh-auth",
+                "cat >/dev/null\necho '{\"results\":[{\"status\":\"error\",\
+                 \"failure_kind\":\"auth\",\"error\":\"no creds\"}]}'\n",
+            );
+            let err = oh_provider(bin)
+                .respond("claude-code", "m", &skill_ref(), &[], None)
+                .unwrap_err();
+            assert!(matches!(err, Error::Provider { kind: Some(k), .. } if k == "auth"));
+        }
+
+        #[test]
+        fn oneharness_reports_status_without_failure_kind() {
+            let bin = script(
+                "oh-err",
+                "cat >/dev/null\necho '{\"results\":[{\"status\":\"timeout\",\
+                 \"stderr\":\"deadline\"}]}'\n",
+            );
+            let err = oh_provider(bin).simulate_user("m", "p", &[]).unwrap_err();
+            let msg = err.to_string();
+            assert!(msg.contains("harness run failed"), "got: {msg}");
+            assert!(msg.contains("deadline"));
+        }
+
+        #[test]
+        fn oneharness_errors_on_unparseable_output_and_no_results() {
+            let garbage = script(
+                "oh-garbage",
+                "cat >/dev/null\necho 'not json' 1>&2\necho 'x'\n",
+            );
+            assert!(oh_provider(garbage)
+                .simulate_user("m", "p", &[])
+                .unwrap_err()
+                .to_string()
+                .contains("could not parse oneharness output"));
+
+            let empty = script("oh-empty", "cat >/dev/null\necho '{\"results\":[]}'\n");
+            assert!(oh_provider(empty)
+                .simulate_user("m", "p", &[])
+                .unwrap_err()
+                .to_string()
+                .contains("no results"));
+        }
+
+        #[test]
+        fn oneharness_errors_when_no_text_or_stdout() {
+            let bin = script(
+                "oh-silent",
+                "cat >/dev/null\necho '{\"results\":[{\"status\":\"ok\"}]}'\n",
+            );
+            assert!(oh_provider(bin)
+                .respond("claude-code", "m", &skill_ref(), &[], None)
+                .unwrap_err()
+                .to_string()
+                .contains("neither extractable text nor stdout"));
+        }
+
+        #[test]
+        fn oneharness_respond_resume_sends_only_latest_message() {
+            // Capture the prompt (stdin) and the argv to assert resume behavior:
+            // with a session, only the last user message is sent and --resume is
+            // forwarded; without, the whole transcript is inlined.
+            let dir =
+                std::env::temp_dir().join(format!("skilltest-oh-resume-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let prompt_file = dir.join("prompt.txt");
+            let argv_file = dir.join("argv.txt");
+            let bin = script(
+                "oh-resume",
+                &format!(
+                    "echo \"$@\" > '{}'\ncat > '{}'\necho '{{\"results\":[{{\"status\":\"ok\",\"text\":\"ok\"}}]}}'\n",
+                    argv_file.display(),
+                    prompt_file.display(),
+                ),
+            );
+            let messages = [
+                Message::user("first"),
+                Message::assistant("reply"),
+                Message::user("second"),
+            ];
+            oh_provider(bin.clone())
+                .respond(
+                    "claude-code",
+                    "sonnet",
+                    &skill_ref(),
+                    &messages,
+                    Some("sess-1"),
+                )
+                .unwrap();
+            let prompt = std::fs::read_to_string(&prompt_file).unwrap();
+            assert_eq!(
+                prompt.trim(),
+                "second",
+                "resume sends only the latest user message"
+            );
+            let argv = std::fs::read_to_string(&argv_file).unwrap();
+            assert!(argv.contains("--resume sess-1"), "argv: {argv}");
+            assert!(
+                argv.contains("--system"),
+                "skill is the system prompt: {argv}"
+            );
+        }
+
+        #[test]
+        fn oneharness_omits_model_flag_when_model_empty() {
+            let dir =
+                std::env::temp_dir().join(format!("skilltest-oh-model-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let argv_file = dir.join("argv.txt");
+            let bin = script(
+                "oh-nomodel",
+                &format!(
+                    "echo \"$@\" > '{}'\ncat >/dev/null\necho '{{\"results\":[{{\"status\":\"ok\",\"text\":\"ok\"}}]}}'\n",
+                    argv_file.display(),
+                ),
+            );
+            oh_provider(bin)
+                .respond("cursor", "", &skill_ref(), &[Message::user("hi")], None)
+                .unwrap();
+            let argv = std::fs::read_to_string(&argv_file).unwrap();
+            assert!(
+                !argv.contains("--model"),
+                "empty model omits the flag: {argv}"
+            );
+        }
+
+        #[test]
+        fn oneharness_reports_missing_binary() {
+            let provider = oh_provider(PathBuf::from("/no/such/oneharness-binary"));
+            let err = provider
+                .respond("claude-code", "m", &skill_ref(), &[], None)
+                .unwrap_err();
+            assert!(err.to_string().contains("could not run"));
+        }
+
+        // ---- ApiJudgeProvider over a fake curl ----
+
+        fn api_provider_with_curl(curl: PathBuf, vendor: ApiVendor) -> ApiJudgeProvider {
+            ApiJudgeProvider::new(&ApiJudgeConfig {
+                vendor,
+                api_key_env: Some("SKILLTEST_TEST_API_KEY".to_string()),
+                base_url: Some("https://example.invalid/v1".to_string()),
+                timeout_secs: 5,
+                curl_bin: curl.to_string_lossy().into_owned(),
+                strict_json: true,
+            })
+        }
+
+        #[test]
+        fn api_judge_judges_through_fake_curl() {
+            // The fake curl echoes an Anthropic-shaped success body.
+            let curl = script(
+                "curl-ok",
+                "cat >/dev/null\necho '{\"content\":[{\"type\":\"text\",\
+                 \"text\":\"{\\\"value\\\": true, \\\"reason\\\": \\\"polite\\\"}\"}],\
+                 \"usage\":{\"input_tokens\":9,\"output_tokens\":3}}'\n",
+            );
+            std::env::set_var("SKILLTEST_TEST_API_KEY", "sk-test");
+            let provider = api_provider_with_curl(curl, ApiVendor::Anthropic);
+            let query = JudgeQuery {
+                kind: JudgeKind::Boolean,
+                criterion: "polite",
+                scale: None,
+            };
+            let verdict = provider
+                .judge("claude-x", &query, &[Message::user("hi")])
+                .unwrap();
+            assert!(matches!(verdict.value, JudgeValue::Bool(true)));
+            assert_eq!(verdict.usage.unwrap().input_tokens, Some(9));
+            std::env::remove_var("SKILLTEST_TEST_API_KEY");
+        }
+
+        #[test]
+        fn api_judge_simulates_user_through_fake_curl() {
+            let curl = script(
+                "curl-user",
+                "cat >/dev/null\necho '{\"choices\":[{\"message\":\
+                 {\"content\":\"sure, go on\"}}]}'\n",
+            );
+            std::env::set_var("SKILLTEST_TEST_API_KEY", "sk-test");
+            let provider = api_provider_with_curl(curl, ApiVendor::Openai);
+            let user = provider.simulate_user("gpt-x", "a patient", &[]).unwrap();
+            assert_eq!(user.message, "sure, go on");
+            std::env::remove_var("SKILLTEST_TEST_API_KEY");
+        }
+
+        #[test]
+        fn api_judge_errors_when_key_absent() {
+            let curl = script("curl-unused", "cat >/dev/null\necho '{}'\n");
+            std::env::remove_var("SKILLTEST_TEST_API_KEY");
+            let provider = api_provider_with_curl(curl, ApiVendor::Anthropic);
+            let err = provider
+                .judge(
+                    "m",
+                    &JudgeQuery {
+                        kind: JudgeKind::Boolean,
+                        criterion: "x",
+                        scale: None,
+                    },
+                    &[],
+                )
+                .unwrap_err();
+            assert!(matches!(err, Error::Provider { kind: Some(k), .. } if k == "auth"));
+        }
+
+        #[test]
+        fn api_judge_surfaces_curl_failure() {
+            let curl = script(
+                "curl-fail",
+                "cat >/dev/null\necho 'curl: (6) bad host' 1>&2\nexit 6\n",
+            );
+            std::env::set_var("SKILLTEST_TEST_API_KEY", "sk-test");
+            let provider = api_provider_with_curl(curl, ApiVendor::Anthropic);
+            let err = provider
+                .judge(
+                    "m",
+                    &JudgeQuery {
+                        kind: JudgeKind::Boolean,
+                        criterion: "x",
+                        scale: None,
+                    },
+                    &[],
+                )
+                .unwrap_err();
+            assert!(err.to_string().contains("curl failed"));
+            std::env::remove_var("SKILLTEST_TEST_API_KEY");
+        }
+
+        #[test]
+        fn write_curl_config_sets_private_mode_and_headers() {
+            let dir = std::env::temp_dir().join(format!("skilltest-cfg-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let path = dir.join("c.cfg");
+            write_curl_config(
+                &path,
+                "https://api.example/v1",
+                &[("x-api-key".to_string(), "secret\"quote".to_string())],
+                42,
+            )
+            .unwrap();
+            let text = std::fs::read_to_string(&path).unwrap();
+            assert!(text.contains("url = \"https://api.example/v1\""));
+            assert!(text.contains("max-time = 42"));
+            // The quote in the header value is escaped.
+            assert!(text.contains("secret\\\"quote"), "escaped header: {text}");
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600, "config is private");
+        }
+
+        #[test]
+        fn api_judge_retries_a_transient_error_then_succeeds() {
+            // The fake curl returns an overloaded error on its first invocation
+            // and a success on the second, so the retry path in `chat` is taken.
+            let dir = std::env::temp_dir().join(format!("skilltest-retry-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let counter = dir.join("n");
+            let curl = script(
+                "curl-retry",
+                &format!(
+                    "cat >/dev/null\nif [ -f '{c}' ]; then \
+                       echo '{{\"content\":[{{\"type\":\"text\",\"text\":\"{{\\\"value\\\": true, \\\"reason\\\": \\\"ok\\\"}}\"}}]}}'; \
+                     else touch '{c}'; \
+                       echo '{{\"error\":{{\"type\":\"overloaded_error\",\"message\":\"busy\"}}}}'; \
+                     fi\n",
+                    c = counter.display(),
+                ),
+            );
+            std::env::set_var("SKILLTEST_TEST_API_KEY", "sk-test");
+            let provider = api_provider_with_curl(curl, ApiVendor::Anthropic);
+            let verdict = provider
+                .judge(
+                    "m",
+                    &JudgeQuery {
+                        kind: JudgeKind::Boolean,
+                        criterion: "x",
+                        scale: None,
+                    },
+                    &[],
+                )
+                .unwrap();
+            assert!(matches!(verdict.value, JudgeValue::Bool(true)));
+            std::env::remove_var("SKILLTEST_TEST_API_KEY");
+        }
+
+        #[test]
+        fn api_judge_gives_up_after_max_retries() {
+            // Always overloaded: the loop exhausts MAX_RETRIES and surfaces it.
+            let curl = script(
+                "curl-busy",
+                "cat >/dev/null\necho '{\"error\":{\"type\":\"overloaded_error\",\"message\":\"busy\"}}'\n",
+            );
+            std::env::set_var("SKILLTEST_TEST_API_KEY", "sk-test");
+            let provider = api_provider_with_curl(curl, ApiVendor::Anthropic);
+            let err = provider
+                .judge(
+                    "m",
+                    &JudgeQuery {
+                        kind: JudgeKind::Boolean,
+                        criterion: "x",
+                        scale: None,
+                    },
+                    &[],
+                )
+                .unwrap_err();
+            assert!(matches!(err, Error::Provider { kind: Some(k), .. } if k == "overloaded"));
+            std::env::remove_var("SKILLTEST_TEST_API_KEY");
+        }
+
+        #[test]
+        fn api_judge_reports_missing_curl_binary() {
+            std::env::set_var("SKILLTEST_TEST_API_KEY", "sk-test");
+            let provider =
+                api_provider_with_curl(PathBuf::from("/no/such/curl-binary"), ApiVendor::Anthropic);
+            let err = provider
+                .judge(
+                    "m",
+                    &JudgeQuery {
+                        kind: JudgeKind::Boolean,
+                        criterion: "x",
+                        scale: None,
+                    },
+                    &[],
+                )
+                .unwrap_err();
+            assert!(err.to_string().contains("could not run"));
+            std::env::remove_var("SKILLTEST_TEST_API_KEY");
+        }
+
+        #[test]
+        fn api_judge_surfaces_unparseable_response() {
+            let curl = script("curl-garbage", "cat >/dev/null\necho 'not json at all'\n");
+            std::env::set_var("SKILLTEST_TEST_API_KEY", "sk-test");
+            let provider = api_provider_with_curl(curl, ApiVendor::Openai);
+            let err = provider
+                .judge(
+                    "m",
+                    &JudgeQuery {
+                        kind: JudgeKind::Boolean,
+                        criterion: "x",
+                        scale: None,
+                    },
+                    &[],
+                )
+                .unwrap_err();
+            assert!(err.to_string().contains("could not parse API response"));
+            std::env::remove_var("SKILLTEST_TEST_API_KEY");
+        }
+
+        #[test]
+        fn split_provider_routes_judge_and_user_through_the_api() {
+            // A SplitProvider's judge/simulate_user must hit the API judge (the
+            // fake curl), while respond goes to the stub responder.
+            let curl = script(
+                "split-curl",
+                "cat >/dev/null\necho '{\"content\":[{\"type\":\"text\",\
+                 \"text\":\"{\\\"value\\\": true, \\\"reason\\\": \\\"ok\\\"}\"}]}'\n",
+            );
+            std::env::set_var("SKILLTEST_TEST_API_KEY", "sk-test");
+            let judge = api_provider_with_curl(curl, ApiVendor::Anthropic);
+            let split = SplitProvider::new(Box::new(super::StubResponder), judge);
+            let verdict = split
+                .judge(
+                    "m",
+                    &JudgeQuery {
+                        kind: JudgeKind::Boolean,
+                        criterion: "polite",
+                        scale: None,
+                    },
+                    &[],
+                )
+                .unwrap();
+            assert!(matches!(verdict.value, JudgeValue::Bool(true)));
+            std::env::remove_var("SKILLTEST_TEST_API_KEY");
+        }
+
+        #[test]
+        fn oneharness_numeric_judge_uses_numeric_prompt() {
+            // A numeric judge exercises the numeric branch of build_judge_prompt
+            // (the scale text) and the numeric verdict parse path.
+            let dir = std::env::temp_dir().join(format!("skilltest-ohnum-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let prompt_file = dir.join("prompt.txt");
+            let bin = script(
+                "oh-numeric",
+                &format!(
+                    "cat > '{}'\necho '{{\"results\":[{{\"status\":\"ok\",\"text\":\"{{\\\"value\\\": 8.5, \\\"reason\\\": \\\"warm\\\"}}\"}}]}}'\n",
+                    prompt_file.display(),
+                ),
+            );
+            let query = JudgeQuery {
+                kind: JudgeKind::Numeric,
+                criterion: "warmth",
+                scale: Some((0.0, 10.0)),
+            };
+            let verdict = oh_provider(bin)
+                .judge("m", &query, &[Message::assistant("hi")])
+                .unwrap();
+            assert!(matches!(verdict.value, JudgeValue::Number(v) if (v - 8.5).abs() < 1e-9));
+            let prompt = std::fs::read_to_string(&prompt_file).unwrap();
+            assert!(
+                prompt.contains("scale from 0 to 10"),
+                "numeric prompt: {prompt}"
+            );
+        }
+
+        #[test]
+        fn supports_resume_method_matches_free_function() {
+            let provider = oh_provider(PathBuf::from("/bin/true"));
+            assert!(provider.supports_resume("claude-code"));
+            assert!(!provider.supports_resume("codex"));
+        }
+    }
+
+    // Non-subprocess error-path coverage for the verdict parser and the
+    // classified-error fallback.
+
+    #[test]
+    fn parse_verdict_rejects_missing_object_and_value() {
+        // No JSON object at all.
+        assert!(parse_verdict(JudgeKind::Boolean, "just prose, no braces").is_err());
+        // A JSON object with no `value` field.
+        assert!(parse_verdict(JudgeKind::Boolean, "{\"reason\": \"x\"}").is_err());
+        // Malformed JSON inside the braces.
+        assert!(parse_verdict(JudgeKind::Numeric, "{not: valid}").is_err());
+    }
+
+    #[test]
+    fn extract_json_object_handles_reversed_braces() {
+        // A stray `}` before `{` is not a valid object span.
+        assert_eq!(extract_json_object("} then {"), None);
+    }
+
+    #[test]
+    fn unclassified_api_error_falls_back_to_plain_provider_error() {
+        // An error type we don't classify becomes an unclassified provider error.
+        let raw = r#"{"error":{"type":"some_new_error","message":"odd"}}"#;
+        let err = parse_chat_response(ApiVendor::Openai, raw).unwrap_err();
+        assert!(matches!(err, Error::Provider { kind: None, .. }));
+        assert!(err.to_string().contains("odd"));
+    }
+
+    #[test]
+    fn openai_empty_choice_text_is_an_error() {
+        let raw = r#"{"choices":[]}"#;
+        assert!(parse_chat_response(ApiVendor::Openai, raw).is_err());
+    }
+
+    #[test]
+    fn truncate_for_error_caps_length_on_a_char_boundary() {
+        let long = "x".repeat(1000);
+        assert_eq!(truncate_for_error(&long).chars().count(), 500);
+    }
 }
