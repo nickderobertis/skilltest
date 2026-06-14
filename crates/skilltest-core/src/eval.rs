@@ -338,4 +338,110 @@ mod tests {
         let c: Comparator = serde_yaml::from_str("lt").unwrap();
         assert_eq!(c, Comparator::Lt);
     }
+
+    #[test]
+    fn every_comparator_satisfied_and_symbol() {
+        assert!(Comparator::Gte.satisfied(5.0, 5.0));
+        assert!(Comparator::Gt.satisfied(6.0, 5.0));
+        assert!(!Comparator::Gt.satisfied(5.0, 5.0));
+        assert!(Comparator::Lte.satisfied(5.0, 5.0));
+        assert!(Comparator::Lt.satisfied(4.0, 5.0));
+        assert!(!Comparator::Lt.satisfied(5.0, 5.0));
+        assert_eq!(Comparator::Gte.symbol(), ">=");
+        assert_eq!(Comparator::Gt.symbol(), ">");
+        assert_eq!(Comparator::Lte.symbol(), "<=");
+        assert_eq!(Comparator::Lt.symbol(), "<");
+    }
+
+    #[test]
+    fn criterion_and_label_for_both_kinds() {
+        let bool_named = Eval::Boolean {
+            criterion: "is polite".into(),
+            expected: true,
+            name: Some("politeness".into()),
+        };
+        assert_eq!(bool_named.criterion(), "is polite");
+        assert_eq!(bool_named.label(), "politeness");
+
+        let numeric_unnamed = Eval::Numeric {
+            criterion: "warmth".into(),
+            min: 0.0,
+            max: 10.0,
+            threshold: 5.0,
+            comparator: Comparator::Gte,
+            name: None,
+        };
+        assert_eq!(numeric_unnamed.criterion(), "warmth");
+        // Falls back to the criterion when unnamed.
+        assert_eq!(numeric_unnamed.label(), "warmth");
+    }
+
+    #[test]
+    fn validate_rejects_empty_criterion_and_out_of_range_threshold() {
+        let empty = Eval::Boolean {
+            criterion: "   ".into(),
+            expected: true,
+            name: None,
+        };
+        assert!(empty.validate().is_err());
+
+        let bad_threshold = Eval::Numeric {
+            criterion: "x".into(),
+            min: 0.0,
+            max: 10.0,
+            threshold: 11.0,
+            comparator: Comparator::Gte,
+            name: None,
+        };
+        assert!(bad_threshold.validate().is_err());
+
+        // A well-formed numeric eval validates.
+        let ok = Eval::Numeric {
+            criterion: "x".into(),
+            min: 0.0,
+            max: 10.0,
+            threshold: 7.0,
+            comparator: Comparator::Gte,
+            name: None,
+        };
+        ok.validate().unwrap();
+    }
+
+    #[test]
+    fn outcome_rejects_numeric_eval_with_boolean_verdict() {
+        let eval = Eval::Numeric {
+            criterion: "x".into(),
+            min: 0.0,
+            max: 10.0,
+            threshold: 5.0,
+            comparator: Comparator::Gte,
+            name: None,
+        };
+        assert!(eval
+            .outcome(&JudgeValue::Bool(true), String::new())
+            .is_err());
+    }
+
+    #[test]
+    fn eval_detail_summary_for_both_kinds() {
+        let boolean = EvalDetail::Boolean {
+            value: true,
+            expected: false,
+        };
+        assert_eq!(boolean.summary(), "true (expected false)");
+        let numeric = EvalDetail::Numeric {
+            value: 8.0,
+            threshold: 7.0,
+            comparator: Comparator::Gte,
+        };
+        assert_eq!(numeric.summary(), "8 >= 7");
+    }
+
+    #[test]
+    fn judge_value_deserializes_untagged() {
+        let b: JudgeValue = serde_json::from_str("true").unwrap();
+        assert!(matches!(b, JudgeValue::Bool(true)));
+        let n: JudgeValue = serde_json::from_str("3.5").unwrap();
+        assert!(matches!(n, JudgeValue::Number(v) if (v - 3.5).abs() < 1e-9));
+    }
 }

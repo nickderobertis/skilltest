@@ -446,4 +446,160 @@ provider:\n  kind: oneharness\njudge:\n  kind: api\n  vendor: anthropic\n  timeo
     fn default_config_has_no_judge_override() {
         assert!(Config::default().judge.is_none());
     }
+
+    /// Write `yaml` to a unique temp file and return its path.
+    fn config_file(tag: &str, yaml: &str) -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static N: AtomicU64 = AtomicU64::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "skilltest-config-{}-{tag}-{}",
+            std::process::id(),
+            N.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("skilltest.yaml");
+        std::fs::write(&path, yaml).unwrap();
+        path
+    }
+
+    #[test]
+    fn load_reads_and_validates_a_file() {
+        let path = config_file(
+            "load",
+            "provider:\n  kind: command\n  command: [\"prov\"]\nplatforms: [demo]\nmodels: [m]\n",
+        );
+        let config = Config::load(&path).unwrap();
+        assert_eq!(config.platforms, vec!["demo".to_string()]);
+        assert!(matches!(config.provider, ProviderConfig::Command(_)));
+    }
+
+    #[test]
+    fn load_missing_file_is_io_error() {
+        let path = std::env::temp_dir().join(format!("skilltest-none-{}.yaml", std::process::id()));
+        assert!(matches!(Config::load(&path), Err(Error::Io { .. })));
+    }
+
+    #[test]
+    fn load_malformed_yaml_is_yaml_error() {
+        let path = config_file("bad", "platforms: [unterminated\n");
+        assert!(matches!(Config::load(&path), Err(Error::Yaml { .. })));
+    }
+
+    #[test]
+    fn load_inconsistent_config_is_invalid_error() {
+        // Parses fine, but an empty command provider fails validation.
+        let path = config_file(
+            "inconsistent",
+            "provider:\n  kind: command\n  command: []\n",
+        );
+        assert!(matches!(Config::load(&path), Err(Error::Invalid(_))));
+    }
+
+    #[test]
+    fn load_or_default_returns_default_when_absent() {
+        let path =
+            std::env::temp_dir().join(format!("skilltest-absent-{}.yaml", std::process::id()));
+        let config = Config::load_or_default(&path).unwrap();
+        assert_eq!(config, Config::default());
+    }
+
+    #[test]
+    fn load_or_default_loads_when_present() {
+        let path = config_file("present", "platforms: [a, b]\nmodels: [m]\n");
+        let config = Config::load_or_default(&path).unwrap();
+        assert_eq!(config.platforms, vec!["a".to_string(), "b".to_string()]);
+    }
+
+    #[test]
+    fn overrides_apply_judge_harness_timeout_and_run_fields() {
+        let mut config = Config::default();
+        config
+            .apply_overrides(Overrides {
+                judge_harness: Some("codex".into()),
+                timeout_secs: Some(45),
+                platforms: vec!["p1".into(), "p2".into()],
+                models: vec!["mod".into()],
+                judge_model: Some("haiku".into()),
+                max_turns: Some(3),
+                ..Default::default()
+            })
+            .unwrap();
+        let ProviderConfig::Oneharness(oh) = &config.provider else {
+            panic!("still oneharness");
+        };
+        assert_eq!(oh.judge_harness, "codex");
+        assert_eq!(oh.timeout_secs, 45);
+        assert_eq!(config.platforms, vec!["p1".to_string(), "p2".to_string()]);
+        assert_eq!(config.models, vec!["mod".to_string()]);
+        assert_eq!(config.judge_model, "haiku");
+        assert_eq!(config.max_turns, 3);
+    }
+
+    #[test]
+    fn effective_judge_model_prefers_explicit_judge_model() {
+        let config = Config {
+            judge_model: "haiku".into(),
+            ..Config::default()
+        };
+        assert_eq!(config.effective_judge_model(), "haiku");
+    }
+
+    #[test]
+    fn validate_rejects_blank_oneharness_fields() {
+        let mut config = Config::default();
+        if let ProviderConfig::Oneharness(oh) = &mut config.provider {
+            oh.bin = "  ".into();
+        }
+        assert!(config.validate().is_err());
+
+        let mut config = Config::default();
+        if let ProviderConfig::Oneharness(oh) = &mut config.provider {
+            oh.judge_harness = "".into();
+        }
+        assert!(config.validate().is_err());
+
+        let mut config = Config::default();
+        if let ProviderConfig::Oneharness(oh) = &mut config.provider {
+            oh.timeout_secs = 0;
+        }
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_empty_platforms_and_zero_max_turns() {
+        let mut config = Config::default();
+        config.platforms.clear();
+        assert!(config.validate().is_err());
+
+        let config = Config {
+            max_turns: 0,
+            ..Config::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_blank_api_judge_curl_bin() {
+        let yaml = "judge:\n  kind: api\n  vendor: anthropic\n  curl_bin: \"  \"\n";
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn config_round_trips_through_yaml() {
+        let config = Config {
+            judge: Some(JudgeConfig::Api(ApiJudgeConfig {
+                vendor: ApiVendor::Openai,
+                api_key_env: Some("X".into()),
+                base_url: None,
+                timeout_secs: 30,
+                curl_bin: "curl".into(),
+                strict_json: false,
+            })),
+            ..Config::default()
+        };
+        let yaml = serde_yaml::to_string(&config).unwrap();
+        let parsed: Config = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(parsed, config);
+    }
 }

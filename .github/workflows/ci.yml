@@ -2,9 +2,12 @@
 #
 # skilltest ships a cross-platform CLI plus Python and TypeScript SDKs and
 # test-framework packages, so the matrix covers Linux and macOS. Each job
-# installs only what `just bootstrap` needs — Rust (+ nextest), uv, and
-# pnpm/Node — then runs `just bootstrap` and `just check` (format, lint, type
-# check, unit, and e2e). See references/ci.md.
+# installs only what `just bootstrap` + `just check` need — Rust (+ nextest +
+# llvm-cov for the coverage gate), uv, and pnpm/Node — then runs `just
+# bootstrap` and `just check` (format, lint, type check, unit, e2e, and the 95%
+# Rust line-coverage gate). The gate job is named `check`, so its required
+# status contexts are `check (ubuntu-latest)` and `check (macos-latest)`. See
+# references/ci.md.
 
 name: ci
 
@@ -36,12 +39,13 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy, rustfmt
+          # llvm-tools is required by cargo-llvm-cov for the coverage gate.
+          components: clippy, rustfmt, llvm-tools
 
-      - name: Install cargo-nextest
+      - name: Install cargo-nextest and cargo-llvm-cov
         uses: taiki-e/install-action@v2
         with:
-          tool: cargo-nextest
+          tool: cargo-nextest, cargo-llvm-cov
 
       - name: Cache cargo registry and target
         uses: Swatinem/rust-cache@v2

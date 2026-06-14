@@ -23,6 +23,71 @@ also validates skill definitions.
 Consumers: skill authors who want a regression suite for a skill, and CI that
 must prove a skill still behaves.
 
+## Stack and composition
+
+This repo is composed from the `create-repo` skill's reference axes rather than
+a single template. What was pulled in, and why:
+
+- **Product shape — CLI (`shapes/cli.md`) + library (`shapes/library.md`).** The
+  shipped artifact is a compiled **Rust CLI** (`skilltest`); `skilltest-core` is
+  a reusable **library** and the source of truth for the JSON contract. The CLI
+  guidance drives "test the *built* binary as a subprocess, e2e in the gate"; the
+  library guidance drives the stable, documented public API in `skilltest-core`.
+- **Language — Rust (`languages/rust.md`) + its CLI intersection
+  (`intersections/rust-cli.md`).** These set the toolchain and gates: stable
+  Rust, `rustfmt` + `clippy -D warnings` (strict, no warnings-only mode), `cargo
+  nextest` for unit/integration + a separate binary e2e target both in `just
+  check`, `cargo llvm-cov --fail-under-lines` for coverage, and `cargo deny` +
+  `cargo machete` for supply chain (the `just audit` recipe; run before
+  publishing binaries). The SDK languages — **Python** (`languages/python.md`:
+  uv/ruff/ty/pytest) and **TypeScript** (`languages/typescript.md`: biome/tsc/
+  vitest) — are pulled in for the thin per-language SDKs and framework packages,
+  each running its own native toolchain.
+- **Cross-cutting — `ci.md` (always)** and **`monorepo.md` (applies).** `ci.md`
+  gives clean-checkout → `just bootstrap` → `just check` on a Linux/macOS matrix,
+  the live/integration test tier kept out of the gate in its own fork-safe
+  workflows (the `e2e-*` and `*-api` workflows), the install-path smoke proof
+  (`bundle-smoke.yml`), and the merge model in "Publishing" / "Repository
+  settings" below. `monorepo.md` applies because the repo holds **>1 deliverable
+  in >1 language** (a Rust workspace + Python and TypeScript SDKs + per-framework
+  packages): it is orchestrated by **Nx** (root `just` recipes delegate to `nx
+  affected`/`run-many`; per-project `project.json` targets; lockstep versioning
+  through `scripts/set-version.sh`; the generated cross-language contract in
+  `schemas/` drift-checked by `just contract-check`).
+- **Excluded and why.** `shapes/nextjs.md`, `shapes/web-app.md`,
+  `shapes/skills-repo.md`, and `shapes/asdf-plugin.md` — there is no web app, and
+  while skilltest *tests* skills it is not itself a skills repo. The
+  `intersections/python-cli.md` reference does not apply: the Python package is a
+  thin **SDK/library** wrapping the Rust CLI, not its own console entry point. No
+  `bash.md` shape — the `scripts/*.sh` are build/release glue (kept
+  orchestrator-independent per `monorepo.md`), not a shipped Bash artifact.
+
+### Coverage and e2e (the gate's depth)
+
+- **Coverage — enforced, default bar (95% lines).** `just coverage` (wired into
+  `just check` and `check-all`) runs `cargo llvm-cov nextest --workspace
+  --features fake-provider --fail-under-lines 95` and **fails the gate below 95%
+  line coverage** on the artifact's Rust core (`skilltest-core` + the `skilltest`
+  CLI, including the binary e2e suite and the bundled fake provider). The current
+  figure is ~97% lines. Coverage runs over the **whole Rust workspace** (not
+  nx-affected) on purpose: the binary is the published artifact, so its coverage
+  floor is proven on every gate run, not only when a Rust file changed. The
+  thin Python/TS SDKs are proven by their own `nx test`/`test-e2e` targets and
+  the bundled-binary install smoke; the 95% line bar is enforced on the Rust core
+  where the behavior lives.
+- **E2E — real, in the gate.** The deterministic e2e suites drive the **built**
+  CLI as a subprocess against the `skilltest-fake-provider` (only the model is
+  faked): `crates/skilltest-cli/tests/e2e.rs` plus `cli_errors.rs` (the CLI's
+  error-classification/dispatch paths) and `fake_provider.rs` (the reference
+  provider's protocol), wired into `just check` via the `test-e2e` target and the
+  coverage run. Each suite covers a happy path **and** ≥1 failure/recovery path
+  (failing eval, malformed config, missing provider, classified provider
+  errors). The **live** tier that needs real harnesses/APIs stays out of the gate
+  (non-deterministic, credentialed) and runs in the per-harness `e2e-*` /
+  `e2e-judge-api` workflows — it still compiles in the normal build (gated at
+  runtime via `--ignored`), per `ci.md`'s live-tier rule. See "The provider
+  boundary" and `docs/e2e.md`.
+
 ## Layout
 
 | Path | What |
