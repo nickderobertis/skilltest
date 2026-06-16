@@ -23,6 +23,29 @@ also validates skill definitions.
 Consumers: skill authors who want a regression suite for a skill, and CI that
 must prove a skill still behaves.
 
+## Two standing goals on every task
+
+The user drives product features and their request is the priority — but carry
+two goals into *every* task. When either is the lowest-error path to what the
+user asked, fold it into the same task without asking first; surface the rest as
+follow-ups (see "After the main task").
+
+1. **Engineer the context for next time.** Make the next agent (and you) see
+   more for less: realistic end-to-end tests that exercise what users actually
+   see — especially when they report a bug existing tests missed (the e2e suites
+   drive the built CLI as a subprocess, see "Tests are context engineering") —
+   scripts and skills that automate repetitive steps and shrink their output to
+   signal, and terse `AGENTS.md` notes capturing what the code doesn't make
+   obvious.
+2. **Engineer the codebase and environment.** Be the engineer the user isn't:
+   prioritize the technical initiatives that keep the codebase clean,
+   maintainable, and repeatable, and keep environment setup automated and
+   consistent (`just bootstrap` from a clean clone). Strict quality gates plus
+   local/CI parity (the same `just check`, the same pinned toolchains) make
+   results repeatable — not "works on my machine." A clean base and a
+   reproducible environment are usually how the user's feature ships with a low
+   error rate.
+
 ## Stack and composition
 
 This repo is composed from the `create-repo` skill's reference axes rather than
