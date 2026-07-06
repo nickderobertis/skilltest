@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.5.0](https://github.com/nickderobertis/skilltest/compare/v0.4.0...v0.5.0) (2026-07-06)
+
+### Features
+
+* tool mocking and spying — stub/deny/rewrite/spy across YAML, SDKs, and plugins ([#24](https://github.com/nickderobertis/skilltest/issues/24)) ([1902b42](https://github.com/nickderobertis/skilltest/commit/1902b42c3b9fefde3b232f1f206fb089ae1e1207))
+
+### Documentation
+
+* document tool events + streaming API in the READMEs ([#23](https://github.com/nickderobertis/skilltest/issues/23)) ([60733ab](https://github.com/nickderobertis/skilltest/commit/60733ab556459f6ec0c80750cdecca838eb755b3))
+
 ## [0.4.0](https://github.com/nickderobertis/skilltest/compare/v0.3.0...v0.4.0) (2026-07-06)
 
 ### ⚠ BREAKING CHANGES
