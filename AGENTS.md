@@ -233,10 +233,15 @@ which the deterministic `called`/`not_called` evals and the SDKs' mock objects
 bind on. Two matching engines exist deliberately: action rules match inside
 the harness hook (`oneharness mock`), and `mock::decide` mirrors those
 semantics for the fake provider so the gate proves identical decision logic —
-the per-harness live e2e is the drift alarm between them. The oneharness side
-ships in its PR #1099 (`mock` responder + `run --mock-rules`); the live
-mock-path e2e lands once that release is cut and the version note in
-`docs/protocol.md` moves. Everything is loud-by-default: unsupported verbs,
+the per-harness live e2e is the drift alarm between them (oneharness v0.3.7
+shipped the seam: the `mock` responder + `run --mock-rules`/`--spy-file`). A
+third tier sits between the gate and live: the **hermetic oneharness
+integration suite** (`crates/skilltest-cli/tests/oneharness_integration.rs`,
+`just test-oneharness`) drives the *real* oneharness binary with a scripted
+claude shim (`tests/fixtures/oneharness/fake-claude.sh`) that executes the
+ephemerally-installed hook for real — proving skilltest's flag wiring, the
+real responder's matching, and the spy JSONL parse with no credentials or
+model. Everything is loud-by-default: unsupported verbs,
 unknown mock names in evals, invalid regexes, and a channel-less `not_called`
 are errors, never vacuous passes.
 

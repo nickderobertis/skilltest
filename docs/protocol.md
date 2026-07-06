@@ -7,7 +7,7 @@ provider backends.
 
 ## 1. The oneharness provider (default)
 
-[`oneharness`](https://github.com/nickderobertis/oneharness) (v0.3.6+) is a
+[`oneharness`](https://github.com/nickderobertis/oneharness) (v0.3.7+) is a
 prompt→text runner over many agentic harnesses (Claude Code, Codex, OpenCode,
 Cursor, …). skilltest's `OneharnessProvider` wires five real oneharness features
 into the runner:
@@ -40,9 +40,8 @@ into the runner:
   inside the harness, and appends every observed call to the spy JSONL, which
   skilltest parses into the report's `mock_calls`. A harness that cannot
   express a requested verb (e.g. rewrite on goose) is a loud oneharness usage
-  error surfaced as a provider error. Requires an oneharness release with the
-  mock responder (`oneharness mock`, `run --mock-rules`); the pinned minimum
-  moves once it ships.
+  error surfaced as a provider error. Requires oneharness v0.3.7+ (the release
+  carrying the `mock` responder and `run --mock-rules`/`--spy-file`).
 
 For each operation skilltest invokes:
 

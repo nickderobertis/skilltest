@@ -58,6 +58,11 @@ e2e_skilltest_bin() {
 #   H_DRIVABLE   1 if the installed oneharness can deliver the skill to this
 #                harness, else 0
 #   H_BLOCKED    when H_DRIVABLE=0, the precise upstream reason (shown on SKIP)
+#   H_MOCK       what the harness's hook protocol can express, per oneharness
+#                v0.3.7's live-verified registry: "rewrite" (stub/deny/rewrite
+#                all work), "deny" (deny-only — goose has no rewrite verdict,
+#                qwen's documented one was live-refuted), or "none" (copilot's
+#                hooks never fire headlessly). Drives which mock phase runs.
 #
 # Why H_DRIVABLE exists: skilltest passes the skill as `--system`, and a harness
 # is only drivable when the *pinned* oneharness can carry that to the model.
@@ -71,16 +76,16 @@ e2e_skilltest_bin() {
 # H_BLOCKED reason otherwise. See docs/e2e.md.
 e2e_harness_config() {
     local id="$1"
-    H_EXTRA_ENV=""; H_BLOCKED=""
+    H_EXTRA_ENV=""; H_BLOCKED=""; H_MOCK="none"
     case "$id" in
         claude-code)
             H_PLATFORM="claude-code"; H_BIN="claude"
             H_MODEL="${SKILLTEST_E2E_MODEL:-haiku}"
-            H_AUTH_ENV="CLAUDE_CODE_OAUTH_TOKEN"; H_DRIVABLE=1 ;;
+            H_AUTH_ENV="CLAUDE_CODE_OAUTH_TOKEN"; H_DRIVABLE=1; H_MOCK="rewrite" ;;
         codex)
             H_PLATFORM="codex"; H_BIN="codex"
             H_MODEL="${SKILLTEST_E2E_MODEL:-gpt-5-mini}"
-            H_AUTH_ENV="OPENAI_API_KEY"; H_DRIVABLE=1 ;;
+            H_AUTH_ENV="OPENAI_API_KEY"; H_DRIVABLE=1; H_MOCK="rewrite" ;;
         goose)
             # Goose ignores oneharness's --model (it reads its own config), so the
             # OpenAI provider + model are supplied via env; --system maps to
@@ -89,7 +94,7 @@ e2e_harness_config() {
             H_MODEL="${SKILLTEST_E2E_MODEL:-gpt-5-mini}"
             H_AUTH_ENV="OPENAI_API_KEY"
             H_EXTRA_ENV="GOOSE_PROVIDER=openai GOOSE_MODEL=${SKILLTEST_E2E_MODEL:-gpt-5-mini}"
-            H_DRIVABLE=1 ;;
+            H_DRIVABLE=1; H_MOCK="deny" ;;
         opencode)
             # OpenCode emits JSONL whose reply is nested in a `part`; oneharness
             # v0.2.37 reconstructs it (text_source json:opencode-parts), so the
@@ -99,21 +104,21 @@ e2e_harness_config() {
             # own validated recipe (and we hold ANTHROPIC_API_KEY).
             H_PLATFORM="opencode"; H_BIN="opencode"
             H_MODEL="${SKILLTEST_E2E_MODEL:-anthropic/claude-haiku-4-5}"
-            H_AUTH_ENV="ANTHROPIC_API_KEY"; H_DRIVABLE=1 ;;
+            H_AUTH_ENV="ANTHROPIC_API_KEY"; H_DRIVABLE=1; H_MOCK="rewrite" ;;
         cursor)
             # Cursor CLI (cursor-agent) emits stream-json; oneharness extracts the
             # terminal `result` event. The skill has no native system flag, so it
             # is prepended to the prompt.
             H_PLATFORM="cursor"; H_BIN="cursor-agent"
             H_MODEL="${SKILLTEST_E2E_MODEL:-}"
-            H_AUTH_ENV="CURSOR_API_KEY"; H_DRIVABLE=1 ;;
+            H_AUTH_ENV="CURSOR_API_KEY"; H_DRIVABLE=1; H_MOCK="rewrite" ;;
         crush)
             # Crush `run -q` prints plain text; oneharness extracts the trimmed
             # stdout. Backed by Anthropic here (we hold ANTHROPIC_API_KEY); the
             # skill is prepended to the prompt.
             H_PLATFORM="crush"; H_BIN="crush"
             H_MODEL="${SKILLTEST_E2E_MODEL:-}"
-            H_AUTH_ENV="ANTHROPIC_API_KEY"; H_DRIVABLE=1 ;;
+            H_AUTH_ENV="ANTHROPIC_API_KEY"; H_DRIVABLE=1; H_MOCK="rewrite" ;;
         qwen)
             # Qwen Code speaks an OpenAI-compatible API. Point it at OpenAI with
             # OPENAI_BASE_URL + OPENAI_MODEL (our OPENAI_API_KEY is a real OpenAI
@@ -125,13 +130,13 @@ e2e_harness_config() {
             # `max_completion_tokens`).
             H_AUTH_ENV="OPENAI_API_KEY"
             H_EXTRA_ENV="OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1} OPENAI_MODEL=${QWEN_E2E_MODEL:-gpt-4o-mini}"
-            H_DRIVABLE=1 ;;
+            H_DRIVABLE=1; H_MOCK="deny" ;;
         copilot)
             # GitHub Copilot CLI. Auth via COPILOT_GITHUB_TOKEN (a token with the
             # "Copilot Requests" permission); the skill is prepended to the prompt.
             H_PLATFORM="copilot"; H_BIN="copilot"
             H_MODEL="${SKILLTEST_E2E_MODEL:-}"
-            H_AUTH_ENV="COPILOT_GITHUB_TOKEN"; H_DRIVABLE=1 ;;
+            H_AUTH_ENV="COPILOT_GITHUB_TOKEN"; H_DRIVABLE=1; H_MOCK="none" ;;
         *)
             fail "unknown harness id '$id' (known: claude-code, codex, goose, opencode, cursor, crush, qwen, copilot)" ;;
     esac
@@ -197,4 +202,57 @@ e2e_assert_pass() {
     jq -e '[.runs[0].transcript.messages[]?|select(.role=="assistant")|.content]|join(" ")|ascii_downcase|contains("pong")' "$report" >/dev/null 2>&1 \
         || fail "the assistant reply never contained \"pong\" (the harness may not have applied the skill)"
     note "  ok: live run passed and the reply contained \"pong\""
+}
+
+# The mock/spy phase: intercept (or observe) the marked tool call the
+# toolrunner skill makes, through the REAL harness's own hook protocol —
+# skilltest's live drift alarm for the mock seam (oneharness v0.3.7+). Which
+# case runs follows H_MOCK: rewrite-capable harnesses get the stub (the canned
+# output must reach the model), deny-only ones get the deny, and a "none"
+# harness skips the phase with the precise upstream reason (copilot's hooks
+# never fire headlessly — probe-refuted upstream). ONEHARNESS_MODE=bypass lets
+# the harness execute the tool call, exactly as a user configures approval.
+# Args: <harness-id>
+e2e_mock_phase() {
+    local id="$1"
+    local root; root="$(e2e_repo_root)"
+    local case_file action
+    case "$H_MOCK" in
+        rewrite) case_file="$root/tests/fixtures/live/cases/mock_stub.yaml"; action="stub" ;;
+        deny)    case_file="$root/tests/fixtures/live/cases/mock_deny.yaml"; action="deny" ;;
+        none)
+            note "» mock phase skipped for $id: its hooks cannot fire headlessly (see docs/e2e.md)"
+            return 0 ;;
+        *) fail "unknown H_MOCK '$H_MOCK' for $id" ;;
+    esac
+    local bin; bin="$(e2e_skilltest_bin)"
+    local out; out="$(mktemp)"
+    local kv
+    for kv in $H_EXTRA_ENV; do export "${kv?}"; done
+    note "» running mock phase on $id ($action via the real hook; model=$H_MODEL)"
+    local code=0
+    ONEHARNESS_MODE=bypass "$bin" run "$case_file" \
+        --oneharness-bin oneharness \
+        --platform "$H_PLATFORM" --model "$H_MODEL" \
+        --judge-harness "$E2E_JUDGE_PLATFORM" --judge-model "$E2E_JUDGE_MODEL" \
+        --timeout 150 --format json >"$out" 2>"$out.err" || code=$?
+    if [ "$code" -ne 0 ] && [ "$code" -ne 1 ]; then
+        note "  stderr:"; sed 's/^/    /' "$out.err" >&2 || true
+        fail "skilltest mock run errored (exit $code) for $id — see stderr above"
+    fi
+    e2e_assert_mock "$out" "$action"
+}
+
+# Assert the mock report passed and the interception really happened: a record
+# whose action matches, resolved to its mock's name, with the ORIGINAL command
+# preserved. Args: <report-json-path> <expected-action>
+e2e_assert_mock() {
+    local report="$1" action="$2"
+    jq -e '.passed == true' "$report" >/dev/null 2>&1 \
+        || { note "  report:"; jq '{passed, evals:[.runs[0].evals[]?|{label,passed,reason}]}' "$report" 2>/dev/null | sed 's/^/    /'; fail "the live mock run did not pass"; }
+    jq -e --arg a "$action" '[.runs[0].mock_calls[]?|select(.action==$a)]|length >= 1' "$report" >/dev/null 2>&1 \
+        || { note "  records:"; jq '.runs[0].mock_calls' "$report" 2>/dev/null | sed 's/^/    /'; fail "no \"$action\" record — the hook never intercepted the marked call"; }
+    jq -e --arg a "$action" '[.runs[0].mock_calls[]?|select(.action==$a)][0].input|tostring|contains("MARKER")' "$report" >/dev/null 2>&1 \
+        || fail "the intercepted record lost the original input"
+    note "  ok: mock phase passed ($action intercepted the marked call)"
 }

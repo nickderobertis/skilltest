@@ -38,4 +38,6 @@ e2e_preflight "$id"
 e2e_run_smoke "$id" "$case_file"
 e2e_assert_pass "$E2E_REPORT"
 
+e2e_mock_phase "$id"
+
 note "✓ $id live e2e passed"

@@ -23,11 +23,14 @@ set -euo pipefail
 # text from its JSONL (`text_source: json:opencode-parts`, so transcripts carry
 # clean text instead of raw stdout). v0.3.6 adds `--events` (normalized tool-call
 # events skilltest lifts onto each turn) and `--stream` (NDJSON events for the
-# streaming/short-circuit API). Note v0.3.0 normalized `--mode` approval modes
-# (breaking): skilltest passes no `--mode`, so oneharness's default applies —
-# configure approval behavior (e.g. `bypass`) via oneharness's own config. Bump
-# here when skilltest adopts a newer oneharness.
-default_version="v0.3.6"
+# streaming/short-circuit API). v0.3.7 ships the mock/spy seam skilltest's
+# tool mocking rides: `oneharness mock` (the hook responder), `run --mock-rules`
+# / `run --spy-file` (per-run ephemeral delivery + the spy JSONL), and the
+# per-harness `mock_rewrite` capability. Note v0.3.0 normalized `--mode`
+# approval modes (breaking): skilltest passes no `--mode`, so oneharness's
+# default applies — configure approval behavior (e.g. `bypass`) via
+# oneharness's own config. Bump here when skilltest adopts a newer oneharness.
+default_version="v0.3.7"
 version="${1:-$default_version}"
 repo="nickderobertis/oneharness"
 dest="${ONEHARNESS_INSTALL_DIR:-$HOME/.local/bin}"

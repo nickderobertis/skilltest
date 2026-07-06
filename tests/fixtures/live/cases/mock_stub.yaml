@@ -1,0 +1,19 @@
+# Live mock smoke (rewrite-capable harnesses): the skill makes the model run a
+# marked shell command; the stub intercepts it INSIDE the real harness (via the
+# real `oneharness mock` hook) and the model must report the canned output —
+# the same proof oneharness's own oh_mock_enforce phase makes, now through the
+# whole skilltest pipeline. Matchers use `contains` on the raw event (never a
+# tool name), so one fixture works on every harness's tool naming.
+name: live_mock_stub
+skill: ../skills/toolrunner
+input: "Run the marked command and report its output."
+mocks:
+  - name: marker
+    match: { contains: "MARKER" }
+    stub: CANNED-BY-SKILLTEST
+evals:
+  - type: called
+    mock: marker
+  - type: boolean
+    name: canned-output-reported
+    criterion: "the assistant's reply reports the command output as `CANNED-BY-SKILLTEST` (and NOT as MARKER-LIVE)"

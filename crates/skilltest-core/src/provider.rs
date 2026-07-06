@@ -581,7 +581,8 @@ impl Provider for CommandProvider {
 // ---------------------------------------------------------------------------
 
 /// The default [`Provider`]: runs each prompt on a harness through the
-/// `oneharness` CLI (targets **v0.3.6+**).
+/// `oneharness` CLI (targets **v0.3.7+** — the release carrying the mock/spy
+/// seam: `run --mock-rules`/`--spy-file` and the `oneharness mock` responder).
 ///
 /// Wires five real oneharness features:
 ///

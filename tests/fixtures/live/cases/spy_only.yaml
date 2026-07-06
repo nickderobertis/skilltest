@@ -1,0 +1,15 @@
+# Live spy smoke: a declaration with no action observes the marked command
+# without touching it — the command really runs, its real output comes back,
+# and the record's action is `allow`.
+name: live_spy_only
+skill: ../skills/toolrunner
+input: "Run the marked command and report its output."
+mocks:
+  - name: marker
+    match: { contains: "MARKER" }
+evals:
+  - type: called
+    mock: marker
+  - type: boolean
+    name: real-output-reported
+    criterion: "the assistant's reply reports the command output as MARKER-LIVE"

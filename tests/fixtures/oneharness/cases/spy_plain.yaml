@@ -1,0 +1,9 @@
+# Hermetic-oneharness spy-only observation: no mocks declared; the suite runs
+# this with `--spy`, so oneharness installs the pure observer hook and every
+# call comes back as an `allow` record.
+name: oh_spy_plain
+skill: ../../skills/deployer
+input: "Deploy the app"
+evals:
+  - type: boolean
+    criterion: "the reply reports the deploy finished"

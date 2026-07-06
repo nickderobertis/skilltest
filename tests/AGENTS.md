@@ -14,6 +14,10 @@ and authored for the `skilltest-fake-provider`.
   both plugins' `collected/deploy.skilltest.yaml`).
 - `fixtures/cases/*.yaml` — sample test cases. Each names the journey it covers
   (`greet_pass`, `greet_fail`, `greet_numeric`, `booking_multiturn`).
+- `fixtures/oneharness/` — the hermetic-oneharness tier: the `fake-claude.sh`
+  shim (a scripted claude CLI that executes the ephemerally installed mock
+  hook) and the `cases/` its suite and the SDK integration tests share. Needs
+  the real `oneharness` binary, nothing else.
 - `fixtures/smoke/` — a self-contained case (`greet.skilltest.yaml`) **and its own
   skill copy**, used by the bundle smoke (`scripts/smoke-{python,npm}-bundle.sh`).
   Kept standalone — no shared skill, no `conftest` above it — so it can be copied into
@@ -43,7 +47,7 @@ Every suite must keep at least one fixture that *fails* (`greet_fail.yaml`) and
 the malformed/missing-provider paths, so the e2e proves skilltest reports
 failures and exits non-zero — not just that the happy path works.
 
-## Live fixtures and the one `#[ignore]` exception
+## Live fixtures and the `#[ignore]` exceptions
 
 `tests/fixtures/live/` holds fixtures for the live suite — a `pong` skill that
 always replies "pong" and an `echo-ok` two-turn skill — kept *separate* from
@@ -51,12 +55,20 @@ always replies "pong" and an `echo-ok` two-turn skill — kept *separate* from
 fake-provider cases. They are near-deterministic on purpose so a real judge has an
 unambiguous verdict.
 
-`crates/skilltest-cli/tests/live.rs` is the *only* test allowed to be
-`#[ignore]`. It drives the CLI through **real** oneharness + a real harness, so it
-is opt-in (`SKILLTEST_ONEHARNESS_BIN=… cargo test --test live -- --ignored`) and
-stays out of the deterministic gate. Do **not** add `#[ignore]` to any other e2e
-test to speed up the gate — split genuinely slow journeys into a target CI still
-runs instead.
+Exactly two suites are allowed to be `#[ignore]`, both because they need a real
+`oneharness` binary on PATH (never to speed up the gate — split genuinely slow
+journeys into a target CI still runs instead):
+
+- `crates/skilltest-cli/tests/live.rs` — real oneharness **and** a real harness
+  + model (money, network, non-determinism). Opt-in via `just test-live`.
+- `crates/skilltest-cli/tests/oneharness_integration.rs` — real oneharness with
+  the scripted `tests/fixtures/oneharness/fake-claude.sh` shim standing in for
+  the claude CLI. Deterministic and credential-free (the shim *executes* the
+  ephemerally installed mock hook, so the real `oneharness mock` responder and
+  spy JSONL are exercised); opt-in only because the binary must be installed
+  (`just install-oneharness`, then `just test-oneharness`). The shim reuses the
+  fake provider's `fake-reply:`/`fake-tool:` markers, and its fixtures live in
+  `tests/fixtures/oneharness/cases/`.
 
 When the JSON contract changes, run `just gen-contract` (the SDK models are
 generated from the Rust types) and update the fixtures to match.
