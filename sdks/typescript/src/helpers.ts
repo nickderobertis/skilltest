@@ -3,7 +3,7 @@
  * checker keeps these honest against `generated/` — a renamed or removed
  * field fails `tsc`, not a user's test.
  */
-import type { Report, Transcript } from "./generated/report.js";
+import type { Report, ToolEvent, Transcript } from "./generated/report.js";
 
 /** The assistant turns of a transcript joined — handy for mix-in checks. */
 export function assistantText(transcript: Transcript): string {
@@ -11,6 +11,17 @@ export function assistantText(transcript: Transcript): string {
     .filter((m) => m.role === "assistant")
     .map((m) => m.content)
     .join("\n");
+}
+
+/**
+ * Every `tool_call` event across the transcript's assistant turns, in order.
+ *
+ * The normalized tool events the skill took (shell commands, file edits, tool
+ * uses), lifted from oneharness `--events` — for asserting on *what the skill
+ * did*, not just what it said. Empty for harnesses that expose no transcript.
+ */
+export function toolCalls(transcript: Transcript): ToolEvent[] {
+  return transcript.messages.flatMap((m) => m.events ?? []).filter((e) => e.kind === "tool_call");
 }
 
 /** A one-line-per-failed-eval summary, for assertion messages. */

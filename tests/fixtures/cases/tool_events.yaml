@@ -1,0 +1,10 @@
+# Single-turn case exercising normalized tool events: the fake provider emits a
+# `tool_call` per `fake-tool:` marker in the skill, which the runner lifts onto
+# the assistant turn so consumers (and the streaming API) can see what it did.
+name: tool_events
+skill: ../skills/tooluser
+input: "Please update config.yaml and commit the change."
+evals:
+  - type: boolean
+    name: confirms-the-work
+    criterion: "the reply says it `committed` or `edited` the change"

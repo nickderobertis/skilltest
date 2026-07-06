@@ -16,7 +16,7 @@ use std::process::{Command, Stdio};
 use serde::{Deserialize, Serialize};
 
 use crate::config::{ApiJudgeConfig, ApiVendor, OneharnessConfig};
-use crate::conversation::{Message, Role};
+use crate::conversation::{Message, Role, ToolEvent};
 use crate::error::{Error, Result};
 use crate::eval::JudgeValue;
 
@@ -100,6 +100,11 @@ pub struct AssistantTurn {
     /// continue the same conversation against the real harness (only some
     /// harnesses expose this — see `OneharnessProvider::supports_resume`).
     pub session_id: Option<String>,
+    /// Normalized tool events the skill took this turn (shell commands, file
+    /// edits, tool uses), from oneharness `--events`. Empty when the harness
+    /// exposed no tool transcript. Attached to the assistant message so consumers
+    /// can analyze — and stream — what the skill *did*.
+    pub events: Vec<ToolEvent>,
 }
 
 /// A simulated-user turn produced by the provider.
@@ -212,6 +217,10 @@ struct RespondPayload {
     usage: Option<Usage>,
     #[serde(default)]
     session_id: Option<String>,
+    /// Optional normalized tool events a custom provider may report (parallel to
+    /// oneharness's `events`); absent/`null` when the provider surfaces none.
+    #[serde(default)]
+    events: Option<Vec<ToolEvent>>,
 }
 
 #[derive(Deserialize)]
@@ -346,6 +355,7 @@ impl Provider for CommandProvider {
             done: payload.done,
             usage: payload.usage,
             session_id: payload.session_id,
+            events: payload.events.unwrap_or_default(),
         })
     }
 
@@ -395,9 +405,9 @@ impl Provider for CommandProvider {
 // ---------------------------------------------------------------------------
 
 /// The default [`Provider`]: runs each prompt on a harness through the
-/// `oneharness` CLI.
+/// `oneharness` CLI (targets **v0.3.6+**).
 ///
-/// Wires four real oneharness features that ship in v0.2.0:
+/// Wires five real oneharness features:
 ///
 /// * `--system <skill instructions>` — the skill becomes a *real* system prompt
 ///   on the underlying harness (e.g. `--append-system-prompt` for claude-code),
@@ -408,11 +418,20 @@ impl Provider for CommandProvider {
 ///   transcript. Used only for harnesses that report `supports_resume` in the
 ///   registry (claude-code, opencode, cursor today); other harnesses fall back
 ///   to the inline-transcript path.
+/// * `--events` — normalized tool events (`{kind, name, input, output, index}`)
+///   lifted from each harness's transcript, so consumers can analyze *what the
+///   skill did*, not just its final text. Attached to the assistant turn.
 /// * Normalized `usage` (`input_tokens`, `output_tokens`, `cost_usd`) — surfaced
 ///   on every turn so cross-model cost reporting is portable.
 /// * Normalized `failure_kind` (`auth`, `rate_limit`, `model_not_found`, …) —
 ///   classified provider errors so the CLI can distinguish a broken environment
 ///   from a broken skill.
+///
+/// Note on approval mode: skilltest deliberately passes **no `--mode`** flag, so
+/// oneharness applies its own default (v0.3.0+ normalized approval modes). Users
+/// who need a different mode — e.g. `bypass` to let the skill take every action
+/// without prompting — configure it through oneharness's own config
+/// (`ONEHARNESS_MODE` / its config file), keeping approval policy in one place.
 ///
 /// Evals and the simulated user always run on the configured `judge_harness`,
 /// independent of the harness under test, so the evaluator does not drift with
@@ -450,6 +469,10 @@ struct OhResult {
     session_id: Option<String>,
     #[serde(default)]
     usage: Option<Usage>,
+    /// Normalized tool events oneharness lifted from the harness transcript (its
+    /// `--events` output); `null`/absent when the harness exposes none.
+    #[serde(default)]
+    events: Option<Vec<ToolEvent>>,
     #[serde(default)]
     failure_kind: Option<String>,
 }
@@ -472,6 +495,7 @@ struct RunOutcome {
     text: String,
     session_id: Option<String>,
     usage: Option<Usage>,
+    events: Vec<ToolEvent>,
 }
 
 /// Choose the harness's reply text: oneharness's extracted `text` when non-empty,
@@ -509,11 +533,24 @@ impl OneharnessProvider {
         // extracts the reply accordingly. Forcing `json` everywhere broke the
         // text-native harnesses — oneharness would json-extract their plain-text
         // reply and find nothing ("harness produced no extractable text").
+        //
+        // `--events` asks oneharness to surface normalized tool events. It is safe
+        // for text extraction: oneharness only upgrades a harness whose default
+        // format carries no tool transcript to its events-capable format
+        // (claude→stream-json, codex→exec --json, qwen→stream-json) and still
+        // extracts the reply from it; harnesses whose default already carries a
+        // transcript (opencode, cursor) or expose none (goose/crush/copilot) are
+        // left on their default. So the reply keeps working everywhere and
+        // `events` is populated wherever the harness can express it.
+        //
+        // No `--mode`: oneharness applies its own default approval mode; users
+        // tune it (e.g. `bypass`) via oneharness config, not from here.
         cmd.args([
             "run",
             "--harness",
             args.harness,
             "--compact",
+            "--events",
             "--timeout",
             &timeout,
             "--prompt-file",
@@ -607,6 +644,7 @@ impl OneharnessProvider {
             text,
             session_id: result.session_id,
             usage: result.usage,
+            events: result.events.unwrap_or_default(),
         })
     }
 }
@@ -641,6 +679,7 @@ impl Provider for OneharnessProvider {
             done: false,
             usage: outcome.usage,
             session_id: outcome.session_id,
+            events: outcome.events,
         })
     }
 
@@ -1988,6 +2027,51 @@ mod tests {
             assert_eq!(turn.message, "hello back");
             assert_eq!(turn.session_id.as_deref(), Some("oh1"));
             assert_eq!(turn.usage.unwrap().input_tokens, Some(5));
+            assert!(turn.events.is_empty());
+        }
+
+        #[test]
+        fn oneharness_respond_surfaces_normalized_events() {
+            // oneharness `--events` populates a per-result `events` array; the
+            // provider lifts it onto the assistant turn so consumers can analyze
+            // what the skill did.
+            let bin = script(
+                "oh-events",
+                "cat >/dev/null\necho '{\"results\":[{\"status\":\"ok\",\
+                 \"text\":\"done\",\"events\":[{\"kind\":\"tool_call\",\"name\":\"bash\",\
+                 \"input\":{\"command\":\"git commit -m x\"},\"output\":\"ok\",\"index\":0}]}]}'\n",
+            );
+            let turn = oh_provider(bin)
+                .respond(
+                    "claude-code",
+                    "sonnet",
+                    &skill_ref(),
+                    &[Message::user("hi")],
+                    None,
+                )
+                .unwrap();
+            assert_eq!(turn.events.len(), 1);
+            assert_eq!(turn.events[0].kind, "tool_call");
+            assert_eq!(turn.events[0].name.as_deref(), Some("bash"));
+            assert_eq!(
+                turn.events[0].input,
+                Some(serde_json::json!({"command": "git commit -m x"}))
+            );
+            assert_eq!(turn.events[0].output.as_deref(), Some("ok"));
+        }
+
+        #[test]
+        fn oneharness_respond_events_absent_is_empty_not_error() {
+            // A harness that exposes no tool transcript yields no `events`; the
+            // turn simply carries an empty list (never an error).
+            let bin = script(
+                "oh-noevents",
+                "cat >/dev/null\necho '{\"results\":[{\"status\":\"ok\",\"text\":\"hi\"}]}'\n",
+            );
+            let turn = oh_provider(bin)
+                .respond("goose", "m", &skill_ref(), &[Message::user("hi")], None)
+                .unwrap();
+            assert!(turn.events.is_empty());
         }
 
         #[test]

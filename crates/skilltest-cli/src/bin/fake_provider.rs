@@ -7,7 +7,10 @@
 //!
 //! Rules:
 //!   * `respond` — replies with the text after a `fake-reply:` marker in the
-//!     skill's instructions (or `"ok"` if absent). Never reports `done`.
+//!     skill's instructions (or `"ok"` if absent). Never reports `done`. Each
+//!     `fake-tool: <name> <command>` marker becomes a normalized `tool_call`
+//!     event on the turn (`name` = first token, `input.command` = the rest), so
+//!     the e2e suite can exercise the tool-events path deterministically.
 //!   * `user` — replies with the text after a `say:` marker in the persona (or
 //!     `"continue"`). Never stops on its own.
 //!   * `judge` — scores against the concatenated assistant text. Backtick-quoted
@@ -48,7 +51,38 @@ fn respond(request: &Value) -> Value {
         .and_then(Value::as_str)
         .unwrap_or("");
     let reply = marker(instructions, "fake-reply:").unwrap_or_else(|| "ok".to_string());
-    json!({ "message": reply, "done": false })
+    let events = tool_events(instructions);
+    if events.is_empty() {
+        json!({ "message": reply, "done": false })
+    } else {
+        json!({ "message": reply, "done": false, "events": events })
+    }
+}
+
+/// Turn every `fake-tool: <name> <command>` marker in the instructions into a
+/// normalized `tool_call` event, mirroring what oneharness `--events` surfaces.
+fn tool_events(instructions: &str) -> Vec<Value> {
+    instructions
+        .lines()
+        .filter_map(|line| {
+            let idx = line.find("fake-tool:")?;
+            let rest = line[idx + "fake-tool:".len()..]
+                .trim()
+                .trim_end_matches("-->")
+                .trim();
+            let (name, command) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
+            Some((name.to_string(), command.trim().to_string()))
+        })
+        .enumerate()
+        .map(|(index, (name, command))| {
+            json!({
+                "kind": "tool_call",
+                "name": name,
+                "input": { "command": command },
+                "index": index,
+            })
+        })
+        .collect()
 }
 
 fn user(request: &Value) -> Value {

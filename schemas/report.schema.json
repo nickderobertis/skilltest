@@ -215,6 +215,13 @@
         "content": {
           "type": "string"
         },
+        "events": {
+          "description": "The normalized tool events the skill took producing this turn (assistant\nturns only, and only when the harness exposed a tool transcript via\noneharness `--events`). Empty otherwise. Surfaced for post-hoc analysis\nand streamed live for short-circuiting.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ToolEvent"
+          }
+        },
         "role": {
           "$ref": "#/definitions/Role"
         }
@@ -289,6 +296,43 @@
         "runs",
         "passed",
         "failed"
+      ]
+    },
+    "ToolEvent": {
+      "description": "One normalized tool-call / action event the skill took during a turn, lifted\nfrom oneharness's `events` array (its `--events` output). Harness-agnostic, so\na consumer can inspect *what the skill did* — shell commands, file edits, tool\nuses — across any harness, not just the final text. Mirrors the oneharness\naction-event shape; `input` is the structured, tool-shaped args so a consumer\ncan match on the command string or file path without re-parsing.\n\n`input` is a free-form JSON value, so `Message`/`Transcript` are `PartialEq`\nbut not `Eq`.",
+      "type": "object",
+      "properties": {
+        "index": {
+          "description": "Position within the turn, so ordering (\"did X before Y\") is expressible.",
+          "type": "integer",
+          "format": "uint",
+          "default": 0,
+          "minimum": 0
+        },
+        "input": {
+          "description": "Structured tool arguments (the command, the file path); `null` when none."
+        },
+        "kind": {
+          "description": "`tool_call` (the skill invoked a tool) or `tool_result` (the observation).",
+          "type": "string"
+        },
+        "name": {
+          "description": "Normalized tool name where knowable (e.g. `bash`, `edit_file`); `null` for\na `tool_result` or when the harness did not name it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "output": {
+          "description": "The result/observation text, when the transcript exposed it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind"
       ]
     },
     "Transcript": {

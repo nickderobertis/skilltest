@@ -19,6 +19,7 @@ from ._report import (
     NumericDetail,
     Report,
     Summary,
+    ToolEvent,
     Transcript,
     Usage,
 )
@@ -32,6 +33,7 @@ __all__ = [
     "NumericDetail",
     "Report",
     "Summary",
+    "ToolEvent",
     "Transcript",
     "Usage",
     "ValidationFinding",
@@ -40,12 +42,28 @@ __all__ = [
     "describe_failures",
     "failed_evals",
     "failed_runs",
+    "tool_calls",
 ]
 
 
 def assistant_text(transcript: Transcript) -> str:
     """All assistant turns joined — handy for deterministic mix-in checks."""
     return "\n".join(m.content for m in transcript.messages if m.role == "assistant")
+
+
+def tool_calls(transcript: Transcript) -> list[ToolEvent]:
+    """Every ``tool_call`` event across the transcript's assistant turns, in order.
+
+    The normalized tool events the skill took (shell commands, file edits, tool
+    uses), lifted from oneharness ``--events`` — for asserting on *what the skill
+    did*, not just what it said. Empty for harnesses that expose no transcript.
+    """
+    return [
+        event
+        for message in transcript.messages
+        for event in (message.events or [])
+        if event.kind == "tool_call"
+    ]
 
 
 def failed_evals(run: CaseRun) -> list[EvalOutcome]:

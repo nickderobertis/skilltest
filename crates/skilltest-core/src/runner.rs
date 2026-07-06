@@ -129,7 +129,9 @@ impl<'a> Runner<'a> {
                 session = Some(id);
             }
             let skill_done = turn.done;
-            transcript.push(Message::assistant(turn.message));
+            // Carry the turn's normalized tool events onto its assistant message
+            // so consumers can analyze what the skill did.
+            transcript.push(Message::assistant(turn.message).with_events(turn.events));
 
             // Single-turn cases stop after the first assistant turn.
             let Some(user) = &case.user else {
@@ -457,12 +459,14 @@ mod tests {
                     usage: usage(3),
                     // A session id the runner should capture for the next turn.
                     session_id: Some("sess-1".into()),
+                    events: Vec::new(),
                 },
                 AssistantTurn {
                     message: "Booked!".into(),
                     done: false,
                     usage: usage(4),
                     session_id: Some("sess-2".into()),
+                    events: Vec::new(),
                 },
             ],
             user: vec![UserTurn {
@@ -533,6 +537,7 @@ mod tests {
                     done: false,
                     usage: None,
                     session_id: Some(format!("sess-{n}")),
+                    events: Vec::new(),
                 })
             }
             fn simulate_user(

@@ -104,7 +104,13 @@ Zod in `@skill-test/sdk`). Each run and the top-level summary may carry a
     "platform": "claude-code", "model": "haiku",
     "passed": true, "turns": 1,
     "evals": [{"label": "…", "passed": true, "detail": {…}, "reason": "…"}],
-    "transcript": {"messages": […]},
+    "transcript": {"messages": [
+      {"role": "user", "content": "…"},
+      {"role": "assistant", "content": "…", "events": [
+        {"kind": "tool_call", "name": "bash",
+         "input": {"command": "git commit -m x"}, "index": 0}
+      ]}
+    ]},
     "usage": {"input_tokens": 5616, "output_tokens": 46, "cost_usd": 0.0124}
   }]
 }
@@ -115,6 +121,16 @@ independently optional — `null` / absent means "this harness did not report
 the signal," not zero. The whole `usage` object is omitted when nothing
 reported usage (e.g. the fake provider in the gate). Cost is commonly absent
 on subscription auth.
+
+Each assistant `Message` carries an **`events`** array: the normalized tool
+events the skill took producing that turn (`kind` is `tool_call` or
+`tool_result`; `name` is the normalized tool where knowable; `input` is the
+structured, tool-shaped args; `output` is the observation when exposed; `index`
+is the position in the turn). It is lifted from oneharness's `--events` output,
+so consumers can assert on *what the skill did* — shell commands, file edits,
+tool uses — not just its final text. The array is empty (omitted) for harnesses
+that expose no machine-readable transcript. The same events are also streamed
+live by the SDKs' streaming API, for short-circuiting a bad run.
 
 ## Output contract: how the CLI and the SDKs stay in sync
 

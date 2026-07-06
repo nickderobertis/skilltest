@@ -20,7 +20,7 @@ export {
   SkilltestProviderError,
   SkilltestUsageError,
 } from "./errors.js";
-export { assistantText, describeFailures } from "./helpers.js";
+export { assistantText, describeFailures, toolCalls } from "./helpers.js";
 export type {
   BooleanDetail,
   CaseRun,
@@ -32,6 +32,7 @@ export type {
   Report,
   Role,
   Summary,
+  ToolEvent,
   Transcript,
   Usage,
 } from "./generated/report.js";

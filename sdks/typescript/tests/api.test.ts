@@ -4,6 +4,7 @@ import {
   SkilltestUsageError,
   assistantText,
   runSkill,
+  toolCalls,
   validateSkill,
 } from "../src/index.js";
 import { caseFile, requireBinaries, skillDir } from "./helpers.js";
@@ -22,6 +23,16 @@ describe("runSkill", () => {
     expect(run).toBeDefined();
     if (!run) return;
     expect(assistantText(run.transcript)).toContain("Dr. Smith");
+  });
+
+  it("exposes normalized tool calls for analysis", async () => {
+    const report = await runSkill(caseFile("tool_events.yaml"));
+    const run = report.runs[0];
+    expect(run).toBeDefined();
+    if (!run) return;
+    const calls = toolCalls(run.transcript);
+    expect(calls.map((c) => c.name)).toEqual(["edit_file", "bash"]);
+    expect(calls[1]?.input).toEqual({ command: 'git commit -m "update config"' });
   });
 
   it("returns a typed numeric detail above threshold", async () => {

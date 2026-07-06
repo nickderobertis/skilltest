@@ -24,6 +24,7 @@ from .models import (
     NumericDetail,
     Report,
     Summary,
+    ToolEvent,
     Transcript,
     Usage,
     ValidationFinding,
@@ -32,6 +33,7 @@ from .models import (
     describe_failures,
     failed_evals,
     failed_runs,
+    tool_calls,
 )
 from .runner import ENV_BIN, ENV_PROVIDER, run_skill, validate_skill
 
@@ -48,6 +50,7 @@ __all__ = [
     "SkilltestProviderError",
     "SkilltestUsageError",
     "Summary",
+    "ToolEvent",
     "Transcript",
     "Usage",
     "ValidationFinding",
@@ -57,5 +60,6 @@ __all__ = [
     "failed_evals",
     "failed_runs",
     "run_skill",
+    "tool_calls",
     "validate_skill",
 ]

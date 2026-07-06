@@ -103,8 +103,35 @@ fn running_a_directory_discovers_and_aggregates_every_case() {
     let out = run_case(fixtures().join("cases"), &["--format", "json"]);
     assert_eq!(out.status.code(), Some(1));
     let report = json(&out);
-    assert_eq!(report["summary"]["runs"], 4);
+    assert_eq!(report["summary"]["runs"], 5);
     assert!(report["summary"]["failed"].as_u64().unwrap() >= 1);
+}
+
+#[test]
+fn tool_events_surface_on_the_assistant_turn() {
+    // The fake provider emits a normalized `tool_call` per `fake-tool:` marker in
+    // the skill; the runner lifts them onto the assistant message so consumers
+    // can analyze what the skill *did*, not just what it said.
+    let out = run_case(case("tool_events.yaml"), &["--format", "json"]);
+    assert!(out.status.success(), "expected exit 0");
+    let report = json(&out);
+    let messages = report["runs"][0]["transcript"]["messages"]
+        .as_array()
+        .expect("transcript has messages");
+    let assistant = messages
+        .iter()
+        .find(|m| m["role"] == "assistant")
+        .expect("an assistant turn");
+    let events = assistant["events"].as_array().expect("events array");
+    assert_eq!(events.len(), 2, "one event per fake-tool marker");
+    assert_eq!(events[0]["kind"], "tool_call");
+    assert_eq!(events[0]["name"], "edit_file");
+    assert_eq!(events[0]["input"]["command"], "config.yaml");
+    assert_eq!(events[1]["name"], "bash");
+    assert_eq!(
+        events[1]["input"]["command"],
+        "git commit -m \"update config\""
+    );
 }
 
 #[test]

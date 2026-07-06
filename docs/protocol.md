@@ -7,9 +7,9 @@ provider backends.
 
 ## 1. The oneharness provider (default)
 
-[`oneharness`](https://github.com/nickderobertis/oneharness) (v0.2.0+) is a
+[`oneharness`](https://github.com/nickderobertis/oneharness) (v0.3.6+) is a
 prompt→text runner over many agentic harnesses (Claude Code, Codex, OpenCode,
-Cursor, …). skilltest's `OneharnessProvider` wires four real oneharness features
+Cursor, …). skilltest's `OneharnessProvider` wires five real oneharness features
 into the runner:
 
 - **`--system <text>`** — the skill's instructions are passed as a real system
@@ -21,6 +21,11 @@ into the runner:
   into the next `respond` call, so the harness sees a real continuing
   conversation and keeps its tool state. For harnesses without resume support,
   skilltest falls back to inlining the full transcript on every turn.
+- **`--events`** — normalized tool events (`{kind, name, input, output, index}`)
+  lifted from each harness's transcript. skilltest attaches them to the assistant
+  turn (`Message.events` in the [report](schema.md)) so consumers can inspect
+  *what the skill did* — shell commands, file edits, tool uses — not just its
+  final text. Empty for harnesses that expose no machine-readable transcript.
 - **Normalized `usage`** — `{input_tokens, output_tokens, cost_usd}` is parsed
   off each result and aggregated into the [report](schema.md) so cross-model
   cost reporting is portable instead of harness-specific.
@@ -31,13 +36,25 @@ into the runner:
 For each operation skilltest invokes:
 
 ```
-oneharness run --harness <H> --model <M> --output-format json --compact \
+oneharness run --harness <H> --model <M> --compact --events \
   --timeout <secs> --prompt-file - [--system <skill>] [--resume <session_id>]
 ```
 
 with a constructed prompt on stdin, then reads `results[0]`: it requires
-`status == "ok"` and uses `text`, `session_id`, and `usage`. A non-`ok` status
-becomes a provider error (classified by `failure_kind` when set).
+`status == "ok"` and uses `text`, `session_id`, `usage`, and `events`. A
+non-`ok` status becomes a provider error (classified by `failure_kind` when set).
+
+**Approval mode.** skilltest passes no `--mode`, so oneharness applies its own
+default approval mode (v0.3.0+ normalized `--mode` across harnesses — a breaking
+change from the pre-0.3 allow-everything behavior). To let the skill under test
+take every action without prompting, set `bypass` through oneharness's own config
+(`ONEHARNESS_MODE=bypass` or its config file), keeping approval policy in one
+place rather than split between the two tools.
+
+**Output format.** skilltest deliberately omits `--output-format`: oneharness
+already requests each harness's default format and extracts the reply (and
+events) accordingly; forcing `json` everywhere once broke the text-native
+harnesses.
 
 | op | harness / model | what skilltest passes |
 | --- | --- | --- |
@@ -88,8 +105,11 @@ Every request has an `op` and a `messages` array (`{role, content}`).
 instructions}`), `messages`, and an optional `session` (a handle the runner
 captured from a prior `respond` so a stateful provider can continue);
 response: `{"message": "...", "done": false}`, plus optional `usage`
-(`{input_tokens, output_tokens, cost_usd}`, all individually optional) and
-`session_id` (which the runner will pass back as `session` next turn).
+(`{input_tokens, output_tokens, cost_usd}`, all individually optional),
+`session_id` (which the runner will pass back as `session` next turn), and
+`events` — an optional array of normalized tool events (`{kind, name, input,
+output, index}`, parallel to oneharness's) the runner attaches to the assistant
+turn so consumers can inspect what the provider did.
 
 **`user`** — request carries `model`, `persona`, `messages`; response:
 `{"message": "...", "stop": false}`, plus optional `usage`.

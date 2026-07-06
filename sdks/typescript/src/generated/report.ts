@@ -126,7 +126,50 @@ export interface Transcript {
  */
 export interface Message {
   content: string;
+  /**
+   * The normalized tool events the skill took producing this turn (assistant
+   * turns only, and only when the harness exposed a tool transcript via
+   * oneharness `--events`). Empty otherwise. Surfaced for post-hoc analysis
+   * and streamed live for short-circuiting.
+   */
+  events?: ToolEvent[];
   role: Role;
+}
+/**
+ * One normalized tool-call / action event the skill took during a turn, lifted
+ * from oneharness's `events` array (its `--events` output). Harness-agnostic, so
+ * a consumer can inspect *what the skill did* — shell commands, file edits, tool
+ * uses — across any harness, not just the final text. Mirrors the oneharness
+ * action-event shape; `input` is the structured, tool-shaped args so a consumer
+ * can match on the command string or file path without re-parsing.
+ *
+ * `input` is a free-form JSON value, so `Message`/`Transcript` are `PartialEq`
+ * but not `Eq`.
+ */
+export interface ToolEvent {
+  /**
+   * Position within the turn, so ordering ("did X before Y") is expressible.
+   */
+  index?: number;
+  /**
+   * Structured tool arguments (the command, the file path); `null` when none.
+   */
+  input?: {
+    [k: string]: unknown;
+  };
+  /**
+   * `tool_call` (the skill invoked a tool) or `tool_result` (the observation).
+   */
+  kind: string;
+  /**
+   * Normalized tool name where knowable (e.g. `bash`, `edit_file`); `null` for
+   * a `tool_result` or when the harness did not name it.
+   */
+  name?: string | null;
+  /**
+   * The result/observation text, when the transcript exposed it.
+   */
+  output?: string | null;
 }
 /**
  * Token / cost usage for one provider call.

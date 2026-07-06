@@ -56,6 +56,31 @@ fn respond_uses_the_fake_reply_marker() {
     let resp = response(&req.to_string());
     assert_eq!(resp["message"], "Hello there");
     assert_eq!(resp["done"], Value::Bool(false));
+    // No fake-tool markers → no events key at all.
+    assert!(resp.get("events").is_none());
+}
+
+#[test]
+fn respond_emits_a_tool_call_event_per_fake_tool_marker() {
+    let req = json!({
+        "op": "respond",
+        "skill": {
+            "name": "s",
+            "path": "/tmp/s",
+            "instructions": "fake-reply: done\nfake-tool: bash git commit -m x\nfake-tool: edit_file config.yaml",
+        },
+        "messages": [],
+    });
+    let resp = response(&req.to_string());
+    let events = resp["events"].as_array().expect("events array");
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0]["kind"], "tool_call");
+    assert_eq!(events[0]["name"], "bash");
+    assert_eq!(events[0]["input"]["command"], "git commit -m x");
+    assert_eq!(events[0]["index"], 0);
+    assert_eq!(events[1]["name"], "edit_file");
+    assert_eq!(events[1]["input"]["command"], "config.yaml");
+    assert_eq!(events[1]["index"], 1);
 }
 
 #[test]
