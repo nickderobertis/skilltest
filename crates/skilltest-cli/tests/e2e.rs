@@ -135,6 +135,37 @@ fn tool_events_surface_on_the_assistant_turn() {
 }
 
 #[test]
+fn json_stream_emits_events_then_a_terminal_result() {
+    // The streaming format the SDKs consume: one NDJSON `event` line per tool
+    // event as it happens, then a terminal `result` line with the full report.
+    let out = run_case(case("tool_events.yaml"), &["--format", "json-stream"]);
+    assert!(out.status.success(), "expected exit 0");
+    let text = String::from_utf8(out.stdout).expect("stdout is utf8");
+    let lines: Vec<Value> = text
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| serde_json::from_str(l).expect("each line is one JSON object"))
+        .collect();
+    assert_eq!(lines.len(), 3, "two events then a result");
+
+    assert_eq!(lines[0]["type"], "event");
+    assert_eq!(lines[0]["case"], "tool_events");
+    assert_eq!(lines[0]["turn"], 1);
+    assert_eq!(lines[0]["event"]["name"], "edit_file");
+    assert_eq!(lines[1]["type"], "event");
+    assert_eq!(lines[1]["event"]["name"], "bash");
+
+    assert_eq!(lines[2]["type"], "result");
+    assert_eq!(lines[2]["report"]["passed"], Value::Bool(true));
+    // The terminal report carries the same events on the transcript.
+    let messages = lines[2]["report"]["runs"][0]["transcript"]["messages"]
+        .as_array()
+        .unwrap();
+    let assistant = messages.iter().find(|m| m["role"] == "assistant").unwrap();
+    assert_eq!(assistant["events"].as_array().unwrap().len(), 2);
+}
+
+#[test]
 fn missing_provider_exits_three() {
     let out = Command::new(skilltest())
         .arg("run")

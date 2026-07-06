@@ -28,7 +28,7 @@ pub use config::{
     ApiJudgeConfig, ApiVendor, CommandConfig, Config, JudgeConfig, OneharnessConfig, Overrides,
     ProviderConfig,
 };
-pub use conversation::{Message, Role, Transcript};
+pub use conversation::{Message, Role, ToolEvent, Transcript};
 pub use error::{Error, Result};
 pub use eval::{Comparator, Eval, EvalDetail, EvalOutcome, JudgeValue};
 pub use exit::ExitCode;
@@ -37,6 +37,6 @@ pub use provider::{
     JudgeVerdict, OneharnessProvider, Provider, SkillRef, SplitProvider, Usage, UserTurn,
 };
 pub use report::{CaseRun, Report, Summary, ValidationFinding, ValidationReport};
-pub use runner::Runner;
+pub use runner::{Runner, StreamEvent};
 pub use skill::{load_skill, validate_path, validate_skill, Finding, SkillDefinition};
 pub use testcase::{discover_cases, SimulatedUser, TestCase};

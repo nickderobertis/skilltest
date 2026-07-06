@@ -4,13 +4,15 @@
 //! a suggested action on stderr, and a distinct [`ExitCode`] per failure class.
 
 use std::ffi::OsString;
+use std::io::Write as _;
+use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use skilltest_core::{
     discover_cases, validate_path, ApiJudgeProvider, CommandProvider, Config, Error, ExitCode,
     JudgeConfig, OneharnessProvider, Overrides, Provider, ProviderConfig, Report, Result, Runner,
-    SplitProvider, TestCase, ValidationReport,
+    SplitProvider, StreamEvent, TestCase, ValidationReport,
 };
 
 /// Test AI skills across harness/model platforms with natural-language evals.
@@ -116,12 +118,17 @@ enum SchemaTarget {
     Validation,
 }
 
-#[derive(Clone, Copy, ValueEnum)]
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum Format {
     /// A compact, human-readable summary.
     Human,
     /// The stable machine-readable JSON report (consumed by the plugins).
     Json,
+    /// A live NDJSON stream: one `{"type":"event","event":{…}}` line per tool
+    /// event as it happens, then a terminal `{"type":"result","report":{…}}`.
+    /// The SDKs' streaming API consumes this; closing the stream short-circuits
+    /// the run.
+    JsonStream,
 }
 
 /// Parse `args` and run the requested command, returning the process exit code.
@@ -192,8 +199,12 @@ fn cmd_run(config_path: Option<&Path>, args: &RunArgs) -> Result<ExitCode> {
     }
 
     let runner = Runner::new(provider.as_ref(), &config);
-    let report = runner.run_all(&cases)?;
 
+    if args.format == Format::JsonStream {
+        return run_streamed(&runner, &cases);
+    }
+
+    let report = runner.run_all(&cases)?;
     print_report(&report, args.format)?;
 
     Ok(if report.passed {
@@ -201,6 +212,52 @@ fn cmd_run(config_path: Option<&Path>, args: &RunArgs) -> Result<ExitCode> {
     } else {
         ExitCode::TestFailure
     })
+}
+
+/// Drive the run in streaming mode: emit one NDJSON `event` line per tool event
+/// as it happens, then a terminal `result` line carrying the full report. A
+/// failed stdout write (the consumer closed the stream) short-circuits the run —
+/// the runner tears the harness down.
+fn run_streamed(runner: &Runner, cases: &[TestCase]) -> Result<ExitCode> {
+    let stdout = std::io::stdout();
+    let mut sink = |ev: &StreamEvent| -> ControlFlow<()> {
+        let line = serde_json::json!({
+            "type": "event",
+            "case": ev.case,
+            "platform": ev.platform,
+            "model": ev.model,
+            "turn": ev.turn,
+            "event": ev.event,
+        });
+        if write_ndjson(&stdout, &line).is_err() {
+            // The consumer closed the stream; ask the runner to short-circuit.
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
+        }
+    };
+    let report = runner.run_all_streaming(cases, &mut sink)?;
+    let passed = report.passed;
+    // Best-effort terminal line: the consumer may have already closed the pipe.
+    let _ = write_ndjson(
+        &stdout,
+        &serde_json::json!({ "type": "result", "report": report }),
+    );
+    Ok(if passed {
+        ExitCode::Success
+    } else {
+        ExitCode::TestFailure
+    })
+}
+
+/// Serialize `value` as one line to `stdout` and flush. Returns `Err` when the
+/// write fails (e.g. the consumer closed the read end — a broken pipe), which
+/// the streaming sink uses as the short-circuit signal.
+fn write_ndjson(stdout: &std::io::Stdout, value: &serde_json::Value) -> std::io::Result<()> {
+    let mut lock = stdout.lock();
+    serde_json::to_writer(&mut lock, value)?;
+    lock.write_all(b"\n")?;
+    lock.flush()
 }
 
 fn build_provider(config: &Config) -> Result<Box<dyn Provider>> {
@@ -221,7 +278,10 @@ fn build_provider(config: &Config) -> Result<Box<dyn Provider>> {
 
 fn print_report(report: &Report, format: Format) -> Result<()> {
     match format {
-        Format::Json => {
+        // `json-stream` is handled by `run_streamed` before this point; if it
+        // ever reaches here (e.g. a non-run command), fall back to the buffered
+        // JSON document.
+        Format::Json | Format::JsonStream => {
             let json = report
                 .to_json()
                 .map_err(|e| Error::Invalid(format!("could not serialize report: {e}")))?;
@@ -240,7 +300,8 @@ fn cmd_validate(args: &ValidateArgs) -> Result<ExitCode> {
     let valid = findings.is_empty();
 
     match args.format {
-        Format::Json => {
+        // `validate` has no streaming output; treat `json-stream` as `json`.
+        Format::Json | Format::JsonStream => {
             let report = ValidationReport::new(&findings);
             let json = report
                 .to_json()
