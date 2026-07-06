@@ -1,0 +1,17 @@
+# Live deny smoke (every hook-capable harness, including the deny-only ones —
+# goose and qwen): the marked command is blocked with a model-visible message;
+# the `called` eval proves the interception really happened (the record's
+# action is asserted by the callers), and the judge confirms the model saw it.
+name: live_mock_deny
+skill: ../skills/toolrunner
+input: "Run the marked command and report its output."
+mocks:
+  - name: danger
+    match: { contains: "MARKER" }
+    deny: this command is blocked by the skilltest harness
+evals:
+  - type: called
+    mock: danger
+  - type: boolean
+    name: block-was-reported
+    criterion: "the assistant's reply indicates the command was blocked, denied, or could not be run"

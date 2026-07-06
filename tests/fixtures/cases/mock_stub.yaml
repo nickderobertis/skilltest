@@ -1,0 +1,27 @@
+# The mock/spy happy path: a `stub` intercepts the skill's `git push` (the
+# canned output must surface in the reply), a spy (`git`, no action) observes
+# every git call, and the deterministic `called`/`not_called` evals assert on
+# them — no judge involved for those.
+name: mock_stub
+skill: ../skills/deployer
+input: "Deploy the app"
+mocks:
+  - name: push
+    match: { tool: bash, pattern: "git push( --force)?\\b" }
+    stub: Everything up-to-date
+  - name: git
+    match: { tool: bash, pattern: "\\bgit\\b" }
+evals:
+  - type: boolean
+    name: canned-output-surfaced
+    criterion: "the reply mentions `Everything up-to-date`"
+  - type: called
+    mock: push
+    times: 1
+  - type: called
+    name: both-git-calls-observed
+    mock: git
+    times: 2
+  - type: not_called
+    mock: push
+    where: { command: { contains: "--force" } }

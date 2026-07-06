@@ -80,6 +80,17 @@ struct RunArgs {
     #[arg(long, value_name = "N")]
     max_turns: Option<u32>,
 
+    /// Mock/spy declarations (a YAML/JSON list, same shape as a case's `mocks`
+    /// block) applied to every case, before the case's own — first match wins.
+    /// This is how the SDKs deliver code-level mocks.
+    #[arg(long, value_name = "FILE")]
+    mocks: Option<PathBuf>,
+
+    /// Record every tool call through the mock/spy channel even for cases with
+    /// no `mocks`, so the report carries `mock_calls` (how SDK spies observe).
+    #[arg(long)]
+    spy: bool,
+
     /// Output format.
     #[arg(long, value_enum, default_value_t = Format::Human)]
     format: Format,
@@ -187,6 +198,13 @@ fn cmd_run(config_path: Option<&Path>, args: &RunArgs) -> Result<ExitCode> {
         models: args.models.clone(),
         judge_model: args.judge_model.clone(),
         max_turns: args.max_turns,
+        mocks: args
+            .mocks
+            .as_deref()
+            .map(load_mocks_file)
+            .transpose()?
+            .unwrap_or_default(),
+        spy: args.spy,
     })?;
 
     let provider = build_provider(&config)?;
@@ -258,6 +276,23 @@ fn write_ndjson(stdout: &std::io::Stdout, value: &serde_json::Value) -> std::io:
     serde_json::to_writer(&mut lock, value)?;
     lock.write_all(b"\n")?;
     lock.flush()
+}
+
+/// Load a `--mocks` file: a YAML (or JSON — YAML is a superset here) list of
+/// mock/spy declarations, validated by `Config::apply_overrides`.
+fn load_mocks_file(path: &Path) -> Result<Vec<skilltest_core::MockDecl>> {
+    let text = std::fs::read_to_string(path).map_err(|e| {
+        Error::Invalid(format!(
+            "could not read --mocks file `{}`: {e}",
+            path.display()
+        ))
+    })?;
+    serde_yaml::from_str(&text).map_err(|e| {
+        Error::Invalid(format!(
+            "--mocks file `{}` is not a valid mock declaration list: {e}",
+            path.display()
+        ))
+    })
 }
 
 fn build_provider(config: &Config) -> Result<Box<dyn Provider>> {

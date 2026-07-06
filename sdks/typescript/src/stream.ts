@@ -22,7 +22,15 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { SkilltestProviderError } from "./errors.js";
 import type { Report, ToolEvent } from "./generated/report.js";
-import { ENV_BIN, type RunOptions, buildRunArgs, raiseForCode, resolveBin } from "./runner.js";
+import { type ToolSpy, bindMocks } from "./mock.js";
+import {
+  ENV_BIN,
+  type RunOptions,
+  buildRunArgs,
+  mockRunArgs,
+  raiseForCode,
+  resolveBin,
+} from "./runner.js";
 
 /** One streamed tool event, tagged with the run it belongs to. */
 export interface StreamEvent {
@@ -50,6 +58,8 @@ class SkillStreamImpl implements SkillStream {
     private readonly bin: string,
     private readonly args: string[],
     private readonly cwd: string | undefined,
+    private readonly mocks: readonly ToolSpy[],
+    private readonly cleanup: () => void,
   ) {}
 
   async *[Symbol.asyncIterator](): AsyncIterator<StreamEvent> {
@@ -72,6 +82,9 @@ class SkillStreamImpl implements SkillStream {
           yield obj as StreamEvent;
         } else if (obj.type === "result") {
           this.report = obj.report as Report;
+          // Mocks bind only on a completed run — an aborted stream leaves
+          // them unbound (reading one then throws, never counts as zero).
+          if (this.mocks.length > 0) bindMocks(this.mocks, this.report.runs);
         }
       }
       const code = await new Promise<number | null>((resolve) => {
@@ -90,6 +103,7 @@ class SkillStreamImpl implements SkillStream {
       // closes and the harness is torn down.
       rl.close();
       if (child.exitCode === null && !spawnError) child.kill();
+      this.cleanup();
     }
   }
 }
@@ -99,6 +113,13 @@ class SkillStreamImpl implements SkillStream {
  * as {@link runSkill}; the run does not begin until iteration starts.
  */
 export function streamSkill(casePath: string, options: RunOptions = {}): SkillStream {
-  const args = buildRunArgs(casePath, options, "json-stream");
-  return new SkillStreamImpl(resolveBin(options.bin), args, options.cwd);
+  const mocks = mockRunArgs(options.mocks);
+  const args = buildRunArgs(casePath, options, "json-stream", mocks.args);
+  return new SkillStreamImpl(
+    resolveBin(options.bin),
+    args,
+    options.cwd,
+    options.mocks ?? [],
+    mocks.cleanup,
+  );
 }

@@ -1,0 +1,33 @@
+# Auto-collected mocked case: the declarative `mocks:` block plus deterministic
+# `called`/`not_called` evals — no plugin code involved, proving the whole
+# mock/spy surface rides YAML collection.
+name: collected_deploy
+skill: ./deployer
+input: "Deploy the app"
+mocks:
+  - name: push
+    match: { tool: bash, pattern: "git push( --force)?\\b" }
+    stub: Everything up-to-date
+  - name: danger
+    match: { contains: "rm -rf" }
+    deny: destructive commands are blocked
+  - name: git
+    match: { tool: bash, pattern: "\\bgit\\b" }
+evals:
+  - type: boolean
+    name: canned-output-surfaced
+    criterion: "the reply mentions `Everything up-to-date`"
+  - type: called
+    mock: push
+    times: 1
+  - type: called
+    name: both-git-calls-observed
+    mock: git
+    times: 2
+  - type: called
+    name: the-deny-intercepted
+    mock: danger
+    times: 1
+  - type: not_called
+    mock: push
+    where: { command: { contains: "--force" } }

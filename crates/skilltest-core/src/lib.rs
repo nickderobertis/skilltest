@@ -18,6 +18,7 @@ pub mod conversation;
 pub mod error;
 pub mod eval;
 pub mod exit;
+pub mod mock;
 pub mod provider;
 pub mod report;
 pub mod runner;
@@ -32,6 +33,9 @@ pub use conversation::{Message, Role, ToolEvent, Transcript};
 pub use error::{Error, Result};
 pub use eval::{Comparator, Eval, EvalDetail, EvalOutcome, JudgeValue};
 pub use exit::ExitCode;
+pub use mock::{
+    DenySpec, FieldPredicate, MockCall, MockDecl, MockMatch, MockPlan, MockSet, StubSpec,
+};
 pub use provider::{
     supports_resume, ApiJudgeProvider, AssistantTurn, CommandProvider, JudgeKind, JudgeQuery,
     JudgeVerdict, OneharnessProvider, Provider, SkillRef, SplitProvider, Usage, UserTurn,

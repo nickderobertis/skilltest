@@ -77,6 +77,13 @@ jobs:
           just install-oneharness
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
+      # Deterministic pre-flight: the hermetic mock/spy integration suite runs
+      # against the oneharness binary just installed — no harness, no
+      # credentials, no model — so a drift in the mock seam fails fast and
+      # cheap, before any live model call is spent.
+      - name: Hermetic oneharness integration suite
+        run: just test-oneharness
+
       - name: Install Claude Code CLI
         run: |
           npm install -g @anthropic-ai/claude-code

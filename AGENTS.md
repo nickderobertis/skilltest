@@ -219,7 +219,19 @@ projects per PR. Locally, install the toolchains once (see `docs/development.md`
   stdin, one response on stdout, per op) backing the bundled
   `skilltest-fake-provider` and any custom provider. Custom providers may
   optionally emit `usage`, `session_id`, and `events` on `respond` to participate
-  in cost reporting, tool-event analysis, and stateful multi-turn.
+  in cost reporting, tool-event analysis, and stateful multi-turn — and may
+  honor the `mocks` request block (returning `mock_calls`) to participate in
+  tool mocking; ignoring the block while it's present is a loud provider error.
+
+**Tool mocking/spying**: `skilltest-core::mock` compiles a case's `mocks:` (and
+the CLI's `--mocks`/`--spy`, the SDKs' delivery path) to the oneharness ruleset;
+`OneharnessProvider` passes `run --mock-rules`/`--spy-file` per skill turn
+(never to the judge) and parses the spy JSONL into `CaseRun.mock_calls`
+(original pre-rewrite inputs + verdicts). Two matching engines on purpose:
+the hook-side `oneharness mock`, mirrored by `mock::decide` for the fake
+provider; `just test-oneharness` (real binary + the `fake-claude.sh` shim,
+hermetic) and the live e2e are the drift alarms. Anything inexpressible or
+unresolvable errors loudly — never a vacuous pass.
 
 The fake provider is why the whole pipeline is testable without a live model: it
 implements the protocol deterministically, so the default e2e suites exercise the

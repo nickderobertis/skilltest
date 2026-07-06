@@ -49,9 +49,26 @@ fn run_live(case: &str) -> Output {
 /// given output format (`json` buffered, or `json-stream` for the streaming
 /// wire).
 fn run_live_fmt(case: &str, format: &str) -> Output {
+    live_command(case, format)
+        .output()
+        .expect("skilltest run executes")
+}
+
+/// Like [`run_live`], with `ONEHARNESS_MODE=bypass` so the harness under test
+/// is allowed to execute the tool calls the mock/spy cases script (skilltest
+/// itself never passes `--mode`; approval policy is oneharness config, exactly
+/// as a user would set it).
+fn run_live_bypass(case: &str) -> Output {
+    live_command(case, "json")
+        .env("ONEHARNESS_MODE", "bypass")
+        .output()
+        .expect("skilltest run executes")
+}
+
+fn live_command(case: &str, format: &str) -> Command {
     let m = model();
-    Command::new(skilltest())
-        .arg("run")
+    let mut cmd = Command::new(skilltest());
+    cmd.arg("run")
         .arg(live_fixtures().join("cases").join(case))
         .args(["--oneharness-bin", &oneharness_bin()])
         .args(["--platform", &platform()])
@@ -59,9 +76,8 @@ fn run_live_fmt(case: &str, format: &str) -> Output {
         .args(["--judge-model", &m])
         .args(["--judge-harness", &platform()])
         .args(["--timeout", "150"])
-        .args(["--format", format])
-        .output()
-        .expect("skilltest run executes")
+        .args(["--format", format]);
+    cmd
 }
 
 fn report(output: &Output) -> Value {
@@ -198,4 +214,96 @@ fn live_streaming_emits_ndjson_and_a_terminal_result() {
         .map(|m| m["content"].as_str().unwrap_or("").to_lowercase())
         .collect();
     assert!(assistant.contains("pong"), "assistant said: {assistant}");
+}
+
+// ---------------------------------------------------------------------------
+// Tool mocking/spying against the REAL harness — the live drift alarm between
+// skilltest's mirrored decision engine (proven in the gate) and the hook-side
+// one inside oneharness. The toolrunner skill makes the model run one marked
+// shell command; the cases intercept or observe it. `ONEHARNESS_MODE=bypass`
+// lets the harness execute tools, exactly as a user configures approval.
+// ---------------------------------------------------------------------------
+
+#[test]
+#[ignore = "live: needs oneharness + a real harness; run with --ignored"]
+fn live_mock_stub_intercepts_a_real_tool_call() {
+    let out = run_live_bypass("mock_stub.yaml");
+    let report = report(&out);
+    let run = &report["runs"][0];
+    assert_eq!(
+        report["passed"],
+        Value::Bool(true),
+        "expected pass; report: {report:#}"
+    );
+
+    // The spy log recorded the model's REAL attempt with its original input;
+    // the stub's rule intercepted it and resolved to the mock's name.
+    let records = run["mock_calls"].as_array().expect("mock_calls present");
+    let stub = records
+        .iter()
+        .find(|r| r["action"] == "stub")
+        .unwrap_or_else(|| panic!("a stub record; got {records:?}"));
+    assert_eq!(stub["mock"], "marker");
+    assert!(
+        stub["input"]["command"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("MARKER"),
+        "the ORIGINAL command is preserved: {stub}"
+    );
+
+    // The canned output reached the real model: it reported it back (also
+    // judged by the boolean eval; this is the deterministic mix-in check).
+    let assistant: String = run["transcript"]["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| m["role"] == "assistant")
+        .map(|m| m["content"].as_str().unwrap_or("").to_string())
+        .collect();
+    assert!(
+        assistant.contains("CANNED-BY-SKILLTEST"),
+        "assistant said: {assistant}"
+    );
+}
+
+#[test]
+#[ignore = "live: needs oneharness + a real harness; run with --ignored"]
+fn live_mock_deny_blocks_a_real_tool_call() {
+    let out = run_live_bypass("mock_deny.yaml");
+    let report = report(&out);
+    let run = &report["runs"][0];
+    assert_eq!(
+        report["passed"],
+        Value::Bool(true),
+        "expected pass; report: {report:#}"
+    );
+    let records = run["mock_calls"].as_array().expect("mock_calls present");
+    let denied = records
+        .iter()
+        .find(|r| r["action"] == "deny")
+        .unwrap_or_else(|| panic!("a deny record; got {records:?}"));
+    assert_eq!(denied["mock"], "danger");
+}
+
+#[test]
+#[ignore = "live: needs oneharness + a real harness; run with --ignored"]
+fn live_spy_observes_without_intercepting() {
+    let out = run_live_bypass("spy_only.yaml");
+    let report = report(&out);
+    let run = &report["runs"][0];
+    assert_eq!(
+        report["passed"],
+        Value::Bool(true),
+        "expected pass; report: {report:#}"
+    );
+    // Observation only: records exist, none intercepted, and the command's
+    // REAL output came back to the model (the boolean eval judged that; the
+    // records prove the channel never altered anything).
+    let records = run["mock_calls"].as_array().expect("mock_calls present");
+    assert!(!records.is_empty(), "the spy recorded the call");
+    assert!(
+        records.iter().all(|r| r["action"] == "allow"),
+        "a spy never intercepts: {records:?}"
+    );
 }

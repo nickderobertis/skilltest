@@ -13,9 +13,11 @@ from __future__ import annotations
 
 from ._report import (
     BooleanDetail,
+    CallsDetail,
     CaseRun,
     EvalOutcome,
     Message,
+    MockCall,
     NumericDetail,
     Report,
     Summary,
@@ -27,9 +29,11 @@ from ._validation import ValidationFinding, ValidationReport
 
 __all__ = [
     "BooleanDetail",
+    "CallsDetail",
     "CaseRun",
     "EvalOutcome",
     "Message",
+    "MockCall",
     "NumericDetail",
     "Report",
     "Summary",

@@ -7,7 +7,7 @@ provider backends.
 
 ## 1. The oneharness provider (default)
 
-[`oneharness`](https://github.com/nickderobertis/oneharness) (v0.3.6+) is a
+[`oneharness`](https://github.com/nickderobertis/oneharness) (v0.3.7+) is a
 prompt→text runner over many agentic harnesses (Claude Code, Codex, OpenCode,
 Cursor, …). skilltest's `OneharnessProvider` wires five real oneharness features
 into the runner:
@@ -32,6 +32,16 @@ into the runner:
 - **Normalized `failure_kind`** — when a run fails with a classified reason
   (`auth`, `rate_limit`, `model_not_found`, `quota`), the CLI maps it to a
   pointed hint instead of a generic provider error.
+- **`--mock-rules` / `--spy-file`** — when a case declares `mocks`/`spy`,
+  skilltest compiles the declarations into oneharness's mock ruleset, writes it
+  to a temp file, and passes both flags on each skill turn (never on judge or
+  simulated-user calls). oneharness installs its `mock` hook ephemerally for
+  that one invocation (zero permanent config mutation), enforces the rules
+  inside the harness, and appends every observed call to the spy JSONL, which
+  skilltest parses into the report's `mock_calls`. A harness that cannot
+  express a requested verb (e.g. rewrite on goose) is a loud oneharness usage
+  error surfaced as a provider error. Requires oneharness v0.3.7+ (the release
+  carrying the `mock` responder and `run --mock-rules`/`--spy-file`).
 
 For each operation skilltest invokes:
 
@@ -110,6 +120,22 @@ response: `{"message": "...", "done": false}`, plus optional `usage`
 `events` — an optional array of normalized tool events (`{kind, name, input,
 output, index}`, parallel to oneharness's) the runner attaches to the assistant
 turn so consumers can inspect what the provider did.
+
+When the run declares tool mocks/spies, the `respond` request additionally
+carries a **`mocks`** block: `{"mocks": {"rules": <ruleset|null>}}`, where
+`rules` is the compiled oneharness mock ruleset (`{"rules": [{"match": …,
+"action": {"deny"|"rewrite"|"stub": …}}]}`, first match wins) or `null` for a
+spy-only run. A provider that receives the block MUST apply the rules to its
+tool calls and respond with **`mock_calls`**: an array (possibly empty) of
+`{tool, input, action, rule}` records — `input` is the call's *original*
+arguments, `action` the verdict applied (`allow`/`deny`/`rewrite`/`stub`), and
+`rule` the intercepting ruleset index (`null` for `allow`). A response without
+`mock_calls` despite a `mocks` block is a **provider error** — the runner
+treats silent mock-ignoring as a failure, never a vacuous pass. Providers that
+don't implement mocking simply keep omitting the field; skilltest only sends
+the block when a case asks for it, and errs loudly if it goes unanswered. The
+bundled fake provider implements the full flow (using the same decision engine
+skilltest ships, `skilltest_core::mock::decide`) and is the reference.
 
 **`user`** — request carries `model`, `persona`, `messages`; response:
 `{"message": "...", "stop": false}`, plus optional `usage`.

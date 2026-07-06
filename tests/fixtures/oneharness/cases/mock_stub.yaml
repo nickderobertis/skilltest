@@ -1,0 +1,27 @@
+# Hermetic-oneharness happy path: a stub + a spy through the REAL oneharness
+# binary (the fake-claude shim executes the ephemerally installed hook). The
+# boolean eval also proves the judge path: the shim's judge always returns
+# `{"value": true, "reason": "fake-claude judge"}` — and would scream
+# JUDGE_SAW_SETTINGS if skilltest ever delivered mocks to a judge run.
+name: oh_mock_stub
+skill: ../../skills/deployer
+input: "Deploy the app"
+mocks:
+  - name: push
+    match: { tool: bash, pattern: "git push( --force)?\\b" }
+    stub: Everything up-to-date
+  - name: git
+    match: { tool: bash, pattern: "\\bgit\\b" }
+evals:
+  - type: called
+    mock: push
+    times: 1
+  - type: called
+    name: both-git-calls-observed
+    mock: git
+    times: 2
+  - type: not_called
+    mock: push
+    where: { command: { contains: "--force" } }
+  - type: boolean
+    criterion: "the reply reports the deploy finished"

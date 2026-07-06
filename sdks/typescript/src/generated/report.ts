@@ -11,7 +11,7 @@
  * The variant titles name the generated SDK model for each union arm, so keep
  * them stable: they are part of the SDK API surface.
  */
-export type EvalDetail = BooleanDetail | NumericDetail;
+export type EvalDetail = BooleanDetail | NumericDetail | CallsDetail;
 /**
  * How a numeric score is compared to its threshold.
  */
@@ -50,6 +50,15 @@ export interface CaseRun {
    * Per-eval outcomes, in declaration order.
    */
   evals: EvalOutcome[];
+  /**
+   * Every tool call the mock/spy channel observed, in order, with the
+   * original (pre-rewrite) input and the verdict applied. `null` when the
+   * channel was off for this run (no `mocks`, no `spy`); an empty array
+   * means the channel was on and the skill made no tool calls — SDKs use
+   * that distinction so a spy on a channel-less run errs instead of reading
+   * as "zero calls".
+   */
+  mock_calls?: MockCall[] | null;
   /**
    * The model this run used.
    */
@@ -113,6 +122,60 @@ export interface NumericDetail {
   kind: "numeric";
   threshold: number;
   value: number;
+}
+/**
+ * The deterministic `called`/`not_called` verdict: how many observed calls
+ * matched, against what expectation.
+ */
+export interface CallsDetail {
+  /**
+   * Matching calls observed.
+   */
+  count: number;
+  kind: "calls";
+  /**
+   * True for `not_called` (the eval required absence).
+   */
+  negated?: boolean;
+  /**
+   * The exact count required (`times`); `null` means "at least one"
+   * (or, with `negated`, "none").
+   */
+  times?: number | null;
+}
+/**
+ * One observed tool call, as recorded by the mock/spy channel: the harness
+ * hook's spy log for real runs, or the provider's `mock_calls` response for
+ * the command protocol. Carries the **original, pre-rewrite** input — the
+ * transcript's `events` show post-rewrite reality (the stub that actually
+ * ran); this shows what the skill *attempted*.
+ */
+export interface MockCall {
+  /**
+   * The verdict applied: `allow` (fell through every rule), `deny`,
+   * `rewrite`, or `stub`.
+   */
+  action: string;
+  /**
+   * The tool's original input arguments; `null` when the event carried none.
+   */
+  input?: {
+    [k: string]: unknown;
+  };
+  /**
+   * Name of the mock declaration the intercepting rule came from; `null`
+   * for `allow`. Filled by the runner, so SDKs bind records to mock objects
+   * by name instead of re-deriving rule indices.
+   */
+  mock?: string | null;
+  /**
+   * Index of the compiled rule that intercepted; `null` for `allow`.
+   */
+  rule?: number | null;
+  /**
+   * Tool name as the harness reported it; `null` when the event named none.
+   */
+  tool?: string | null;
 }
 /**
  * An ordered list of messages. Thin wrapper so the type reads clearly at call

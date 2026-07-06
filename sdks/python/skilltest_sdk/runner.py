@@ -8,14 +8,17 @@ deterministic checks against the transcript.
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import subprocess
-from collections.abc import Sequence
+import tempfile
+from collections.abc import Iterator, Sequence
 from pathlib import Path
 
 from pydantic import BaseModel, ValidationError
 
 from .errors import SkilltestError, SkilltestProviderError, SkilltestUsageError
+from .mock import ToolSpy, bind_mocks, compile_decls
 from .models import Report, ValidationReport
 
 #: Environment variables that supply defaults so callers (test-framework
@@ -96,6 +99,7 @@ def run_skill(
     max_turns: int | None = None,
     config: str | Path | None = None,
     cwd: str | Path | None = None,
+    mocks: Sequence[ToolSpy] = (),
 ) -> Report:
     """Run one or more test cases and return the parsed [`Report`].
 
@@ -103,21 +107,57 @@ def run_skill(
     *not* an exception — it is reported in ``report.passed``/``report.runs`` so
     the caller can assert and inspect. Only bad input ([`SkilltestUsageError`])
     and provider failures ([`SkilltestProviderError`]) raise.
+
+    ``mocks`` takes [`spy`][skilltest_sdk.mock.spy] /
+    [`stub`][skilltest_sdk.mock.stub] / [`deny`][skilltest_sdk.mock.deny] /
+    [`rewrite`][skilltest_sdk.mock.rewrite] objects: mocks compile into the
+    run's hook-side ruleset (prepended to the case's own `mocks:` block, so
+    the test-local rule wins), and after the run every object is bound with
+    the calls it matched — assert on it directly. Each call re-binds fresh.
     """
-    argv = build_run_argv(
-        case,
-        bin=bin,
-        provider=provider,
-        platforms=platforms,
-        models=models,
-        judge_model=judge_model,
-        max_turns=max_turns,
-        config=config,
-        fmt="json",
-    )
-    proc = _run(argv, cwd)
+    with mock_run_args(mocks) as mock_args:
+        argv = build_run_argv(
+            case,
+            bin=bin,
+            provider=provider,
+            platforms=platforms,
+            models=models,
+            judge_model=judge_model,
+            max_turns=max_turns,
+            config=config,
+            fmt="json",
+            mock_args=mock_args,
+        )
+        proc = _run(argv, cwd)
     _raise_for_status(proc)
-    return _parse(Report, proc.stdout)
+    report = _parse(Report, proc.stdout)
+    if mocks:
+        bind_mocks(mocks, report.runs)
+    return report
+
+
+@contextlib.contextmanager
+def mock_run_args(mocks: Sequence[ToolSpy]) -> Iterator[list[str]]:
+    """The CLI flags a ``mocks=`` argument turns into (internal, shared with
+    the streaming API): ``--spy`` so the observation channel is on for spies,
+    plus ``--mocks <tempfile>`` carrying the compiled mock declarations. The
+    temp file lives for the duration of the ``with`` body (the run)."""
+    if not mocks:
+        yield []
+        return
+    args = ["--spy"]
+    decls = compile_decls(mocks)
+    if not decls:
+        yield args
+        return
+    fd, path = tempfile.mkstemp(prefix="skilltest-mocks-", suffix=".json")
+    try:
+        with os.fdopen(fd, "w") as handle:
+            json.dump(decls, handle)
+        yield [*args, "--mocks", path]
+    finally:
+        with contextlib.suppress(OSError):
+            os.unlink(path)
 
 
 def build_run_argv(
@@ -131,6 +171,7 @@ def build_run_argv(
     max_turns: int | None,
     config: str | Path | None,
     fmt: str,
+    mock_args: Sequence[str] = (),
 ) -> list[str]:
     """Build the ``skilltest run`` argv for output format ``fmt`` (``json`` for the
     buffered API, ``json-stream`` for the streaming API). Internal, shared by
@@ -151,6 +192,7 @@ def build_run_argv(
         argv += ["--judge-model", judge_model]
     if max_turns is not None:
         argv += ["--max-turns", str(max_turns)]
+    argv += list(mock_args)
     return argv
 
 

@@ -45,6 +45,16 @@
             "$ref": "#/definitions/EvalOutcome"
           }
         },
+        "mock_calls": {
+          "description": "Every tool call the mock/spy channel observed, in order, with the\noriginal (pre-rewrite) input and the verdict applied. `null` when the\nchannel was off for this run (no `mocks`, no `spy`); an empty array\nmeans the channel was on and the skill made no tool calls — SDKs use\nthat distinction so a spy on a channel-less run errs instead of reading\nas \"zero calls\".",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/definitions/MockCall"
+          }
+        },
         "model": {
           "description": "The model this run used.",
           "type": "string"
@@ -173,6 +183,41 @@
             "threshold",
             "comparator"
           ]
+        },
+        {
+          "title": "CallsDetail",
+          "description": "The deterministic `called`/`not_called` verdict: how many observed calls\nmatched, against what expectation.",
+          "type": "object",
+          "properties": {
+            "count": {
+              "description": "Matching calls observed.",
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "kind": {
+              "type": "string",
+              "const": "calls"
+            },
+            "negated": {
+              "description": "True for `not_called` (the eval required absence).",
+              "type": "boolean",
+              "default": false
+            },
+            "times": {
+              "description": "The exact count required (`times`); `null` means \"at least one\"\n(or, with `negated`, \"none\").",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "kind",
+            "count"
+          ]
         }
       ]
     },
@@ -229,6 +274,45 @@
       "required": [
         "role",
         "content"
+      ]
+    },
+    "MockCall": {
+      "description": "One observed tool call, as recorded by the mock/spy channel: the harness\nhook's spy log for real runs, or the provider's `mock_calls` response for\nthe command protocol. Carries the **original, pre-rewrite** input — the\ntranscript's `events` show post-rewrite reality (the stub that actually\nran); this shows what the skill *attempted*.",
+      "type": "object",
+      "properties": {
+        "action": {
+          "description": "The verdict applied: `allow` (fell through every rule), `deny`,\n`rewrite`, or `stub`.",
+          "type": "string"
+        },
+        "input": {
+          "description": "The tool's original input arguments; `null` when the event carried none."
+        },
+        "mock": {
+          "description": "Name of the mock declaration the intercepting rule came from; `null`\nfor `allow`. Filled by the runner, so SDKs bind records to mock objects\nby name instead of re-deriving rule indices.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rule": {
+          "description": "Index of the compiled rule that intercepted; `null` for `allow`.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0
+        },
+        "tool": {
+          "description": "Tool name as the harness reported it; `null` when the event named none.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "action"
       ]
     },
     "Role": {

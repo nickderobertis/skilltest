@@ -1,0 +1,8 @@
+# The deployer with no case-level mocks: the SDK suites layer code-level
+# mocks/spies onto this case (via `--mocks`/`--spy`), keeping the YAML minimal.
+name: deploy_plain
+skill: ../skills/deployer
+input: "Deploy the app"
+evals:
+  - type: boolean
+    criterion: "the reply says `Deployment finished.`"

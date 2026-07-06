@@ -9,6 +9,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
+use crate::mock::MockDecl;
 
 fn default_oneharness_bin() -> String {
     "oneharness".to_string()
@@ -145,7 +146,7 @@ pub enum JudgeConfig {
 }
 
 /// The full configuration for a run.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     /// The provider that executes skills and evals.
@@ -165,6 +166,16 @@ pub struct Config {
     /// provider judges (e.g. the oneharness `judge_harness`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub judge: Option<JudgeConfig>,
+    /// Shared mock/spy declarations, prepended to every case's own `mocks`
+    /// (first match wins, so these shadow the case's). Populated by the CLI's
+    /// `--mocks <file>` — how the SDKs deliver code-level mocks — or written
+    /// here directly for suite-wide rules.
+    #[serde(default)]
+    pub mocks: Vec<MockDecl>,
+    /// Force the mock/spy observation channel on for every run, even for cases
+    /// that declare no `mocks` (the CLI's `--spy`; how SDK spies get records).
+    #[serde(default)]
+    pub spy: bool,
 }
 
 impl Default for Config {
@@ -176,6 +187,8 @@ impl Default for Config {
             judge_model: String::new(),
             max_turns: 8,
             judge: None,
+            mocks: Vec::new(),
+            spy: false,
         }
     }
 }
@@ -195,6 +208,11 @@ pub struct Overrides {
     pub models: Vec<String>,
     pub judge_model: Option<String>,
     pub max_turns: Option<u32>,
+    /// Mock/spy declarations prepended before any config-level ones (the CLI's
+    /// `--mocks` file / SDK-passed mocks).
+    pub mocks: Vec<MockDecl>,
+    /// Force the observation channel on (the CLI's `--spy`).
+    pub spy: bool,
 }
 
 impl Config {
@@ -260,6 +278,14 @@ impl Config {
         if let Some(max_turns) = overrides.max_turns {
             self.max_turns = max_turns;
         }
+        if !overrides.mocks.is_empty() {
+            // Override mocks come first: first match wins, so the most local
+            // declaration (CLI/SDK) shadows a config-level one.
+            let mut mocks = overrides.mocks;
+            mocks.append(&mut self.mocks);
+            self.mocks = mocks;
+        }
+        self.spy = self.spy || overrides.spy;
         self.validate()
     }
 
@@ -332,6 +358,10 @@ impl Config {
                     "config `judge.curl_bin` must name the curl binary".into(),
                 ));
             }
+        }
+        for (i, decl) in self.mocks.iter().enumerate() {
+            let label = decl.name.clone().unwrap_or_else(|| format!("#{i}"));
+            decl.validate(&format!("config mock `{label}`"))?;
         }
         Ok(())
     }

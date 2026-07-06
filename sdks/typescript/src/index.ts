@@ -17,6 +17,22 @@
 export { runSkill, validateSkill, ENV_BIN, ENV_PROVIDER, type RunOptions } from "./runner.js";
 export { streamSkill, type SkillStream, type StreamEvent } from "./stream.js";
 export {
+  ToolMock,
+  ToolSpy,
+  anything,
+  contains,
+  deny,
+  matching,
+  rewrite,
+  spy,
+  stub,
+  type Criterion,
+  type MatchOptions,
+  type Matcher,
+  type ToolCall,
+  type WhereCriteria,
+} from "./mock.js";
+export {
   SkilltestError,
   SkilltestProviderError,
   SkilltestUsageError,
@@ -24,11 +40,13 @@ export {
 export { assistantText, describeFailures, toolCalls } from "./helpers.js";
 export type {
   BooleanDetail,
+  CallsDetail,
   CaseRun,
   Comparator,
   EvalDetail,
   EvalOutcome,
   Message,
+  MockCall,
   NumericDetail,
   Report,
   Role,

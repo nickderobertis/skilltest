@@ -6,8 +6,9 @@ use std::ops::ControlFlow;
 
 use crate::config::Config;
 use crate::conversation::{Message, ToolEvent, Transcript};
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::eval::{Eval, JudgeValue};
+use crate::mock::{describe_records, where_matches, MockCall, MockPlan, MockSet};
 use crate::provider::{JudgeKind, JudgeQuery, Provider, SkillRef, Usage};
 use crate::report::{CaseRun, Report};
 use crate::skill::{load_skill, SkillDefinition};
@@ -142,13 +143,31 @@ impl<'a> Runner<'a> {
         streaming: &mut Streaming,
     ) -> Result<(CaseRun, ControlFlow<()>)> {
         let mut totals = Usage::default();
-        let (transcript, flow) =
-            self.converse(case, skill, platform, model, &mut totals, streaming)?;
+        // The effective mock/spy set: CLI/SDK declarations first (first match
+        // wins, so the most local rule shadows), then the case's own.
+        let mock_set =
+            MockSet::build(&self.config.mocks, &case.mocks, self.config.spy || case.spy)?;
+        let (transcript, mock_calls, flow) = self.converse(
+            case,
+            skill,
+            platform,
+            model,
+            &mock_set,
+            &mut totals,
+            streaming,
+        )?;
+        let mock_calls = mock_calls.map(|records| mock_set.resolve(records));
         // On an abort we don't spend judge calls scoring a torn-off transcript.
         let evals = if flow.is_break() {
             Vec::new()
         } else {
-            self.score(case, &transcript, &mut totals)?
+            self.score(
+                case,
+                &transcript,
+                &mock_set,
+                mock_calls.as_deref(),
+                &mut totals,
+            )?
         };
         let passed = flow.is_continue() && evals.iter().all(|e| e.passed);
         Ok((
@@ -162,6 +181,7 @@ impl<'a> Runner<'a> {
                 evals,
                 transcript,
                 usage: (!totals.is_empty()).then_some(totals),
+                mock_calls,
             },
             flow,
         ))
@@ -171,15 +191,17 @@ impl<'a> Runner<'a> {
     /// a simulated-user loop for multi-turn cases. Streams each turn's tool
     /// events to `on_event`; returns the transcript plus whether the sink asked
     /// to short-circuit.
+    #[allow(clippy::too_many_arguments)]
     fn converse(
         &self,
         case: &TestCase,
         skill: &SkillDefinition,
         platform: &str,
         model: &str,
+        mock_set: &MockSet,
         totals: &mut Usage,
         streaming: &mut Streaming,
-    ) -> Result<(Transcript, ControlFlow<()>)> {
+    ) -> Result<(Transcript, Option<Vec<MockCall>>, ControlFlow<()>)> {
         let dir = skill.dir.to_string_lossy().into_owned();
         let skill_ref = SkillRef {
             name: &skill.name,
@@ -199,6 +221,14 @@ impl<'a> Runner<'a> {
         // respond into the next one so the harness keeps real state instead of
         // being re-prompted with a stringified transcript.
         let mut session: Option<String> = None;
+        // The mock/spy plan, handed to every skill turn (never to the judge or
+        // the simulated user), and the records accumulated across turns.
+        // `None` until some turn reports a channel, so "channel off" and
+        // "channel on, zero calls" stay distinguishable.
+        let plan = mock_set.active().then(|| MockPlan {
+            rules: mock_set.rules(),
+        });
+        let mut mock_calls: Option<Vec<MockCall>> = None;
 
         loop {
             let session_arg = if resume_supported {
@@ -216,12 +246,13 @@ impl<'a> Runner<'a> {
             let mut turn_flow = ControlFlow::Continue(());
             let turn = if streaming.on {
                 let sink = &mut streaming.sink;
-                self.provider.respond_streaming(
+                self.provider.respond_streaming_with_mocks(
                     platform,
                     model,
                     &skill_ref,
                     &transcript.messages,
                     session_arg,
+                    plan.as_ref(),
                     &mut |event| {
                         let flow = sink(&StreamEvent {
                             case: case_name,
@@ -237,14 +268,18 @@ impl<'a> Runner<'a> {
                     },
                 )?
             } else {
-                self.provider.respond(
+                self.provider.respond_with_mocks(
                     platform,
                     model,
                     &skill_ref,
                     &transcript.messages,
                     session_arg,
+                    plan.as_ref(),
                 )?
             };
+            if let Some(records) = turn.mock_calls {
+                mock_calls.get_or_insert_with(Vec::new).extend(records);
+            }
             if let Some(u) = &turn.usage {
                 totals.add(u);
             }
@@ -259,7 +294,7 @@ impl<'a> Runner<'a> {
 
             // The streaming sink asked to short-circuit: stop the run now.
             if turn_flow.is_break() {
-                return Ok((transcript, ControlFlow::Break(())));
+                return Ok((transcript, mock_calls, ControlFlow::Break(())));
             }
 
             // Single-turn cases stop after the first assistant turn.
@@ -303,14 +338,18 @@ impl<'a> Runner<'a> {
             }
         }
 
-        Ok((transcript, ControlFlow::Continue(())))
+        Ok((transcript, mock_calls, ControlFlow::Continue(())))
     }
 
-    /// Run every eval against the finished transcript.
+    /// Run every eval against the finished transcript: judge-backed kinds go
+    /// to the provider's judge; `called`/`not_called` are scored
+    /// deterministically against the mock/spy channel's records.
     fn score(
         &self,
         case: &TestCase,
         transcript: &Transcript,
+        mock_set: &MockSet,
+        mock_calls: Option<&[MockCall]>,
         totals: &mut Usage,
     ) -> Result<Vec<crate::eval::EvalOutcome>> {
         let judge_model = self.config.effective_judge_model();
@@ -332,6 +371,23 @@ impl<'a> Runner<'a> {
                     criterion,
                     scale: Some((*min, *max)),
                 },
+                Eval::Called { mock, r#where, .. } | Eval::NotCalled { mock, r#where, .. } => {
+                    // Deterministic: no judge call. A missing channel is loud —
+                    // a `not_called` scored against nothing must never pass.
+                    let records = mock_calls.ok_or_else(|| {
+                        Error::Invalid(format!(
+                            "eval `{}` needs the mock/spy channel, but the provider reported no                              observations for this run",
+                            eval.label()
+                        ))
+                    })?;
+                    let matching = mock_set
+                        .records_for(mock, records)?
+                        .into_iter()
+                        .filter(|r| where_matches(r#where, r.input.as_ref()))
+                        .count();
+                    outcomes.push(eval.outcome_for_calls(matching, &describe_records(records))?);
+                    continue;
+                }
             };
             let verdict = self
                 .provider
@@ -429,6 +485,8 @@ mod tests {
             skill,
             input: "Greet Dr. Smith".into(),
             user: None,
+            mocks: Vec::new(),
+            spy: false,
             evals: vec![Eval::Boolean {
                 criterion: "greets Dr. Smith".into(),
                 expected: true,
@@ -571,6 +629,7 @@ mod tests {
                 done: false,
                 usage: None,
                 session_id: None,
+                mock_calls: None,
                 events: vec![ToolEvent {
                     kind: "tool_call".into(),
                     name: Some("bash".into()),
@@ -641,6 +700,7 @@ mod tests {
                     // A session id the runner should capture for the next turn.
                     session_id: Some("sess-1".into()),
                     events: Vec::new(),
+                    mock_calls: None,
                 },
                 AssistantTurn {
                     message: "Booked!".into(),
@@ -648,6 +708,7 @@ mod tests {
                     usage: usage(4),
                     session_id: Some("sess-2".into()),
                     events: Vec::new(),
+                    mock_calls: None,
                 },
             ],
             user: vec![UserTurn {
@@ -690,6 +751,207 @@ mod tests {
         assert_eq!(runs[0].usage.as_ref().unwrap().input_tokens, Some(16));
     }
 
+    /// A provider with mock support: records the plan it was handed and
+    /// returns scripted mock records, so the runner's threading, resolution,
+    /// and deterministic scoring can be tested without a subprocess.
+    struct MockingProvider {
+        records: Vec<crate::mock::MockCall>,
+        seen_rules: RefCell<Vec<Option<serde_json::Value>>>,
+        judge_calls: RefCell<usize>,
+    }
+
+    impl Provider for MockingProvider {
+        fn respond(
+            &self,
+            _platform: &str,
+            _model: &str,
+            _skill: &SkillRef<'_>,
+            _messages: &[Message],
+            _session: Option<&str>,
+        ) -> Result<AssistantTurn> {
+            unreachable!("the runner must route through respond_with_mocks")
+        }
+
+        fn respond_with_mocks(
+            &self,
+            _platform: &str,
+            _model: &str,
+            _skill: &SkillRef<'_>,
+            _messages: &[Message],
+            _session: Option<&str>,
+            mocks: Option<&crate::mock::MockPlan<'_>>,
+        ) -> Result<AssistantTurn> {
+            self.seen_rules
+                .borrow_mut()
+                .push(mocks.and_then(|p| p.rules.cloned()));
+            Ok(AssistantTurn {
+                message: "did things".into(),
+                mock_calls: mocks.map(|_| self.records.clone()),
+                ..Default::default()
+            })
+        }
+
+        fn simulate_user(
+            &self,
+            _model: &str,
+            _persona: &str,
+            _messages: &[Message],
+        ) -> Result<UserTurn> {
+            unreachable!("single-turn case")
+        }
+
+        fn judge(
+            &self,
+            _model: &str,
+            _query: &JudgeQuery<'_>,
+            _messages: &[Message],
+        ) -> Result<JudgeVerdict> {
+            *self.judge_calls.borrow_mut() += 1;
+            Ok(JudgeVerdict {
+                value: JudgeValue::Bool(true),
+                reason: "fine".into(),
+                usage: None,
+            })
+        }
+    }
+
+    fn mock_record(
+        tool: &str,
+        command: &str,
+        action: &str,
+        rule: Option<usize>,
+    ) -> crate::mock::MockCall {
+        crate::mock::MockCall {
+            tool: Some(tool.into()),
+            input: Some(serde_json::json!({ "command": command })),
+            action: action.into(),
+            rule,
+            mock: None,
+        }
+    }
+
+    #[test]
+    fn mocked_case_scores_call_evals_deterministically() {
+        let mut case = boolean_case(temp_skill("mocked"));
+        case.mocks = serde_yaml::from_str(
+            r#"
+- name: push
+  match: { tool: bash, pattern: "git push( --force)?\\b" }
+  stub: Everything up-to-date
+- name: danger
+  match: { contains: "rm -rf" }
+  deny: blocked
+- name: git
+  match: { tool: bash, pattern: "\\bgit\\b" }
+"#,
+        )
+        .unwrap();
+        case.evals = vec![
+            serde_yaml::from_str("type: called\nmock: push\ntimes: 1\n").unwrap(),
+            serde_yaml::from_str("type: not_called\nmock: danger\n").unwrap(),
+            serde_yaml::from_str(
+                "type: called\nmock: git\nwhere: { command: { contains: status } }\n",
+            )
+            .unwrap(),
+        ];
+        let provider = MockingProvider {
+            records: vec![
+                mock_record("bash", "git push origin", "stub", Some(0)),
+                mock_record("bash", "git status", "allow", None),
+            ],
+            seen_rules: RefCell::new(Vec::new()),
+            judge_calls: RefCell::new(0),
+        };
+        let config = Config::default();
+        let runner = Runner::new(&provider, &config);
+        let report = runner.run_all(&[case]).unwrap();
+        assert!(report.passed, "all call evals hold: {report:?}");
+        // No judge was ever consulted — the call evals are deterministic.
+        assert_eq!(*provider.judge_calls.borrow(), 0);
+        // The provider received the compiled ruleset (two action rules; the
+        // spy is matched locally, never compiled).
+        let seen = provider.seen_rules.borrow();
+        let rules = seen[0].as_ref().expect("plan carried rules");
+        assert_eq!(rules["rules"].as_array().unwrap().len(), 2);
+        // The report's records got their mock names resolved.
+        let run = &report.runs[0];
+        let records = run.mock_calls.as_ref().expect("channel was on");
+        assert_eq!(records[0].mock.as_deref(), Some("push"));
+        assert_eq!(records[1].mock, None);
+    }
+
+    #[test]
+    fn failing_not_called_eval_reports_the_observed_calls() {
+        let mut case = boolean_case(temp_skill("mock-violate"));
+        case.mocks = serde_yaml::from_str(
+            "- name: danger\n  match: { contains: \"rm -rf\" }\n  deny: blocked\n",
+        )
+        .unwrap();
+        case.evals = vec![serde_yaml::from_str("type: not_called\nmock: danger\n").unwrap()];
+        let provider = MockingProvider {
+            records: vec![mock_record("bash", "rm -rf /", "deny", Some(0))],
+            seen_rules: RefCell::new(Vec::new()),
+            judge_calls: RefCell::new(0),
+        };
+        let config = Config::default();
+        let runner = Runner::new(&provider, &config);
+        let report = runner.run_all(&[case]).unwrap();
+        assert!(!report.passed);
+        let outcome = &report.runs[0].evals[0];
+        assert!(!outcome.passed);
+        // The failure reason lists what actually ran, verdict included.
+        assert!(
+            outcome.reason.contains("rm -rf /") && outcome.reason.contains("[deny]"),
+            "reason: {}",
+            outcome.reason
+        );
+    }
+
+    #[test]
+    fn call_eval_without_a_channel_is_loud_never_vacuous() {
+        // A `not_called` eval on a case with no mocks/spy: there is no
+        // observation channel, so the run must error, not pass on zero records.
+        let mut case = boolean_case(temp_skill("mock-nochannel"));
+        case.evals = vec![serde_yaml::from_str("type: not_called\nmock: danger\n").unwrap()];
+        let provider = ScriptedProvider {
+            assistant: vec![AssistantTurn {
+                message: "hi".into(),
+                ..Default::default()
+            }],
+            user: vec![],
+            judge: vec![],
+            calls: RefCell::new(Calls::default()),
+        };
+        let config = Config::default();
+        let runner = Runner::new(&provider, &config);
+        let err = runner.run_all(&[case]).unwrap_err();
+        assert!(
+            err.to_string().contains("needs the mock/spy channel"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn spy_flag_activates_channel_without_declarations() {
+        // `spy: true` turns the channel on with no mocks: the plan carries no
+        // rules, and the records land on the run for SDK spies to bind.
+        let mut case = boolean_case(temp_skill("spy-flag"));
+        case.spy = true;
+        let provider = MockingProvider {
+            records: vec![mock_record("bash", "ls", "allow", None)],
+            seen_rules: RefCell::new(Vec::new()),
+            judge_calls: RefCell::new(0),
+        };
+        let config = Config::default();
+        let runner = Runner::new(&provider, &config);
+        let report = runner.run_all(&[case]).unwrap();
+        // The plan was present but rule-less.
+        assert_eq!(provider.seen_rules.borrow()[0], None);
+        let records = report.runs[0].mock_calls.as_ref().unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].action, "allow");
+    }
+
     #[test]
     fn multi_turn_threads_session_when_resume_supported() {
         // A provider that supports resume should be handed the session id the
@@ -719,6 +981,7 @@ mod tests {
                     usage: None,
                     session_id: Some(format!("sess-{n}")),
                     events: Vec::new(),
+                    mock_calls: None,
                 })
             }
             fn simulate_user(

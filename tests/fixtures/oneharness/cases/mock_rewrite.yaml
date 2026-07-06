@@ -1,0 +1,14 @@
+# Hermetic-oneharness rewrite: the low-level input substitution through the
+# real responder — the shim executes the substituted command, so the redirected
+# output round-trips; the mock's record keeps the ORIGINAL input.
+name: oh_mock_rewrite
+skill: ../../skills/deployer
+input: "Deploy the app"
+mocks:
+  - name: redirect
+    match: { tool: bash, input: { command: { contains: "git status" } } }
+    rewrite: { command: "echo REDIRECTED-OUTPUT" }
+evals:
+  - type: called
+    mock: redirect
+    times: 1

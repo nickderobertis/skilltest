@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 use crate::eval::Eval;
+use crate::mock::MockDecl;
 
 /// The simulated-user block that turns a single-turn case into a multi-turn one.
 /// When present, after each assistant turn the runner asks the provider to play
@@ -40,6 +41,16 @@ pub struct TestCase {
     /// Present for multi-turn cases; absent for single-turn.
     #[serde(default)]
     pub user: Option<SimulatedUser>,
+    /// Mock/spy declarations for this case: a declaration with a `stub`/`deny`/
+    /// `rewrite` action intercepts matching tool calls; one without observes
+    /// only. `called`/`not_called` evals reference these by `name`.
+    #[serde(default)]
+    pub mocks: Vec<MockDecl>,
+    /// Record every tool call through the mock/spy channel even with no
+    /// `mocks` declared, so code-level consumers (the SDKs' spies) get records.
+    /// Implied whenever `mocks` is non-empty.
+    #[serde(default)]
+    pub spy: bool,
     /// The evals that decide whether this case passes. Must be non-empty.
     pub evals: Vec<Eval>,
 }
@@ -101,6 +112,10 @@ impl TestCase {
         }
         for eval in &self.evals {
             eval.validate()?;
+        }
+        for (i, decl) in self.mocks.iter().enumerate() {
+            let label = decl.name.clone().unwrap_or_else(|| format!("#{i}"));
+            decl.validate(&format!("test case `{}`, mock `{label}`", self.name))?;
         }
         if let Some(user) = &self.user {
             if user.persona.trim().is_empty() {
@@ -284,6 +299,8 @@ evals:
             skill: PathBuf::from("./s"),
             input: "   ".into(),
             user: None,
+            mocks: Vec::new(),
+            spy: false,
             evals: vec![Eval::Boolean {
                 criterion: "c".into(),
                 expected: true,
@@ -303,6 +320,8 @@ evals:
             skill: PathBuf::from("./s"),
             input: "ok".into(),
             user: None,
+            mocks: Vec::new(),
+            spy: false,
             evals: vec![Eval::Boolean {
                 criterion: "c".into(),
                 expected: true,

@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::conversation::Transcript;
 use crate::eval::EvalOutcome;
+use crate::mock::MockCall;
 use crate::provider::Usage;
 use crate::skill::Finding;
 
@@ -36,6 +37,14 @@ pub struct CaseRun {
     /// surface usage).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage: Option<Usage>,
+    /// Every tool call the mock/spy channel observed, in order, with the
+    /// original (pre-rewrite) input and the verdict applied. `null` when the
+    /// channel was off for this run (no `mocks`, no `spy`); an empty array
+    /// means the channel was on and the skill made no tool calls — SDKs use
+    /// that distinction so a spy on a channel-less run errs instead of reading
+    /// as "zero calls".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mock_calls: Option<Vec<MockCall>>,
 }
 
 /// Aggregate pass/fail counts for a report.
@@ -215,6 +224,7 @@ mod tests {
             evals,
             transcript: Transcript::from_input("hi"),
             usage,
+            mock_calls: None,
         }
     }
 

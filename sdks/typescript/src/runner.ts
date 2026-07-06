@@ -6,12 +6,22 @@
  * against the transcript.
  */
 import { spawn } from "node:child_process";
-import { constants, accessSync, chmodSync, existsSync } from "node:fs";
+import {
+  constants,
+  accessSync,
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { SkilltestError, SkilltestProviderError, SkilltestUsageError } from "./errors.js";
 import type { Report } from "./generated/report.js";
 import type { ValidationReport } from "./generated/validation.js";
+import { type ToolSpy, bindMocks, compileDecls } from "./mock.js";
 
 /** Environment variables supplying defaults for the binary and provider. */
 export const ENV_BIN = "SKILLTEST_BIN";
@@ -34,6 +44,16 @@ export interface RunOptions {
   config?: string;
   /** Working directory for the subprocess. */
   cwd?: string;
+  /**
+   * Mock/spy objects ({@link import("./mock.js").spy | spy} /
+   * {@link import("./mock.js").stub | stub} /
+   * {@link import("./mock.js").deny | deny} /
+   * {@link import("./mock.js").rewrite | rewrite}): mocks compile into the
+   * run's hook-side ruleset (prepended to the case's own `mocks:` block, so
+   * the test-local rule wins), and after the run every object is bound with
+   * the calls it matched — assert on it directly. Each run re-binds fresh.
+   */
+  mocks?: ToolSpy[];
 }
 
 interface Captured {
@@ -109,7 +129,12 @@ export function resolveProvider(provider: string | string[] | undefined): string
  * buffered API, `json-stream` for the streaming API). Shared by {@link runSkill}
  * and the streaming API.
  */
-export function buildRunArgs(casePath: string, options: RunOptions, format: string): string[] {
+export function buildRunArgs(
+  casePath: string,
+  options: RunOptions,
+  format: string,
+  mockArgs: string[] = [],
+): string[] {
   const args: string[] = [];
   if (options.config) args.push("--config", options.config);
   args.push("run", casePath, "--format", format);
@@ -120,7 +145,37 @@ export function buildRunArgs(casePath: string, options: RunOptions, format: stri
   for (const model of options.models ?? []) args.push("--model", model);
   if (options.judgeModel) args.push("--judge-model", options.judgeModel);
   if (options.maxTurns !== undefined) args.push("--max-turns", String(options.maxTurns));
+  args.push(...mockArgs);
   return args;
+}
+
+/**
+ * The CLI flags a `mocks` option turns into (shared with the streaming API):
+ * `--spy` so the observation channel is on for spies, plus `--mocks <file>`
+ * carrying the compiled mock declarations in a temp dir. Call `cleanup()` once
+ * the run has finished with the file.
+ */
+export function mockRunArgs(mocks: readonly ToolSpy[] | undefined): {
+  args: string[];
+  cleanup: () => void;
+} {
+  if (!mocks || mocks.length === 0) return { args: [], cleanup: () => {} };
+  const args = ["--spy"];
+  const decls = compileDecls(mocks);
+  if (decls.length === 0) return { args, cleanup: () => {} };
+  const dir = mkdtempSync(join(tmpdir(), "skilltest-mocks-"));
+  const file = join(dir, "mocks.json");
+  writeFileSync(file, JSON.stringify(decls));
+  return {
+    args: [...args, "--mocks", file],
+    cleanup: () => {
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch {
+        // best-effort temp cleanup
+      }
+    },
+  };
 }
 
 /**
@@ -184,10 +239,18 @@ function parse<T>(stdout: string): T {
  * ({@link SkilltestProviderError}) throw.
  */
 export async function runSkill(casePath: string, options: RunOptions = {}): Promise<Report> {
-  const args = buildRunArgs(casePath, options, "json");
-  const result = await capture(resolveBin(options.bin), args, options.cwd);
+  const mocks = mockRunArgs(options.mocks);
+  let result: Captured;
+  try {
+    const args = buildRunArgs(casePath, options, "json", mocks.args);
+    result = await capture(resolveBin(options.bin), args, options.cwd);
+  } finally {
+    mocks.cleanup();
+  }
   raiseForStatus(result);
-  return parse<Report>(result.stdout);
+  const report = parse<Report>(result.stdout);
+  if (options.mocks && options.mocks.length > 0) bindMocks(options.mocks, report.runs);
+  return report;
 }
 
 /** Validate a skill directory (or a folder of them) and return findings. */

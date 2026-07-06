@@ -20,6 +20,7 @@ use crate::config::{ApiJudgeConfig, ApiVendor, OneharnessConfig};
 use crate::conversation::{Message, Role, ToolEvent};
 use crate::error::{Error, Result};
 use crate::eval::JudgeValue;
+use crate::mock::{parse_spy_log, MockCall, MockPlan};
 
 /// A borrowed view of the skill under test, as sent to the provider.
 pub struct SkillRef<'a> {
@@ -106,6 +107,12 @@ pub struct AssistantTurn {
     /// exposed no tool transcript. Attached to the assistant message so consumers
     /// can analyze — and stream — what the skill *did*.
     pub events: Vec<ToolEvent>,
+    /// The mock/spy channel's records for this turn — every observed tool call
+    /// with its original input and the verdict applied. `None` when the channel
+    /// was off (or the provider has no channel); `Some(vec![])` when it was on
+    /// and the turn made no tool calls. The distinction matters: a spy on a
+    /// channel-less run must err loudly, not read as "zero calls".
+    pub mock_calls: Option<Vec<MockCall>>,
 }
 
 /// A simulated-user turn produced by the provider.
@@ -174,6 +181,66 @@ pub trait Provider {
         Ok(turn)
     }
 
+    /// Like [`Provider::respond`], but with a tool mock/spy plan: the provider
+    /// must enforce the plan's compiled ruleset on the turn's tool calls and
+    /// return the observed-call records on the turn (`mock_calls`).
+    ///
+    /// The default implementation supports **no** mocking: a present plan is a
+    /// loud error — a provider silently ignoring mocks would let a mocked suite
+    /// pass vacuously — and an absent one delegates to [`Provider::respond`].
+    /// [`CommandProvider`] and [`OneharnessProvider`] override this.
+    ///
+    /// # Errors
+    /// [`Error::Provider`] if the command fails, returns malformed output, or a
+    /// plan was given and this provider cannot enforce it.
+    fn respond_with_mocks(
+        &self,
+        platform: &str,
+        model: &str,
+        skill: &SkillRef<'_>,
+        messages: &[Message],
+        session: Option<&str>,
+        mocks: Option<&MockPlan<'_>>,
+    ) -> Result<AssistantTurn> {
+        if mocks.is_some() {
+            return Err(Error::provider(
+                "mocks",
+                "this provider does not support tool mocking/spying; remove the `mocks` \
+                 declarations or use the oneharness/command provider",
+            ));
+        }
+        self.respond(platform, model, skill, messages, session)
+    }
+
+    /// Like [`Provider::respond_streaming`], with a tool mock/spy plan. Same
+    /// contract as [`Provider::respond_with_mocks`]: the default supports no
+    /// mocking and errs loudly on a present plan.
+    ///
+    /// # Errors
+    /// As [`Provider::respond_with_mocks`].
+    // One over clippy's arg limit; the signature is respond_streaming's plus
+    // the mock plan, and a params struct would obscure the trait symmetry.
+    #[allow(clippy::too_many_arguments)]
+    fn respond_streaming_with_mocks(
+        &self,
+        platform: &str,
+        model: &str,
+        skill: &SkillRef<'_>,
+        messages: &[Message],
+        session: Option<&str>,
+        mocks: Option<&MockPlan<'_>>,
+        on_event: &mut dyn FnMut(&ToolEvent) -> ControlFlow<()>,
+    ) -> Result<AssistantTurn> {
+        if mocks.is_some() {
+            return Err(Error::provider(
+                "mocks",
+                "this provider does not support tool mocking/spying; remove the `mocks` \
+                 declarations or use the oneharness/command provider",
+            ));
+        }
+        self.respond_streaming(platform, model, skill, messages, session, on_event)
+    }
+
     /// Produce one simulated-user turn.
     ///
     /// # Errors
@@ -211,6 +278,14 @@ struct SkillPayload<'a> {
     instructions: &'a str,
 }
 
+/// The mock/spy block of a `respond` request: its presence turns the channel
+/// on (the provider must return `mock_calls`); `rules` carries the compiled
+/// ruleset to enforce, or `null` for a spy-only run.
+#[derive(Serialize)]
+struct MocksPayload<'a> {
+    rules: Option<&'a serde_json::Value>,
+}
+
 #[derive(Serialize)]
 #[serde(tag = "op", rename_all = "lowercase")]
 enum Request<'a> {
@@ -221,6 +296,8 @@ enum Request<'a> {
         messages: &'a [Message],
         #[serde(skip_serializing_if = "Option::is_none")]
         session: Option<&'a str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        mocks: Option<MocksPayload<'a>>,
     },
     User {
         model: &'a str,
@@ -252,6 +329,10 @@ struct RespondPayload {
     /// oneharness's `events`); absent/`null` when the provider surfaces none.
     #[serde(default)]
     events: Option<Vec<ToolEvent>>,
+    /// The mock/spy records for the turn; required (may be `[]`) whenever the
+    /// request carried a `mocks` block, absent otherwise.
+    #[serde(default)]
+    mock_calls: Option<Vec<MockCall>>,
 }
 
 #[derive(Deserialize)]
@@ -360,14 +441,19 @@ impl CommandProvider {
     }
 }
 
-impl Provider for CommandProvider {
-    fn respond(
+impl CommandProvider {
+    /// The shared `respond` path: build the request (with the optional mock
+    /// block), call the command, and lift the payload onto a turn. A provider
+    /// that was handed a plan but returned no `mock_calls` is a loud error —
+    /// it silently ignored the mocks, which must never pass vacuously.
+    fn respond_impl(
         &self,
         platform: &str,
         model: &str,
         skill: &SkillRef<'_>,
         messages: &[Message],
         session: Option<&str>,
+        mocks: Option<&MockPlan<'_>>,
     ) -> Result<AssistantTurn> {
         let request = Request::Respond {
             platform,
@@ -379,15 +465,74 @@ impl Provider for CommandProvider {
             },
             messages,
             session,
+            mocks: mocks.map(|plan| MocksPayload { rules: plan.rules }),
         };
         let payload: RespondPayload = self.call(&request, "respond")?;
+        if mocks.is_some() && payload.mock_calls.is_none() {
+            return Err(Error::provider(
+                "respond",
+                "the provider ignored the request's `mocks` block (no `mock_calls` in its \
+                 response); it does not support tool mocking/spying",
+            ));
+        }
         Ok(AssistantTurn {
             message: payload.message,
             done: payload.done,
             usage: payload.usage,
             session_id: payload.session_id,
             events: payload.events.unwrap_or_default(),
+            mock_calls: payload.mock_calls,
         })
+    }
+}
+
+impl Provider for CommandProvider {
+    fn respond(
+        &self,
+        platform: &str,
+        model: &str,
+        skill: &SkillRef<'_>,
+        messages: &[Message],
+        session: Option<&str>,
+    ) -> Result<AssistantTurn> {
+        self.respond_impl(platform, model, skill, messages, session, None)
+    }
+
+    fn respond_with_mocks(
+        &self,
+        platform: &str,
+        model: &str,
+        skill: &SkillRef<'_>,
+        messages: &[Message],
+        session: Option<&str>,
+        mocks: Option<&MockPlan<'_>>,
+    ) -> Result<AssistantTurn> {
+        self.respond_impl(platform, model, skill, messages, session, mocks)
+    }
+
+    // One over clippy's arg limit; the signature is respond_streaming's plus
+    // the mock plan, and a params struct would obscure the trait symmetry.
+    #[allow(clippy::too_many_arguments)]
+    fn respond_streaming_with_mocks(
+        &self,
+        platform: &str,
+        model: &str,
+        skill: &SkillRef<'_>,
+        messages: &[Message],
+        session: Option<&str>,
+        mocks: Option<&MockPlan<'_>>,
+        on_event: &mut dyn FnMut(&ToolEvent) -> ControlFlow<()>,
+    ) -> Result<AssistantTurn> {
+        // The command protocol is buffered (one request/response per op), so
+        // stream by replaying the finished turn's events, exactly like the
+        // trait's mock-less default.
+        let turn = self.respond_impl(platform, model, skill, messages, session, mocks)?;
+        for event in &turn.events {
+            if on_event(event).is_break() {
+                break;
+            }
+        }
+        Ok(turn)
     }
 
     fn simulate_user(&self, model: &str, persona: &str, messages: &[Message]) -> Result<UserTurn> {
@@ -436,7 +581,8 @@ impl Provider for CommandProvider {
 // ---------------------------------------------------------------------------
 
 /// The default [`Provider`]: runs each prompt on a harness through the
-/// `oneharness` CLI (targets **v0.3.6+**).
+/// `oneharness` CLI (targets **v0.3.7+** — the release carrying the mock/spy
+/// seam: `run --mock-rules`/`--spy-file` and the `oneharness mock` responder).
 ///
 /// Wires five real oneharness features:
 ///
@@ -519,6 +665,24 @@ struct RunArgs<'a> {
     /// Becomes `--resume <id>`; only set when the runner wants to continue a
     /// prior harness session.
     resume: Option<&'a str>,
+    /// Becomes `--mock-rules <file>` (when the plan carries rules) plus
+    /// `--spy-file <file>` (always, so every tool call is recorded); only set
+    /// on `respond` — the judge and simulated user are never mocked.
+    mocks: Option<&'a MockPlan<'a>>,
+}
+
+impl<'a> RunArgs<'a> {
+    /// The common mock-less shape (judge / simulated-user calls).
+    fn plain(harness: &'a str, model: &'a str, prompt: &'a str) -> Self {
+        RunArgs {
+            harness,
+            model,
+            prompt,
+            system: None,
+            resume: None,
+            mocks: None,
+        }
+    }
 }
 
 /// What we get back from one `oneharness run`.
@@ -527,6 +691,67 @@ struct RunOutcome {
     session_id: Option<String>,
     usage: Option<Usage>,
     events: Vec<ToolEvent>,
+    /// The spy-log records (present iff the run had a mock plan; empty when
+    /// the hook observed no tool calls).
+    mock_calls: Option<Vec<MockCall>>,
+}
+
+/// The per-run temp files a mock plan needs: the rules JSON `--mock-rules`
+/// reads and the JSONL path `--spy-file` appends to. The directory is removed
+/// on drop, so every exit path (including errors) cleans up.
+struct MockFiles {
+    dir: std::path::PathBuf,
+    rules: Option<std::path::PathBuf>,
+    spy: std::path::PathBuf,
+}
+
+impl MockFiles {
+    /// Write the plan's compiled ruleset into a fresh private temp dir.
+    fn prepare(plan: &MockPlan<'_>) -> Result<MockFiles> {
+        let dir = std::env::temp_dir().join(format!(
+            "skilltest-mocks-{}-{}",
+            std::process::id(),
+            curl_config_nonce()
+        ));
+        std::fs::create_dir_all(&dir).map_err(|e| {
+            Error::provider("oneharness", format!("could not create mock temp dir: {e}"))
+        })?;
+        let rules = match plan.rules {
+            Some(rules) => {
+                let path = dir.join("rules.json");
+                std::fs::write(&path, rules.to_string()).map_err(|e| {
+                    Error::provider("oneharness", format!("could not write mock rules: {e}"))
+                })?;
+                Some(path)
+            }
+            None => None,
+        };
+        Ok(MockFiles {
+            spy: dir.join("spy.jsonl"),
+            rules,
+            dir,
+        })
+    }
+
+    /// Parse the spy log the run left behind. A missing file means the hook
+    /// never fired (the turn made no tool calls) — an empty record set, not an
+    /// error; a malformed line is loud (see [`parse_spy_log`]).
+    fn records(&self) -> Result<Vec<MockCall>> {
+        match std::fs::read_to_string(&self.spy) {
+            Ok(text) => parse_spy_log(&text),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+            Err(e) => Err(Error::provider(
+                "oneharness",
+                format!("could not read spy log `{}`: {e}", self.spy.display()),
+            )),
+        }
+    }
+}
+
+impl Drop for MockFiles {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
 }
 
 /// Choose the harness's reply text: oneharness's extracted `text` when non-empty,
@@ -601,6 +826,18 @@ impl OneharnessProvider {
         if let Some(resume) = args.resume {
             cmd.args(["--resume", resume]);
         }
+        // A mock plan rides oneharness's ephemeral per-run delivery: the
+        // compiled ruleset via `--mock-rules`, and always a `--spy-file` so
+        // every observed call (mocked or allowed) is recorded.
+        let mock_files = args.mocks.map(MockFiles::prepare).transpose()?;
+        if let Some(files) = &mock_files {
+            if let Some(rules) = &files.rules {
+                cmd.arg("--mock-rules");
+                cmd.arg(rules);
+            }
+            cmd.arg("--spy-file");
+            cmd.arg(&files.spy);
+        }
 
         let mut child = cmd
             .stdin(Stdio::piped())
@@ -671,11 +908,13 @@ impl OneharnessProvider {
                 "harness produced neither extractable text nor stdout",
             )
         })?;
+        let mock_calls = mock_files.as_ref().map(MockFiles::records).transpose()?;
         Ok(RunOutcome {
             text,
             session_id: result.session_id,
             usage: result.usage,
             events: result.events.unwrap_or_default(),
+            mock_calls,
         })
     }
 
@@ -715,6 +954,15 @@ impl OneharnessProvider {
         }
         if let Some(resume) = args.resume {
             cmd.args(["--resume", resume]);
+        }
+        let mock_files = args.mocks.map(MockFiles::prepare).transpose()?;
+        if let Some(files) = &mock_files {
+            if let Some(rules) = &files.rules {
+                cmd.arg("--mock-rules");
+                cmd.arg(rules);
+            }
+            cmd.arg("--spy-file");
+            cmd.arg(&files.spy);
         }
 
         let mut child = cmd
@@ -793,12 +1041,15 @@ impl OneharnessProvider {
         })?;
 
         if aborted {
-            // Torn down on purpose; return the partial turn (events seen so far).
+            // Torn down on purpose; return the partial turn (events seen so
+            // far). The spy log may be torn mid-line by the kill, and an
+            // aborted run is never scored, so no records are reported.
             return Ok(RunOutcome {
                 text: String::new(),
                 session_id: None,
                 usage: None,
                 events,
+                mock_calls: None,
             });
         }
 
@@ -844,11 +1095,13 @@ impl OneharnessProvider {
         } else {
             events
         };
+        let mock_calls = mock_files.as_ref().map(MockFiles::records).transpose()?;
         Ok(RunOutcome {
             text,
             session_id: result.session_id,
             usage: result.usage,
             events,
+            mock_calls,
         })
     }
 }
@@ -861,6 +1114,18 @@ impl Provider for OneharnessProvider {
         skill: &SkillRef<'_>,
         messages: &[Message],
         session: Option<&str>,
+    ) -> Result<AssistantTurn> {
+        self.respond_with_mocks(platform, model, skill, messages, session, None)
+    }
+
+    fn respond_with_mocks(
+        &self,
+        platform: &str,
+        model: &str,
+        skill: &SkillRef<'_>,
+        messages: &[Message],
+        session: Option<&str>,
+        mocks: Option<&MockPlan<'_>>,
     ) -> Result<AssistantTurn> {
         // If we have a real session to continue on a supporting harness, only
         // send the last user message — the harness still has its prior state.
@@ -877,6 +1142,7 @@ impl Provider for OneharnessProvider {
             prompt: &prompt,
             system: Some(skill.instructions),
             resume: session,
+            mocks,
         })?;
         Ok(AssistantTurn {
             message: outcome.text.trim().to_string(),
@@ -884,6 +1150,7 @@ impl Provider for OneharnessProvider {
             usage: outcome.usage,
             session_id: outcome.session_id,
             events: outcome.events,
+            mock_calls: outcome.mock_calls,
         })
     }
 
@@ -894,6 +1161,22 @@ impl Provider for OneharnessProvider {
         skill: &SkillRef<'_>,
         messages: &[Message],
         session: Option<&str>,
+        on_event: &mut dyn FnMut(&ToolEvent) -> ControlFlow<()>,
+    ) -> Result<AssistantTurn> {
+        self.respond_streaming_with_mocks(platform, model, skill, messages, session, None, on_event)
+    }
+
+    // One over clippy's arg limit; the signature is respond_streaming's plus
+    // the mock plan, and a params struct would obscure the trait symmetry.
+    #[allow(clippy::too_many_arguments)]
+    fn respond_streaming_with_mocks(
+        &self,
+        platform: &str,
+        model: &str,
+        skill: &SkillRef<'_>,
+        messages: &[Message],
+        session: Option<&str>,
+        mocks: Option<&MockPlan<'_>>,
         on_event: &mut dyn FnMut(&ToolEvent) -> ControlFlow<()>,
     ) -> Result<AssistantTurn> {
         let prompt = if session.is_some() {
@@ -908,6 +1191,7 @@ impl Provider for OneharnessProvider {
                 prompt: &prompt,
                 system: Some(skill.instructions),
                 resume: session,
+                mocks,
             },
             on_event,
         )?;
@@ -917,18 +1201,13 @@ impl Provider for OneharnessProvider {
             usage: outcome.usage,
             session_id: outcome.session_id,
             events: outcome.events,
+            mock_calls: outcome.mock_calls,
         })
     }
 
     fn simulate_user(&self, model: &str, persona: &str, messages: &[Message]) -> Result<UserTurn> {
         let prompt = build_user_prompt(persona, messages);
-        let outcome = self.run(&RunArgs {
-            harness: &self.judge_harness,
-            model,
-            prompt: &prompt,
-            system: None,
-            resume: None,
-        })?;
+        let outcome = self.run(&RunArgs::plain(&self.judge_harness, model, &prompt))?;
         Ok(UserTurn {
             message: outcome.text.trim().to_string(),
             stop: false,
@@ -943,13 +1222,7 @@ impl Provider for OneharnessProvider {
         messages: &[Message],
     ) -> Result<JudgeVerdict> {
         let prompt = build_judge_prompt(query, messages);
-        let outcome = self.run(&RunArgs {
-            harness: &self.judge_harness,
-            model,
-            prompt: &prompt,
-            system: None,
-            resume: None,
-        })?;
+        let outcome = self.run(&RunArgs::plain(&self.judge_harness, model, &prompt))?;
         let mut verdict = parse_verdict(query.kind, &outcome.text)?;
         verdict.usage = outcome.usage;
         Ok(verdict)
@@ -1226,6 +1499,37 @@ impl Provider for SplitProvider {
     ) -> Result<AssistantTurn> {
         self.responder
             .respond(platform, model, skill, messages, session)
+    }
+
+    fn respond_with_mocks(
+        &self,
+        platform: &str,
+        model: &str,
+        skill: &SkillRef<'_>,
+        messages: &[Message],
+        session: Option<&str>,
+        mocks: Option<&MockPlan<'_>>,
+    ) -> Result<AssistantTurn> {
+        self.responder
+            .respond_with_mocks(platform, model, skill, messages, session, mocks)
+    }
+
+    // One over clippy's arg limit; the signature is respond_streaming's plus
+    // the mock plan, and a params struct would obscure the trait symmetry.
+    #[allow(clippy::too_many_arguments)]
+    fn respond_streaming_with_mocks(
+        &self,
+        platform: &str,
+        model: &str,
+        skill: &SkillRef<'_>,
+        messages: &[Message],
+        session: Option<&str>,
+        mocks: Option<&MockPlan<'_>>,
+        on_event: &mut dyn FnMut(&ToolEvent) -> ControlFlow<()>,
+    ) -> Result<AssistantTurn> {
+        self.responder.respond_streaming_with_mocks(
+            platform, model, skill, messages, session, mocks, on_event,
+        )
     }
 
     fn simulate_user(&self, model: &str, persona: &str, messages: &[Message]) -> Result<UserTurn> {
@@ -2234,6 +2538,133 @@ mod tests {
             assert!(request.contains("\"op\":\"respond\""));
         }
 
+        #[test]
+        fn command_provider_threads_mocks_and_parses_records() {
+            // The script records the request and answers with mock_calls.
+            let dir =
+                std::env::temp_dir().join(format!("skilltest-prov-mocks-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let seen = dir.join("seen.json");
+            let bin = script(
+                "mocks",
+                &format!(
+                    "cat > '{}'\necho '{{\"message\":\"ok\",\"mock_calls\":[{{\"tool\":\"bash\",                     \"input\":{{\"command\":\"git push\"}},\"action\":\"stub\",\"rule\":0}}]}}'\n",
+                    seen.display()
+                ),
+            );
+            let provider = CommandProvider::new(vec![bin.to_string_lossy().into_owned()]).unwrap();
+            let rules = serde_json::json!({ "rules": [] });
+            let plan = MockPlan {
+                rules: Some(&rules),
+            };
+            let turn = provider
+                .respond_with_mocks("demo", "m", &skill_ref(), &[], None, Some(&plan))
+                .unwrap();
+            let records = turn.mock_calls.expect("channel was on");
+            assert_eq!(records.len(), 1);
+            assert_eq!(records[0].action, "stub");
+            assert_eq!(records[0].rule, Some(0));
+            // The request carried the mocks block with the compiled rules.
+            let request = std::fs::read_to_string(&seen).unwrap();
+            assert!(
+                request.contains("\"mocks\":{\"rules\":{\"rules\":[]}}"),
+                "got: {request}"
+            );
+        }
+
+        #[test]
+        fn command_provider_ignoring_mocks_is_loud() {
+            // A provider that answers without `mock_calls` despite a plan has
+            // silently ignored the mocks — that must never pass vacuously.
+            let bin = script(
+                "mocks-ignored",
+                "cat >/dev/null\necho '{\"message\":\"ok\"}'\n",
+            );
+            let provider = CommandProvider::new(vec![bin.to_string_lossy().into_owned()]).unwrap();
+            let plan = MockPlan { rules: None };
+            let err = provider
+                .respond_with_mocks("demo", "m", &skill_ref(), &[], None, Some(&plan))
+                .unwrap_err();
+            assert!(
+                err.to_string().contains("ignored the request's `mocks`"),
+                "{err}"
+            );
+        }
+
+        #[test]
+        fn default_provider_rejects_mocks_loudly() {
+            // A Provider impl without mock support (the trait default) must
+            // refuse a plan, never silently drop it.
+            let plan = MockPlan { rules: None };
+            let err = super::StubResponder
+                .respond_with_mocks("p", "m", &skill_ref(), &[], None, Some(&plan))
+                .unwrap_err();
+            assert!(
+                err.to_string().contains("does not support tool mocking"),
+                "{err}"
+            );
+            // And with no plan it delegates to the plain respond.
+            let turn = super::StubResponder
+                .respond_with_mocks("p", "m", &skill_ref(), &[], None, None)
+                .unwrap();
+            assert_eq!(turn.message, "stub reply");
+        }
+
+        #[test]
+        fn default_streaming_rejects_mocks_and_delegates_without() {
+            // The streaming default mirrors the buffered one: loud on a plan,
+            // plain replay otherwise.
+            let plan = MockPlan { rules: None };
+            let err = super::StubResponder
+                .respond_streaming_with_mocks(
+                    "p",
+                    "m",
+                    &skill_ref(),
+                    &[],
+                    None,
+                    Some(&plan),
+                    &mut |_| ControlFlow::Continue(()),
+                )
+                .unwrap_err();
+            assert!(err.to_string().contains("does not support tool mocking"));
+            let turn = super::StubResponder
+                .respond_streaming_with_mocks("p", "m", &skill_ref(), &[], None, None, &mut |_| {
+                    ControlFlow::Continue(())
+                })
+                .unwrap();
+            assert_eq!(turn.message, "stub reply");
+        }
+
+        #[test]
+        fn command_provider_streaming_with_mocks_replays_events() {
+            // The command protocol is buffered; its streaming path replays the
+            // finished turn's events and still carries the records.
+            let bin = script(
+                "mocks-stream",
+                "cat >/dev/null\necho '{\"message\":\"ok\",\"events\":[{\"kind\":\"tool_call\",\"name\":\"bash\",\"input\":{\"command\":\"ls\"},\"index\":0}],\"mock_calls\":[]}'\n",
+            );
+            let provider = CommandProvider::new(vec![bin.to_string_lossy().into_owned()]).unwrap();
+            let plan = MockPlan { rules: None };
+            let mut seen = 0usize;
+            let turn = provider
+                .respond_streaming_with_mocks(
+                    "demo",
+                    "m",
+                    &skill_ref(),
+                    &[],
+                    None,
+                    Some(&plan),
+                    &mut |event| {
+                        seen += 1;
+                        assert_eq!(event.name.as_deref(), Some("bash"));
+                        ControlFlow::Break(())
+                    },
+                )
+                .unwrap();
+            assert_eq!(seen, 1);
+            assert_eq!(turn.mock_calls, Some(Vec::new()));
+        }
+
         // ---- OneharnessProvider over a fake oneharness ----
 
         fn oh_provider(bin: PathBuf) -> OneharnessProvider {
@@ -2637,6 +3068,98 @@ mod tests {
                 .respond("claude-code", "m", &skill_ref(), &[], None)
                 .unwrap_err();
             assert!(err.to_string().contains("could not run"));
+        }
+
+        #[test]
+        fn oneharness_respond_with_mocks_passes_flags_and_reads_spy_log() {
+            // The fake oneharness extracts --mock-rules/--spy-file from its
+            // argv, copies the rules it was handed to a sidecar, and appends
+            // spy lines the way `oneharness mock` would.
+            let dir =
+                std::env::temp_dir().join(format!("skilltest-oh-mocks-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let rules_seen = dir.join("rules-seen.json");
+            let bin = script(
+                "oh-mocks",
+                &format!(
+                    r#"rules=""; spy=""
+while [ $# -gt 0 ]; do
+  [ "$1" = "--mock-rules" ] && rules="$2"
+  [ "$1" = "--spy-file" ] && spy="$2"
+  shift
+done
+cat >/dev/null
+cp "$rules" '{seen}'
+printf '%s
+' '{{"harness":"claude-code","event":{{"tool_name":"Bash","tool_input":{{"command":"git push"}}}},"action":"stub","rule":0}}' >> "$spy"
+printf '%s
+' '{{"harness":"claude-code","event":{{"tool_name":"Bash","tool_input":{{"command":"ls"}}}},"action":"allow","rule":null}}' >> "$spy"
+echo '{{"results":[{{"status":"ok","text":"done"}}]}}'
+"#,
+                    seen = rules_seen.display(),
+                ),
+            );
+            let rules = serde_json::json!({ "rules": [
+                { "match": { "event_contains": "git push" },
+                  "action": { "stub": { "output": "up-to-date", "exit_code": 0 } } }
+            ]});
+            let plan = MockPlan {
+                rules: Some(&rules),
+            };
+            let turn = oh_provider(bin)
+                .respond_with_mocks(
+                    "claude-code",
+                    "sonnet",
+                    &skill_ref(),
+                    &[Message::user("hi")],
+                    None,
+                    Some(&plan),
+                )
+                .unwrap();
+            // The compiled rules reached oneharness verbatim.
+            let seen: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(&rules_seen).unwrap()).unwrap();
+            assert_eq!(seen, rules);
+            // The spy log came back as records, original inputs intact.
+            let records = turn.mock_calls.expect("channel was on");
+            assert_eq!(records.len(), 2);
+            assert_eq!(records[0].action, "stub");
+            assert_eq!(records[0].rule, Some(0));
+            assert_eq!(records[0].input.as_ref().unwrap()["command"], "git push");
+            assert_eq!(records[1].action, "allow");
+        }
+
+        #[test]
+        fn oneharness_spy_only_plan_omits_rules_flag_and_missing_log_is_empty() {
+            // A spy-only plan (no rules): no --mock-rules flag, --spy-file
+            // still passed; a run whose hook never fired leaves no log, which
+            // reads as zero records — the channel stays Some.
+            let dir =
+                std::env::temp_dir().join(format!("skilltest-oh-spyonly-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let argv_file = dir.join("argv.txt");
+            let bin = script(
+                "oh-spyonly",
+                &format!(
+                    "echo \"$@\" > '{}'\ncat >/dev/null\necho '{{\"results\":[{{\"status\":\"ok\",\"text\":\"ok\"}}]}}'\n",
+                    argv_file.display(),
+                ),
+            );
+            let plan = MockPlan { rules: None };
+            let turn = oh_provider(bin)
+                .respond_with_mocks(
+                    "claude-code",
+                    "sonnet",
+                    &skill_ref(),
+                    &[Message::user("hi")],
+                    None,
+                    Some(&plan),
+                )
+                .unwrap();
+            assert_eq!(turn.mock_calls, Some(Vec::new()));
+            let argv = std::fs::read_to_string(&argv_file).unwrap();
+            assert!(argv.contains("--spy-file"), "argv: {argv}");
+            assert!(!argv.contains("--mock-rules"), "argv: {argv}");
         }
 
         // ---- ApiJudgeProvider over a fake curl ----
