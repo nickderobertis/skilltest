@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.4.0](https://github.com/nickderobertis/skilltest/compare/v0.3.0...v0.4.0) (2026-07-06)
+
+### ⚠ BREAKING CHANGES
+
+* skilltest now targets oneharness v0.3.6 and passes no --mode, so oneharness's normalized default approval mode applies (v0.3.0+) instead of pre-0.3 allow-everything. Set ONEHARNESS_MODE=bypass via oneharness config to restore the prior behavior.
+
+### Features
+
+* normalized tool events + opt-in streaming API (oneharness v0.3.6) ([#22](https://github.com/nickderobertis/skilltest/issues/22)) ([1a2fb6b](https://github.com/nickderobertis/skilltest/commit/1a2fb6b2ce525885fed20306a8526a20be99861d))
+
 ## [0.3.0](https://github.com/nickderobertis/skilltest/compare/v0.2.2...v0.3.0) (2026-06-12)
 
 ### Features
