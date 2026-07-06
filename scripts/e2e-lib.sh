@@ -58,11 +58,14 @@ e2e_skilltest_bin() {
 #   H_DRIVABLE   1 if the installed oneharness can deliver the skill to this
 #                harness, else 0
 #   H_BLOCKED    when H_DRIVABLE=0, the precise upstream reason (shown on SKIP)
-#   H_MOCK       what the harness's hook protocol can express, per oneharness
+#   H_MOCK       what the per-run mock seam can do here, per oneharness
 #                v0.3.7's live-verified registry: "rewrite" (stub/deny/rewrite
-#                all work), "deny" (deny-only — goose has no rewrite verdict,
-#                qwen's documented one was live-refuted), or "none" (copilot's
-#                hooks never fire headlessly). Drives which mock phase runs.
+#                all work), "deny" (deny-only — goose has no rewrite verdict),
+#                or "none" (oneharness refuses `run --mock-rules`/`--spy-file`
+#                outright: copilot's hooks never fire headlessly, and qwen's
+#                fire only at USER scope headlessly, which the one-shot
+#                delivery cannot install). "none" needs H_MOCK_BLOCKED — the
+#                precise upstream reason shown when the phase is skipped.
 #
 # Why H_DRIVABLE exists: skilltest passes the skill as `--system`, and a harness
 # is only drivable when the *pinned* oneharness can carry that to the model.
@@ -76,7 +79,7 @@ e2e_skilltest_bin() {
 # H_BLOCKED reason otherwise. See docs/e2e.md.
 e2e_harness_config() {
     local id="$1"
-    H_EXTRA_ENV=""; H_BLOCKED=""; H_MOCK="none"
+    H_EXTRA_ENV=""; H_BLOCKED=""; H_MOCK="none"; H_MOCK_BLOCKED=""
     case "$id" in
         claude-code)
             H_PLATFORM="claude-code"; H_BIN="claude"
@@ -130,13 +133,15 @@ e2e_harness_config() {
             # `max_completion_tokens`).
             H_AUTH_ENV="OPENAI_API_KEY"
             H_EXTRA_ENV="OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1} OPENAI_MODEL=${QWEN_E2E_MODEL:-gpt-4o-mini}"
-            H_DRIVABLE=1; H_MOCK="deny" ;;
+            H_DRIVABLE=1; H_MOCK="none"
+            H_MOCK_BLOCKED="qwen's hooks fire only at user scope headlessly, so oneharness refuses the one-shot --mock-rules/--spy-file delivery (project hooks sit behind folder trust)" ;;
         copilot)
             # GitHub Copilot CLI. Auth via COPILOT_GITHUB_TOKEN (a token with the
             # "Copilot Requests" permission); the skill is prepended to the prompt.
             H_PLATFORM="copilot"; H_BIN="copilot"
             H_MODEL="${SKILLTEST_E2E_MODEL:-}"
-            H_AUTH_ENV="COPILOT_GITHUB_TOKEN"; H_DRIVABLE=1; H_MOCK="none" ;;
+            H_AUTH_ENV="COPILOT_GITHUB_TOKEN"; H_DRIVABLE=1; H_MOCK="none"
+            H_MOCK_BLOCKED="copilot's hooks never fire headlessly (probe-refuted upstream)" ;;
         *)
             fail "unknown harness id '$id' (known: claude-code, codex, goose, opencode, cursor, crush, qwen, copilot)" ;;
     esac
@@ -221,7 +226,7 @@ e2e_mock_phase() {
         rewrite) case_file="$root/tests/fixtures/live/cases/mock_stub.yaml"; action="stub" ;;
         deny)    case_file="$root/tests/fixtures/live/cases/mock_deny.yaml"; action="deny" ;;
         none)
-            note "» mock phase skipped for $id: its hooks cannot fire headlessly (see docs/e2e.md)"
+            note "» mock phase skipped for $id: ${H_MOCK_BLOCKED:-no per-run mock delivery} (see docs/e2e.md)"
             return 0 ;;
         *) fail "unknown H_MOCK '$H_MOCK' for $id" ;;
     esac

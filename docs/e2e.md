@@ -42,8 +42,10 @@ Three layers, all driving the real binary as a subprocess:
   passed and the reply contained `pong`, then runs the **mock phase** matched to
   the harness's hook capability (`H_MOCK` in `scripts/e2e-lib.sh`): the stub
   case on rewrite-capable harnesses (claude-code, codex, opencode, crush,
-  cursor), the deny case on the deny-only ones (goose, qwen), and a loud
-  explained skip for copilot (its hooks never fire headlessly — probe-refuted
+  cursor), the deny case on goose (deny-only — its protocol has no rewrite
+  verdict), and a loud explained skip for qwen (its hooks fire only at user
+  scope headlessly, so oneharness refuses the one-shot `--mock-rules`
+  delivery) and copilot (its hooks never fire headlessly — probe-refuted
   upstream). The judge is always a **fixed** claude-code judge (skilltest's
   "evals run on a fixed `judge_harness`" model), so verdicts stay clean even
   when the harness under test wraps its reply in a banner.
@@ -83,7 +85,7 @@ in CI:
 | opencode     | `ANTHROPIC_API_KEY` ✅       | `anthropic/claude-haiku-4-5`   | **green** — in CI | rewrite (stub case) | prepended to prompt; json `opencode-parts` (JSONL) |
 | cursor       | `CURSOR_API_KEY` ✅          | CLI default                    | **green** — in CI | rewrite (stub case) | prepended to prompt; stream-json `result` |
 | crush        | `ANTHROPIC_API_KEY` ✅       | CLI default (Anthropic)        | **green** — in CI | rewrite (stub case) | prepended to prompt; raw text |
-| qwen         | `OPENAI_API_KEY` ✅          | `gpt-4o-mini` (OpenAI-compat)  | **green** — in CI | deny-only (deny case) | prepended to prompt; raw text |
+| qwen         | `OPENAI_API_KEY` ✅          | `gpt-4o-mini` (OpenAI-compat)  | **green** — in CI | skipped (user-scope-only hooks; no one-shot delivery) | prepended to prompt; raw text |
 | copilot      | `COPILOT_GITHUB_TOKEN` ✅    | CLI default                    | **green** — in CI | skipped (hooks never fire headlessly) | prepended to prompt; raw text |
 
 `scripts/e2e-harness.sh` still **skips** (never falsely passes) when a harness

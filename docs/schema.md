@@ -123,10 +123,11 @@ A **single-turn** case omits `user`: the skill produces one assistant turn, then
 the evals score it. A **multi-turn** case includes `user` and loops.
 
 Mocking/spying is delivered per run with zero permanent config mutation
-(oneharness's `run --mock-rules`/`--spy-file`); which verbs a harness can
-express varies (deny is universal on hook-capable harnesses; rewrite/stub work
-on claude-code, codex, opencode, crush, cursor) and an inexpressible action is
-a **loud usage error**, never a silent allow. Mocks apply only to the harness
+(oneharness's `run --mock-rules`/`--spy-file`); what a harness supports varies
+(rewrite/stub work on claude-code, codex, opencode, crush, cursor; goose is
+deny-only; qwen and copilot cannot take the per-run delivery at all — qwen's
+hooks fire only at user scope headlessly, copilot's never do) and anything
+inexpressible is a **loud usage error**, never a silent allow. Mocks apply only to the harness
 under test — never to the judge or the simulated user.
 
 ### Eval pass rules
