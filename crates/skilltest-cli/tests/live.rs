@@ -42,6 +42,13 @@ fn model() -> String {
 
 /// Run a live case through the skilltest CLI against real oneharness.
 fn run_live(case: &str) -> Output {
+    run_live_fmt(case, "json")
+}
+
+/// Run a live case through the skilltest CLI against real oneharness, in the
+/// given output format (`json` buffered, or `json-stream` for the streaming
+/// wire).
+fn run_live_fmt(case: &str, format: &str) -> Output {
     let m = model();
     Command::new(skilltest())
         .arg("run")
@@ -52,7 +59,7 @@ fn run_live(case: &str) -> Output {
         .args(["--judge-model", &m])
         .args(["--judge-harness", &platform()])
         .args(["--timeout", "150"])
-        .args(["--format", "json"])
+        .args(["--format", format])
         .output()
         .expect("skilltest run executes")
 }
@@ -142,4 +149,53 @@ fn live_multi_turn_drives_simulated_user() {
         "expected usage; got {}",
         run["usage"]
     );
+}
+
+#[test]
+#[ignore = "live: needs oneharness + a real harness; run with --ignored"]
+fn live_streaming_emits_ndjson_and_a_terminal_result() {
+    // Exercises the *real* `oneharness run --stream` wire (the
+    // `OneharnessProvider::run_streaming` path the deterministic gate can only
+    // reach via the buffered-replay default): the CLI must emit NDJSON and finish
+    // with a `result` line carrying the same kind of report the buffered format
+    // returns.
+    let out = run_live_fmt("pong.yaml", "json-stream");
+    assert!(
+        out.status.code() == Some(0) || out.status.code() == Some(1),
+        "expected a completed run (exit 0/1), got {:?}; stderr: {}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8(out.stdout).expect("stdout is utf8");
+    let lines: Vec<Value> = text
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| serde_json::from_str(l).expect("each stream line is one JSON object"))
+        .collect();
+    assert!(!lines.is_empty(), "stream produced no lines");
+
+    // Any tool-event lines are well-formed; exactly one terminal `result` line
+    // closes the stream. (The pong skill uses no tools, so there may be zero
+    // event lines — the point is the real `--stream` wire is parsed correctly.)
+    let (events, results): (Vec<&Value>, Vec<&Value>) =
+        lines.iter().partition(|l| l["type"] == "event");
+    for ev in &events {
+        assert!(
+            ev["event"]["kind"].is_string(),
+            "malformed event line: {ev}"
+        );
+    }
+    assert_eq!(results.len(), 1, "exactly one terminal result line");
+    let report = &results[0]["report"];
+    assert_eq!(report["passed"], Value::Bool(true), "report: {report:#}");
+
+    // The streamed report is a real report: the skill actually said pong.
+    let assistant: String = report["runs"][0]["transcript"]["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| m["role"] == "assistant")
+        .map(|m| m["content"].as_str().unwrap_or("").to_lowercase())
+        .collect();
+    assert!(assistant.contains("pong"), "assistant said: {assistant}");
 }
