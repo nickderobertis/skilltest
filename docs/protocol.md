@@ -126,7 +126,31 @@ the bundled fake) simply omits them and the report's usage totals stay empty.
 A reference implementation is
 [`crates/skilltest-cli/src/bin/fake_provider.rs`](../crates/skilltest-cli/src/bin/fake_provider.rs).
 
-## 3. The direct-API judge (`judge:` override)
+## 3. Streaming output (`run --format json-stream`)
+
+Alongside the buffered `--format json` (one JSON `Report` at the end), the CLI
+offers an opt-in **NDJSON stream** the SDKs consume to watch a run live and
+**short-circuit** it. Each line is one JSON object:
+
+```
+{"type":"event","case":"…","platform":"…","model":"…","turn":1,"event":{…ToolEvent…}}
+…one per tool event, the instant it is observed…
+{"type":"result","report":{…Report…}}
+```
+
+The terminal `result` line carries the same `Report` the buffered format
+returns. Under the hood the runner drives each turn through the provider's
+streaming path (`OneharnessProvider` uses `oneharness run --stream`, which emits
+its own NDJSON events); the buffered format is unchanged.
+
+**Short-circuit.** A consumer that stops reading (closing the pipe) makes the
+CLI's next event write fail; the CLI tears the run down — for `OneharnessProvider`
+it kills the oneharness child, closing *its* stream so the harness is torn down,
+and a bad turn is cut off instead of paid for in full. The SDKs expose this as an
+async iterator (`stream_skill` / `streamSkill`): `break` out of the loop to abort;
+read `.report` for the final report when the stream ran to completion.
+
+## 4. The direct-API judge (`judge:` override)
 
 By default the provider that runs the skill also judges (the oneharness
 `judge_harness`). Every `judge`/`user` call then pays an agent-loop cold start

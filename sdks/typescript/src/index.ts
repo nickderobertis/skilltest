@@ -15,6 +15,7 @@
  * ```
  */
 export { runSkill, validateSkill, ENV_BIN, ENV_PROVIDER, type RunOptions } from "./runner.js";
+export { streamSkill, type SkillStream, type StreamEvent } from "./stream.js";
 export {
   SkilltestError,
   SkilltestProviderError,

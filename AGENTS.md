@@ -117,8 +117,8 @@ a single template. What was pulled in, and why:
 | --- | --- |
 | `crates/skilltest-core` | Library: config, skill model + validation, test-case model, provider protocol, evals, runner, report. The stable Rust API the CLI builds on, and the source of truth for the JSON contract. |
 | `crates/skilltest-cli` | The `skilltest` binary (clap), including `skilltest schema` (emits the contract's JSON Schemas). Also carries `skilltest-fake-provider`, a deterministic reference provider used by the e2e suite — a second `[[bin]]` gated behind the non-default `fake-provider` feature so a published `cargo install` ships only `skilltest`; the nx `build`/`lint` targets enable the feature, release builds don't. |
-| `sdks/python` | `skilltest-sdk`: the Python SDK — runs the CLI as a subprocess and parses its JSON contract into Pydantic models. No framework code. Ships a per-target **platform wheel** that bundles the CLI at `skilltest_sdk/_bin/skilltest` (plus a pure-wheel/sdist fallback), so `pip install` needs no separate binary step; the runner resolves the bundled binary, falling back to `$SKILLTEST_BIN`/`PATH`. |
-| `sdks/typescript` | `@skill-test/sdk`: the TypeScript SDK — same wrapper with generated type declarations. No framework code. Bundles the CLI via the per-platform `@skill-test/cli-*` packages (see `sdks/typescript/platforms`), declared as `optionalDependencies` so `pnpm add` pulls only the matching host's binary; the runner resolves it, falling back to `$SKILLTEST_BIN`/`PATH`. |
+| `sdks/python` | `skilltest-sdk`: the Python SDK — runs the CLI as a subprocess and parses its JSON contract into Pydantic models (`run_skill`), plus an opt-in async streaming API (`stream_skill` → `SkillStream`, an `async for` of tool events that `break`s to short-circuit) and `tool_calls`/`ToolEvent` for tool-event analysis. No framework code. Ships a per-target **platform wheel** that bundles the CLI at `skilltest_sdk/_bin/skilltest` (plus a pure-wheel/sdist fallback), so `pip install` needs no separate binary step; the runner resolves the bundled binary, falling back to `$SKILLTEST_BIN`/`PATH`. |
+| `sdks/typescript` | `@skill-test/sdk`: the TypeScript SDK — same wrapper with generated type declarations (`runSkill`), plus the matching async streaming API (`streamSkill` → `SkillStream`, a `for await` of tool events that `break`s to short-circuit) and `toolCalls`/`ToolEvent`. No framework code. Bundles the CLI via the per-platform `@skill-test/cli-*` packages (see `sdks/typescript/platforms`), declared as `optionalDependencies` so `pnpm add` pulls only the matching host's binary; the runner resolves it, falling back to `$SKILLTEST_BIN`/`PATH`. |
 | `sdks/typescript/platforms/cli-*` | The four binary-carrier npm packages (`@skill-test/cli-{linux,darwin}-{x64,arm64}`), each `os`/`cpu`-scoped with a git-ignored `bin/` filled at publish time. Workspace members pinned by the SDK via `workspace:*`; `scripts/set-version.sh` keeps their versions in lockstep. |
 | `plugins/pytest` | `skilltest-pytest`: pytest collection of `*.skilltest.yaml` cases, built on (and re-exporting) `skilltest-sdk`. |
 | `plugins/vitest` | `@skill-test/vitest`: `skillTest`/`discover` vitest helpers, built on (and re-exporting) `@skill-test/sdk`. |
@@ -209,6 +209,9 @@ projects per PR. Locally, install the toolchains once (see `docs/development.md`
   oneharness's own default approval mode applies (v0.3.0+ normalized `--mode`, a
   breaking change from pre-0.3 allow-everything); users set `bypass` etc. via
   oneharness config (`ONEHARNESS_MODE`), keeping approval policy in one place.
+  A streaming variant (`respond_streaming`, `oneharness run --stream`) forwards
+  tool events live and, on a sink `ControlFlow::Break`, kills the oneharness child
+  to short-circuit a bad run; the buffered `respond` (`--compact`) is the default.
   Evals and the simulated user run on a fixed `judge_harness`, independent of the
   harness under test. Verdict JSON is parsed tolerantly (real models wrap it in
   prose/fences) and type-checked.

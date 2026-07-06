@@ -36,6 +36,7 @@ from .models import (
     tool_calls,
 )
 from .runner import ENV_BIN, ENV_PROVIDER, run_skill, validate_skill
+from .stream import SkillStream, StreamEvent, stream_skill
 
 __all__ = [
     "ENV_BIN",
@@ -46,9 +47,11 @@ __all__ = [
     "Message",
     "NumericDetail",
     "Report",
+    "SkillStream",
     "SkilltestError",
     "SkilltestProviderError",
     "SkilltestUsageError",
+    "StreamEvent",
     "Summary",
     "ToolEvent",
     "Transcript",
@@ -60,6 +63,7 @@ __all__ = [
     "failed_evals",
     "failed_runs",
     "run_skill",
+    "stream_skill",
     "tool_calls",
     "validate_skill",
 ]
