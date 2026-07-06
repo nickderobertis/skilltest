@@ -1,0 +1,10 @@
+# Not under cases/ so the directory-aggregate e2e count is unaffected. Used only
+# by the streaming short-circuit e2e: 4000 tool events overflow the stdout pipe
+# buffer, so a consumer that stops reading forces the CLI's broken-pipe path.
+name: manytools
+skill: ../skills/manytools
+input: "go"
+evals:
+  - type: boolean
+    name: done
+    criterion: "the reply says `done`"

@@ -59,20 +59,33 @@ fn respond(request: &Value) -> Value {
     }
 }
 
-/// Turn every `fake-tool: <name> <command>` marker in the instructions into a
-/// normalized `tool_call` event, mirroring what oneharness `--events` surfaces.
+/// Turn the instructions' tool markers into normalized `tool_call` events,
+/// mirroring what oneharness `--events` surfaces:
+///   * `fake-tool: <name> <command>` — one event (`name` + `input.command`).
+///   * `fake-tools: <N>` — N generic `noop` events, for exercising streaming
+///     backpressure (the CLI short-circuit path) without a huge fixture.
 fn tool_events(instructions: &str) -> Vec<Value> {
-    instructions
-        .lines()
-        .filter_map(|line| {
-            let idx = line.find("fake-tool:")?;
+    let mut calls: Vec<(String, String)> = Vec::new();
+    for line in instructions.lines() {
+        if let Some(idx) = line.find("fake-tools:") {
+            let rest = line[idx + "fake-tools:".len()..]
+                .trim()
+                .trim_end_matches("-->")
+                .trim();
+            if let Ok(count) = rest.parse::<usize>() {
+                calls.extend((0..count).map(|_| ("noop".to_string(), String::new())));
+            }
+        } else if let Some(idx) = line.find("fake-tool:") {
             let rest = line[idx + "fake-tool:".len()..]
                 .trim()
                 .trim_end_matches("-->")
                 .trim();
             let (name, command) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
-            Some((name.to_string(), command.trim().to_string()))
-        })
+            calls.push((name.to_string(), command.trim().to_string()));
+        }
+    }
+    calls
+        .into_iter()
         .enumerate()
         .map(|(index, (name, command))| {
             json!({

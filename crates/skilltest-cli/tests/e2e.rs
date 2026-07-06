@@ -166,6 +166,53 @@ fn json_stream_emits_events_then_a_terminal_result() {
 }
 
 #[test]
+fn json_stream_short_circuits_when_the_consumer_stops_reading() {
+    use std::io::{BufRead, BufReader};
+    use std::process::{Command, Stdio};
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    // The manytools case emits thousands of events — far more than the stdout
+    // pipe buffer holds — so a consumer that reads one line and stops leaves the
+    // CLI mid-write. Its broken-pipe path must then tear the run down and exit,
+    // rather than block forever.
+    let case = fixtures().join("stream/manytools.yaml");
+    let mut child = Command::new(skilltest())
+        .arg("run")
+        .arg(&case)
+        .args(["--format", "json-stream"])
+        .arg("--provider")
+        .arg(fake_provider())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("skilltest spawns");
+
+    {
+        // Read a single event line, then drop the reader (close the read end).
+        let stdout = child.stdout.take().expect("piped stdout");
+        let mut reader = BufReader::new(stdout);
+        let mut line = String::new();
+        reader.read_line(&mut line).expect("reads one line");
+        assert!(
+            line.contains("\"type\":\"event\""),
+            "first line is an event: {line}"
+        );
+    }
+
+    // Wait for exit, with a watchdog so a hang fails the test instead of stalling
+    // the whole suite.
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(child.wait().map(|s| s.success()));
+    });
+    match rx.recv_timeout(Duration::from_secs(20)) {
+        Ok(_) => {} // exited promptly once the consumer closed the stream
+        Err(_) => panic!("CLI did not terminate after the consumer closed the stream"),
+    }
+}
+
+#[test]
 fn missing_provider_exits_three() {
     let out = Command::new(skilltest())
         .arg("run")

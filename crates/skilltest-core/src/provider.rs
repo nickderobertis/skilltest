@@ -2312,6 +2312,169 @@ mod tests {
         }
 
         #[test]
+        fn oneharness_stream_forwards_events_then_parses_the_result() {
+            // `oneharness run --stream` emits one NDJSON `{"type":"event",…}` line
+            // per tool event, then a terminal `{"type":"result","report":{…}}`.
+            // `respond_streaming` forwards each event live and returns the turn
+            // parsed from the result.
+            let bin = script(
+                "oh-stream",
+                "cat >/dev/null\n\
+                 printf '%s\\n' '{\"type\":\"event\",\"event\":{\"kind\":\"tool_call\",\
+                 \"name\":\"bash\",\"input\":{\"command\":\"ls\"},\"index\":0}}'\n\
+                 printf '%s\\n' '{\"type\":\"result\",\"report\":{\"results\":[{\"status\":\"ok\",\
+                 \"text\":\"  done  \",\"session_id\":\"s1\",\"usage\":{\"input_tokens\":7}}]}}'\n",
+            );
+            let mut seen = Vec::new();
+            let turn = oh_provider(bin)
+                .respond_streaming(
+                    "claude-code",
+                    "sonnet",
+                    &skill_ref(),
+                    &[Message::user("hi")],
+                    None,
+                    &mut |event| {
+                        seen.push(event.name.clone());
+                        ControlFlow::Continue(())
+                    },
+                )
+                .unwrap();
+            // The event was forwarded live, and the result was parsed for the turn.
+            assert_eq!(seen, vec![Some("bash".to_string())]);
+            assert_eq!(turn.message, "done");
+            assert_eq!(turn.session_id.as_deref(), Some("s1"));
+            assert_eq!(turn.usage.unwrap().input_tokens, Some(7));
+            assert_eq!(turn.events.len(), 1);
+            assert_eq!(turn.events[0].name.as_deref(), Some("bash"));
+        }
+
+        #[test]
+        fn oneharness_stream_short_circuits_on_break() {
+            // The sink breaks on the first event; the oneharness child is killed
+            // and the later events/result are never delivered. The turn carries
+            // only the events seen before the abort.
+            let bin = script(
+                "oh-stream-abort",
+                "cat >/dev/null\n\
+                 printf '%s\\n' '{\"type\":\"event\",\"event\":{\"kind\":\"tool_call\",\
+                 \"name\":\"rm\",\"input\":{\"command\":\"rm -rf /\"},\"index\":0}}'\n\
+                 printf '%s\\n' '{\"type\":\"event\",\"event\":{\"kind\":\"tool_call\",\
+                 \"name\":\"bash\",\"input\":{\"command\":\"ls\"},\"index\":1}}'\n\
+                 printf '%s\\n' '{\"type\":\"result\",\"report\":{\"results\":[{\"status\":\"ok\",\
+                 \"text\":\"done\"}]}}'\n",
+            );
+            let mut seen = 0usize;
+            let turn = oh_provider(bin)
+                .respond_streaming(
+                    "claude-code",
+                    "sonnet",
+                    &skill_ref(),
+                    &[Message::user("hi")],
+                    None,
+                    &mut |event| {
+                        seen += 1;
+                        assert_eq!(event.name.as_deref(), Some("rm"));
+                        ControlFlow::Break(())
+                    },
+                )
+                .unwrap();
+            assert_eq!(seen, 1, "aborted after the first event");
+            assert_eq!(turn.events.len(), 1);
+            assert_eq!(turn.events[0].name.as_deref(), Some("rm"));
+            // Torn off before the result line, so no reply text.
+            assert!(turn.message.is_empty());
+        }
+
+        #[test]
+        fn oneharness_stream_errors_when_no_result_line() {
+            // A stream that ends without a terminal `result` line is a protocol
+            // error (distinct from a deliberate abort).
+            let bin = script(
+                "oh-stream-noresult",
+                "cat >/dev/null\n\
+                 printf '%s\\n' '{\"type\":\"event\",\"event\":{\"kind\":\"tool_call\",\
+                 \"name\":\"bash\",\"input\":{},\"index\":0}}'\n",
+            );
+            let err = oh_provider(bin)
+                .respond_streaming(
+                    "claude-code",
+                    "sonnet",
+                    &skill_ref(),
+                    &[Message::user("hi")],
+                    None,
+                    &mut |_| ControlFlow::Continue(()),
+                )
+                .unwrap_err();
+            assert!(
+                matches!(err, Error::Provider { .. }),
+                "expected a provider error, got: {err:?}"
+            );
+        }
+
+        #[test]
+        fn oneharness_buffered_run_passes_events_and_omits_mode() {
+            // The buffered path uses `--compact --events` and — deliberately —
+            // passes no `--mode` (oneharness's default applies).
+            let bin = script(
+                "oh-args",
+                "d=$(dirname \"$0\"); printf '%s\\n' \"$@\" > \"$d/args\"\n\
+                 cat >/dev/null\necho '{\"results\":[{\"status\":\"ok\",\"text\":\"hi\"}]}'\n",
+            );
+            let dir = bin.parent().unwrap().to_path_buf();
+            oh_provider(bin)
+                .respond(
+                    "claude-code",
+                    "sonnet",
+                    &skill_ref(),
+                    &[Message::user("hi")],
+                    None,
+                )
+                .unwrap();
+            let args: Vec<String> = std::fs::read_to_string(dir.join("args"))
+                .unwrap()
+                .lines()
+                .map(str::to_string)
+                .collect();
+            assert!(args.iter().any(|a| a == "--events"), "got: {args:?}");
+            assert!(args.iter().any(|a| a == "--compact"), "got: {args:?}");
+            assert!(!args.iter().any(|a| a == "--mode"), "got: {args:?}");
+            assert!(!args.iter().any(|a| a == "--stream"), "got: {args:?}");
+        }
+
+        #[test]
+        fn oneharness_stream_run_passes_stream_and_omits_mode() {
+            // The streaming path uses `--stream --events` and — like the buffered
+            // path — passes no `--mode`.
+            let bin = script(
+                "oh-args-stream",
+                "d=$(dirname \"$0\"); printf '%s\\n' \"$@\" > \"$d/args\"\n\
+                 cat >/dev/null\n\
+                 printf '%s\\n' '{\"type\":\"result\",\"report\":{\"results\":[{\"status\":\"ok\",\
+                 \"text\":\"hi\"}]}}'\n",
+            );
+            let dir = bin.parent().unwrap().to_path_buf();
+            oh_provider(bin)
+                .respond_streaming(
+                    "claude-code",
+                    "sonnet",
+                    &skill_ref(),
+                    &[Message::user("hi")],
+                    None,
+                    &mut |_| ControlFlow::Continue(()),
+                )
+                .unwrap();
+            let args: Vec<String> = std::fs::read_to_string(dir.join("args"))
+                .unwrap()
+                .lines()
+                .map(str::to_string)
+                .collect();
+            assert!(args.iter().any(|a| a == "--stream"), "got: {args:?}");
+            assert!(args.iter().any(|a| a == "--events"), "got: {args:?}");
+            assert!(!args.iter().any(|a| a == "--mode"), "got: {args:?}");
+            assert!(!args.iter().any(|a| a == "--compact"), "got: {args:?}");
+        }
+
+        #[test]
         fn oneharness_falls_back_to_stdout_when_text_null() {
             let bin = script(
                 "oh-fallback",
