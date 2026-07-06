@@ -59,6 +59,41 @@ user:
   done_when: "the assistant has confirmed a booking"   # optional
   max_turns: 5                                          # optional override
 
+# Optional. Mock/spy declarations: an entry WITH one of `stub`/`deny`/`rewrite`
+# is a mock (matching tool calls are intercepted inside the harness); one
+# without any action is a spy (observed only). First matching mock wins; a call
+# no mock matches runs normally and is still recorded. `called`/`not_called`
+# evals reference entries by `name`.
+mocks:
+  - name: push
+    # Every given criterion must hold. `tool` is the (per-harness) tool name,
+    # case-insensitive; `contains` a substring of the raw hook-event JSON;
+    # `pattern` an unanchored linear-time regex over the same haystack (no
+    # lookarounds; the haystack is JSON, so quotes in tool input are escaped);
+    # `input` gives per-argument predicates (`equals`/`contains`/`pattern`,
+    # or a bare string for equality) — absent fields fail the match.
+    match: { tool: bash, pattern: "git push( --force)?\b" }
+    # Fake a SHELL call's result by declaring only the output: nothing real
+    # runs, and the model receives this text as the tool's genuine result.
+    # Also `stub: { output: ..., exit_code: 2 }` to fake a failing command.
+    stub: Everything up-to-date
+  - name: danger
+    match: { contains: "rm -rf" }
+    # Block the call; the model reads the message as the tool's feedback.
+    deny: destructive commands are blocked
+  - name: config
+    match: { tool: read, input: { file_path: { contains: "config.prod" } } }
+    # The low-level rewrite: substitute raw input fields (here redirecting a
+    # file read to a fixture). Shell stubs are better written with `stub`.
+    rewrite: { file_path: fixtures/config.yaml }
+  - name: git                       # no action => a spy
+    match: { tool: bash, pattern: "\bgit\b" }
+
+# Optional (default false). Record every tool call through the mock/spy channel
+# even with no `mocks` — the report then carries `mock_calls` for code-level
+# spies. Implied whenever `mocks` is non-empty.
+spy: false
+
 # The evals that decide pass/fail. Must be non-empty; all must pass.
 evals:
   - type: boolean
@@ -72,16 +107,39 @@ evals:
     max: 10
     threshold: 7
     comparator: ">="               # one of >= > <= < (default >=)
+
+  # Deterministic (no judge): assert on the mock/spy channel's observed calls,
+  # referencing a `mocks` entry by name.
+  - type: called
+    mock: push
+    times: 1                       # optional exact count; absent = at least 1
+    where: { command: { contains: "origin" } }   # optional input predicates
+
+  - type: not_called
+    mock: danger
 ```
 
 A **single-turn** case omits `user`: the skill produces one assistant turn, then
 the evals score it. A **multi-turn** case includes `user` and loops.
+
+Mocking/spying is delivered per run with zero permanent config mutation
+(oneharness's `run --mock-rules`/`--spy-file`); which verbs a harness can
+express varies (deny is universal on hook-capable harnesses; rewrite/stub work
+on claude-code, codex, opencode, crush, cursor) and an inexpressible action is
+a **loud usage error**, never a silent allow. Mocks apply only to the harness
+under test — never to the judge or the simulated user.
 
 ### Eval pass rules
 
 - **boolean** passes when the judge's verdict equals `expected` (default `true`).
 - **numeric** clamps the judge's score to `[min, max]`, then passes when it
   satisfies `comparator` against `threshold`.
+- **called** passes when the referenced mock/spy observed at least one (or
+  exactly `times`) matching call(s); **not_called** when it observed none.
+  Both are scored deterministically from the observed records — no judge —
+  and error loudly when the run has no observation channel rather than passing
+  vacuously. A mock's calls are the ones *its rule intercepted*; a spy's are
+  everything its matcher covers (including calls other mocks intercepted).
 
 A case run passes when every eval passes. A `skilltest run` exits `0` when all
 runs pass and `1` when any fail.
@@ -131,6 +189,17 @@ so consumers can assert on *what the skill did* — shell commands, file edits,
 tool uses — not just its final text. The array is empty (omitted) for harnesses
 that expose no machine-readable transcript. The same events are also streamed
 live by the SDKs' streaming API, for short-circuiting a bad run.
+
+When the mock/spy channel is on (`mocks`/`spy` in the case, `--mocks`/`--spy`
+on the CLI), each run also carries **`mock_calls`**: every observed tool call
+in order, as `{tool, input, action, rule, mock}` — `input` is the **original,
+pre-rewrite** arguments (the transcript's `events` show post-rewrite reality,
+e.g. the printf a stub compiled to), `action` is the verdict applied
+(`allow`/`deny`/`rewrite`/`stub`), and `mock` names the declaration whose rule
+intercepted. `mock_calls` is `null` when the channel was off and `[]` when it
+was on with no tool calls — the SDKs rely on that distinction so an unbound
+spy errs instead of reading as "zero calls". Deterministic eval outcomes use
+the `calls` detail kind: `{kind: "calls", count, times, negated}`.
 
 ## Output contract: how the CLI and the SDKs stay in sync
 

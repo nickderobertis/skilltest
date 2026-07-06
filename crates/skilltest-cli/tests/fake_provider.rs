@@ -164,3 +164,94 @@ fn unknown_op_exits_nonzero_with_message() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("unknown op"), "stderr: {stderr}");
 }
+
+#[test]
+fn respond_with_mocks_applies_rules_and_reports_records() {
+    // A `mocks` block on the request: the compiled ruleset is applied to each
+    // scripted call (first match wins), records carry the ORIGINAL inputs, the
+    // stubbed event shows post-rewrite reality, and the canned output/deny
+    // message is surfaced into the reply text.
+    let request = json!({
+        "op": "respond",
+        "platform": "demo",
+        "model": "fake",
+        "skill": {
+            "name": "deployer",
+            "path": "/tmp/deployer",
+            "instructions": "fake-reply: Done.\nfake-tool: bash git push origin\nfake-tool: bash rm -rf /tmp/x\nfake-tool: bash ls\n",
+        },
+        "messages": [],
+        "mocks": { "rules": { "rules": [
+            { "match": { "event_contains": "git push" },
+              "action": { "stub": { "output": "up-to-date", "exit_code": 0 } } },
+            { "match": { "event_contains": "rm -rf" },
+              "action": { "deny": { "message": "blocked" } } }
+        ]}},
+    });
+    let resp = response(&request.to_string());
+
+    let records = resp["mock_calls"].as_array().expect("records present");
+    assert_eq!(records.len(), 3);
+    assert_eq!(records[0]["action"], "stub");
+    assert_eq!(records[0]["rule"], 0);
+    assert_eq!(records[0]["input"]["command"], "git push origin");
+    assert_eq!(records[1]["action"], "deny");
+    assert_eq!(records[1]["rule"], 1);
+    assert_eq!(records[2]["action"], "allow");
+    assert!(records[2]["rule"].is_null());
+
+    // Events: the stub became a printf (post-rewrite), the deny carries the
+    // message as output, the allowed call is untouched.
+    let events = resp["events"].as_array().unwrap();
+    let stub_cmd = events[0]["input"]["command"].as_str().unwrap();
+    assert!(stub_cmd.starts_with("printf"), "{stub_cmd}");
+    assert_eq!(events[0]["output"], "up-to-date\n");
+    assert_eq!(events[1]["output"], "denied: blocked");
+    assert_eq!(events[2]["input"]["command"], "ls");
+
+    // The reply text surfaces what the model "saw" from the intercepts.
+    let message = resp["message"].as_str().unwrap();
+    assert!(message.contains("up-to-date"), "{message}");
+    assert!(message.contains("denied: blocked"), "{message}");
+}
+
+#[test]
+fn respond_spy_only_mocks_block_records_allows() {
+    // `"rules": null` (a spy-only run): everything is allowed through, but
+    // every call is still recorded — and `mock_calls` is present-but-empty for
+    // a turn with no tool calls, never absent.
+    let request = json!({
+        "op": "respond",
+        "platform": "demo",
+        "model": "fake",
+        "skill": { "name": "s", "path": "/tmp/s",
+                   "instructions": "fake-reply: hi\nfake-tool: bash ls\n" },
+        "messages": [],
+        "mocks": { "rules": null },
+    });
+    let resp = response(&request.to_string());
+    let records = resp["mock_calls"].as_array().unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0]["action"], "allow");
+
+    let no_tools = json!({
+        "op": "respond",
+        "platform": "demo",
+        "model": "fake",
+        "skill": { "name": "s", "path": "/tmp/s", "instructions": "fake-reply: hi\n" },
+        "messages": [],
+        "mocks": { "rules": null },
+    });
+    let resp = response(&no_tools.to_string());
+    assert_eq!(resp["mock_calls"], json!([]));
+    // And with no `mocks` block at all, the field never appears.
+    let unmocked = json!({
+        "op": "respond",
+        "platform": "demo",
+        "model": "fake",
+        "skill": { "name": "s", "path": "/tmp/s", "instructions": "fake-reply: hi\n" },
+        "messages": [],
+    });
+    let resp = response(&unmocked.to_string());
+    assert!(resp.get("mock_calls").is_none());
+}

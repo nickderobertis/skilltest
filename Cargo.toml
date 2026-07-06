@@ -17,6 +17,10 @@ serde_json = "1"
 schemars = "1"
 serde_yaml = "0.9"
 thiserror = "2"
+# Mock-rule `pattern` matchers. The linear-time RE2-style engine, so a
+# user-supplied pattern can never hang a run; mirrors the crate oneharness
+# uses, keeping the two sides' regex semantics identical.
+regex = "1"
 clap = { version = "4", features = ["derive"] }
 
 [profile.dev]

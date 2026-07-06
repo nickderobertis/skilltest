@@ -7,7 +7,11 @@ and authored for the `skilltest-fake-provider`.
 ## Layout
 
 - `fixtures/skills/<name>/SKILL.md` — a sample skill. The greeter is the happy
-  path; `invalid/` deliberately omits a `description` to exercise validation.
+  path; `invalid/` deliberately omits a `description` to exercise validation;
+  `deployer/` scripts three shell calls (`git push origin main`, `git status`,
+  `rm -rf /tmp/build`) so the mock/spy suites have deterministic tool calls to
+  intercept and observe (`mock_stub`, `mock_violation`, `deploy_plain`, and
+  both plugins' `collected/deploy.skilltest.yaml`).
 - `fixtures/cases/*.yaml` — sample test cases. Each names the journey it covers
   (`greet_pass`, `greet_fail`, `greet_numeric`, `booking_multiturn`).
 - `fixtures/smoke/` — a self-contained case (`greet.skilltest.yaml`) **and its own
@@ -23,6 +27,11 @@ directly (see `docs/protocol.md` for its rules):
 - A skill's reply comes from a `fake-reply:` marker in its `SKILL.md` body
   (usually inside an HTML comment). Put the substrings the evals check into that
   reply.
+- Each `fake-tool: <name> <command>` marker is one scripted tool call. Under a
+  `mocks:` block the fake provider applies the compiled rules to those calls
+  (same decision engine as the oneharness hook): a stub/deny surfaces its
+  output/message into the reply as `[<tool>] <text>`, so a boolean eval can
+  assert the canned result "reached the model".
 - A boolean/numeric `criterion` requires every **backtick-quoted** substring to
   appear in the assistant text. A `turns>=N` token (un-quoted) is true once the
   conversation has N assistant turns — use it for multi-turn `done_when`.

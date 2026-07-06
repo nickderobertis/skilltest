@@ -1,0 +1,13 @@
+# The mock/spy failure path: the deployer skill really attempts `rm -rf`; the
+# deny mock blocks it, and the `not_called` eval fails — proving a violated
+# call expectation reports (and exits 1) instead of passing vacuously.
+name: mock_violation
+skill: ../skills/deployer
+input: "Deploy the app"
+mocks:
+  - name: danger
+    match: { contains: "rm -rf" }
+    deny: destructive commands are blocked in tests
+evals:
+  - type: not_called
+    mock: danger

@@ -219,7 +219,26 @@ projects per PR. Locally, install the toolchains once (see `docs/development.md`
   stdin, one response on stdout, per op) backing the bundled
   `skilltest-fake-provider` and any custom provider. Custom providers may
   optionally emit `usage`, `session_id`, and `events` on `respond` to participate
-  in cost reporting, tool-event analysis, and stateful multi-turn.
+  in cost reporting, tool-event analysis, and stateful multi-turn — and may
+  honor the `mocks` request block (returning `mock_calls`) to participate in
+  tool mocking; ignoring the block while it's present is a loud provider error.
+
+**Tool mocking/spying** rides the provider boundary: a case's `mocks:` block
+(and the CLI's `--mocks`/`--spy`, which is how the SDKs deliver code-level
+`stub`/`deny`/`rewrite`/`spy` objects) compiles in `skilltest-core::mock` to
+the oneharness mock ruleset; `OneharnessProvider` delivers it per skill turn
+via `run --mock-rules`/`--spy-file` (never to the judge) and parses the spy
+JSONL back into `CaseRun.mock_calls` — original pre-rewrite inputs + verdicts,
+which the deterministic `called`/`not_called` evals and the SDKs' mock objects
+bind on. Two matching engines exist deliberately: action rules match inside
+the harness hook (`oneharness mock`), and `mock::decide` mirrors those
+semantics for the fake provider so the gate proves identical decision logic —
+the per-harness live e2e is the drift alarm between them. The oneharness side
+ships in its PR #1099 (`mock` responder + `run --mock-rules`); the live
+mock-path e2e lands once that release is cut and the version note in
+`docs/protocol.md` moves. Everything is loud-by-default: unsupported verbs,
+unknown mock names in evals, invalid regexes, and a channel-less `not_called`
+are errors, never vacuous passes.
 
 The fake provider is why the whole pipeline is testable without a live model: it
 implements the protocol deterministically, so the default e2e suites exercise the

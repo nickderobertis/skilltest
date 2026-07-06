@@ -11,6 +11,15 @@
 //!     `fake-tool: <name> <command>` marker becomes a normalized `tool_call`
 //!     event on the turn (`name` = first token, `input.command` = the rest), so
 //!     the e2e suite can exercise the tool-events path deterministically.
+//!     When the request carries a `mocks` block, its compiled ruleset is
+//!     applied to each scripted call with the same first-match semantics the
+//!     oneharness hook uses (`skilltest_core::mock::decide` — one shared
+//!     decision engine, so the gate proves the real logic): the response gains
+//!     `mock_calls` records (original inputs + verdicts), intercepted events
+//!     show post-rewrite reality (a stub's `printf`, a rewrite's input), and a
+//!     stub's canned output / a deny's message is appended to the reply text as
+//!     `[<tool>] <text>` — the deterministic stand-in for "the model saw the
+//!     mocked result".
 //!   * `user` — replies with the text after a `say:` marker in the persona (or
 //!     `"continue"`). Never stops on its own.
 //!   * `judge` — scores against the concatenated assistant text. Backtick-quoted
@@ -22,6 +31,7 @@
 use std::io::Read;
 
 use serde_json::{json, Value};
+use skilltest_core::mock::{decide, stub_command, AppliedAction};
 
 fn main() {
     let mut input = String::new();
@@ -51,20 +61,110 @@ fn respond(request: &Value) -> Value {
         .and_then(Value::as_str)
         .unwrap_or("");
     let reply = marker(instructions, "fake-reply:").unwrap_or_else(|| "ok".to_string());
-    let events = tool_events(instructions);
-    if events.is_empty() {
-        json!({ "message": reply, "done": false })
+    let calls = tool_calls(instructions);
+    let Some(mocks) = request.get("mocks") else {
+        // No mock channel requested: the pre-mock shape, no `mock_calls`.
+        let events = plain_events(&calls);
+        if events.is_empty() {
+            return json!({ "message": reply, "done": false });
+        }
+        return json!({ "message": reply, "done": false, "events": events });
+    };
+    let rules = mocks.get("rules").filter(|r| !r.is_null());
+
+    let mut events = Vec::new();
+    let mut records = Vec::new();
+    let mut surfaced: Vec<String> = Vec::new();
+    for (index, (name, command)) in calls.iter().enumerate() {
+        let input = json!({ "command": command });
+        let decision = rules.and_then(|r| decide(r, Some(name), Some(&input)));
+        let record_action = decision
+            .as_ref()
+            .map_or("allow", |(_, action)| action.kind());
+        records.push(json!({
+            "tool": name,
+            "input": input,
+            "action": record_action,
+            "rule": decision.as_ref().map(|(rule, _)| rule),
+        }));
+        match decision {
+            None => events.push(event(index, name, json!({ "command": command }), None)),
+            Some((_, AppliedAction::Deny { message })) => {
+                // The call never ran; the model reads the message as the
+                // tool's feedback.
+                events.push(event(
+                    index,
+                    name,
+                    json!({ "command": command }),
+                    Some(format!("denied: {message}")),
+                ));
+                surfaced.push(format!("[{name}] denied: {message}"));
+            }
+            Some((_, AppliedAction::Stub { output, exit_code })) => {
+                // Post-rewrite reality: the printf stub "ran" and the model
+                // received the canned output as the tool's genuine result.
+                events.push(event(
+                    index,
+                    name,
+                    json!({ "command": stub_command(output, exit_code) }),
+                    Some(format!("{output}\n")),
+                ));
+                surfaced.push(format!("[{name}] {output}"));
+            }
+            Some((_, AppliedAction::Rewrite { input })) => {
+                events.push(event(index, name, input.clone(), None));
+                surfaced.push(format!("[{name}] input rewritten to {input}"));
+            }
+        }
+    }
+    // Intercepted results surface in the reply text, standing in for "the
+    // model relayed what the mocked tool returned" — so evals can assert the
+    // canned output reached the conversation.
+    let message = if surfaced.is_empty() {
+        reply
     } else {
-        json!({ "message": reply, "done": false, "events": events })
+        format!("{reply}\n{}", surfaced.join("\n"))
+    };
+    if events.is_empty() {
+        json!({ "message": message, "done": false, "mock_calls": records })
+    } else {
+        json!({ "message": message, "done": false, "events": events, "mock_calls": records })
     }
 }
 
-/// Turn the instructions' tool markers into normalized `tool_call` events,
-/// mirroring what oneharness `--events` surfaces:
-///   * `fake-tool: <name> <command>` — one event (`name` + `input.command`).
-///   * `fake-tools: <N>` — N generic `noop` events, for exercising streaming
+/// One normalized `tool_call` event.
+fn event(index: usize, name: &str, input: Value, output: Option<String>) -> Value {
+    match output {
+        Some(output) => json!({
+            "kind": "tool_call",
+            "name": name,
+            "input": input,
+            "output": output,
+            "index": index,
+        }),
+        None => json!({
+            "kind": "tool_call",
+            "name": name,
+            "input": input,
+            "index": index,
+        }),
+    }
+}
+
+/// The unmocked events shape (no `mocks` block on the request).
+fn plain_events(calls: &[(String, String)]) -> Vec<Value> {
+    calls
+        .iter()
+        .enumerate()
+        .map(|(index, (name, command))| event(index, name, json!({ "command": command }), None))
+        .collect()
+}
+
+/// Parse the instructions' tool markers into scripted `(name, command)` calls:
+///   * `fake-tool: <name> <command>` — one call (`name` = first token).
+///   * `fake-tools: <N>` — N generic `noop` calls, for exercising streaming
 ///     backpressure (the CLI short-circuit path) without a huge fixture.
-fn tool_events(instructions: &str) -> Vec<Value> {
+fn tool_calls(instructions: &str) -> Vec<(String, String)> {
     let mut calls: Vec<(String, String)> = Vec::new();
     for line in instructions.lines() {
         if let Some(idx) = line.find("fake-tools:") {
@@ -85,17 +185,6 @@ fn tool_events(instructions: &str) -> Vec<Value> {
         }
     }
     calls
-        .into_iter()
-        .enumerate()
-        .map(|(index, (name, command))| {
-            json!({
-                "kind": "tool_call",
-                "name": name,
-                "input": { "command": command },
-                "index": index,
-            })
-        })
-        .collect()
 }
 
 fn user(request: &Value) -> Value {

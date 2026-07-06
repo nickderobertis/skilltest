@@ -29,8 +29,9 @@ from pydantic import BaseModel
 
 from ._report import ToolEvent
 from .errors import SkilltestProviderError
+from .mock import ToolSpy, bind_mocks
 from .models import Report
-from .runner import ENV_BIN, build_run_argv, raise_for_code
+from .runner import ENV_BIN, build_run_argv, mock_run_args, raise_for_code
 
 
 class StreamEvent(BaseModel):
@@ -49,11 +50,19 @@ class SkillStream:
     a running case. Iterate with ``async for``; ``break`` to short-circuit. When
     the stream runs to completion, ``report`` holds the final [`Report`]."""
 
-    def __init__(self, argv: list[str], cwd: str | None) -> None:
+    def __init__(self, argv: list[str], cwd: str | None, mocks: Sequence[ToolSpy] = ()) -> None:
         self._argv = argv
         self._cwd = cwd
+        self._mocks = list(mocks)
+        #: Resources (the temp mocks file) released when the stream finishes.
+        self._cleanup: contextlib.ExitStack | None = None
         #: The final report, populated once the stream completes normally.
         self.report: Report | None = None
+
+    def _close_cleanup(self) -> None:
+        if self._cleanup is not None:
+            self._cleanup.close()
+            self._cleanup = None
 
     def __aiter__(self) -> AsyncIterator[StreamEvent]:
         return self._iterate()
@@ -67,6 +76,7 @@ class SkillStream:
                 cwd=self._cwd,
             )
         except FileNotFoundError as exc:
+            self._close_cleanup()
             raise SkilltestProviderError(
                 f"could not run skilltest binary `{self._argv[0]}`: {exc}. "
                 f"Set {ENV_BIN} or pass bin=..."
@@ -84,6 +94,8 @@ class SkillStream:
                     yield StreamEvent.model_validate(obj)
                 elif kind == "result":
                     self.report = Report.model_validate(obj["report"])
+                    if self._mocks:
+                        bind_mocks(self._mocks, self.report.runs)
             await proc.wait()
             # A hard failure (bad input / provider error) once the stream ends.
             detail = ""
@@ -97,6 +109,7 @@ class SkillStream:
                 proc.kill()
                 with contextlib.suppress(ProcessLookupError):
                     await proc.wait()
+            self._close_cleanup()
 
 
 def stream_skill(
@@ -110,19 +123,29 @@ def stream_skill(
     max_turns: int | None = None,
     config: str | Path | None = None,
     cwd: str | Path | None = None,
+    mocks: Sequence[ToolSpy] = (),
 ) -> SkillStream:
     """Start a streaming run and return a [`SkillStream`] to iterate. Same
-    arguments as [`run_skill`][skilltest_sdk.runner.run_skill]; the run does not
-    begin until iteration starts."""
-    argv = build_run_argv(
-        case,
-        bin=bin,
-        provider=provider,
-        platforms=platforms,
-        models=models,
-        judge_model=judge_model,
-        max_turns=max_turns,
-        config=config,
-        fmt="json-stream",
-    )
-    return SkillStream(argv, str(cwd) if cwd is not None else None)
+    arguments as [`run_skill`][skilltest_sdk.runner.run_skill] — including
+    ``mocks``, whose objects bind when the stream runs to completion (an
+    aborted stream leaves them unbound); the run does not begin until
+    iteration starts."""
+    # The temp mocks file must outlive the subprocess, which starts lazily on
+    # iteration — materialize the flags now and keep them alive on the stream.
+    with contextlib.ExitStack() as stack:
+        mock_args = stack.enter_context(mock_run_args(mocks))
+        argv = build_run_argv(
+            case,
+            bin=bin,
+            provider=provider,
+            platforms=platforms,
+            models=models,
+            judge_model=judge_model,
+            max_turns=max_turns,
+            config=config,
+            fmt="json-stream",
+            mock_args=mock_args,
+        )
+        stream = SkillStream(argv, str(cwd) if cwd is not None else None, mocks)
+        stream._cleanup = stack.pop_all()
+        return stream

@@ -35,15 +35,63 @@ class NumericDetail(BaseModel):
     value: float
 
 
+class CallsDetail(BaseModel):
+    """
+    The deterministic `called`/`not_called` verdict: how many observed calls
+    matched, against what expectation.
+    """
+
+    count: int = Field(..., description="Matching calls observed.", ge=0)
+    kind: Literal["calls"]
+    negated: bool | None = Field(
+        False, description="True for `not_called` (the eval required absence)."
+    )
+    times: int | None = Field(
+        None,
+        description='The exact count required (`times`); `null` means "at least one"\n(or, with `negated`, "none").',
+        ge=0,
+    )
+
+
 class EvalOutcome(BaseModel):
     """
     The result of running one eval against a transcript.
     """
 
-    detail: BooleanDetail | NumericDetail = Field(..., description="Kind-specific verdict detail.")
+    detail: BooleanDetail | NumericDetail | CallsDetail = Field(
+        ..., description="Kind-specific verdict detail."
+    )
     label: str = Field(..., description="The eval's label (name or criterion).")
     passed: bool = Field(..., description="Whether the eval passed.")
     reason: str = Field(..., description="The judge's stated reason.")
+
+
+class MockCall(BaseModel):
+    """
+    One observed tool call, as recorded by the mock/spy channel: the harness
+    hook's spy log for real runs, or the provider's `mock_calls` response for
+    the command protocol. Carries the **original, pre-rewrite** input — the
+    transcript's `events` show post-rewrite reality (the stub that actually
+    ran); this shows what the skill *attempted*.
+    """
+
+    action: str = Field(
+        ...,
+        description="The verdict applied: `allow` (fell through every rule), `deny`,\n`rewrite`, or `stub`.",
+    )
+    input: Any | None = Field(
+        None, description="The tool's original input arguments; `null` when the event carried none."
+    )
+    mock: str | None = Field(
+        None,
+        description="Name of the mock declaration the intercepting rule came from; `null`\nfor `allow`. Filled by the runner, so SDKs bind records to mock objects\nby name instead of re-deriving rule indices.",
+    )
+    rule: int | None = Field(
+        None, description="Index of the compiled rule that intercepted; `null` for `allow`.", ge=0
+    )
+    tool: str | None = Field(
+        None, description="Tool name as the harness reported it; `null` when the event named none."
+    )
 
 
 class ToolEvent(BaseModel):
@@ -140,6 +188,10 @@ class CaseRun(BaseModel):
 
     case: str = Field(..., description="The test case name.")
     evals: list[EvalOutcome] = Field(..., description="Per-eval outcomes, in declaration order.")
+    mock_calls: list[MockCall] | None = Field(
+        None,
+        description='Every tool call the mock/spy channel observed, in order, with the\noriginal (pre-rewrite) input and the verdict applied. `null` when the\nchannel was off for this run (no `mocks`, no `spy`); an empty array\nmeans the channel was on and the skill made no tool calls — SDKs use\nthat distinction so a spy on a channel-less run errs instead of reading\nas "zero calls".',
+    )
     model: str = Field(..., description="The model this run used.")
     passed: bool = Field(..., description="True iff every eval in this run passed.")
     platform: str = Field(..., description="The harness platform this run used.")

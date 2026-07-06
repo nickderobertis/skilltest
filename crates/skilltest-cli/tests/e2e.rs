@@ -103,7 +103,7 @@ fn running_a_directory_discovers_and_aggregates_every_case() {
     let out = run_case(fixtures().join("cases"), &["--format", "json"]);
     assert_eq!(out.status.code(), Some(1));
     let report = json(&out);
-    assert_eq!(report["summary"]["runs"], 5);
+    assert_eq!(report["summary"]["runs"], 8);
     assert!(report["summary"]["failed"].as_u64().unwrap() >= 1);
 }
 
@@ -364,4 +364,167 @@ fn init_refuses_to_overwrite() {
         stderr.contains("overwrite"),
         "explains the refusal: {stderr}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Tool mocking and spying (the `mocks:` block, `--mocks`, `--spy`, and the
+// deterministic `called`/`not_called` evals) — driven end to end through the
+// fake provider, which applies the same compiled ruleset the oneharness hook
+// would (one shared decision engine in skilltest-core).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn mock_stub_intercepts_and_call_evals_pass() {
+    let out = run_case(case("mock_stub.yaml"), &["--format", "json"]);
+    assert!(
+        out.status.success(),
+        "expected exit 0; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report = json(&out);
+    assert_eq!(report["passed"], Value::Bool(true));
+
+    // The channel recorded every call with its ORIGINAL input and verdict; the
+    // intercepting rule is resolved to its mock's name.
+    let records = report["runs"][0]["mock_calls"]
+        .as_array()
+        .expect("mock_calls present when mocks are declared");
+    assert_eq!(records.len(), 3, "push + status + rm: {records:?}");
+    assert_eq!(records[0]["action"], "stub");
+    assert_eq!(records[0]["mock"], "push");
+    assert_eq!(records[0]["input"]["command"], "git push origin main");
+    assert_eq!(records[1]["action"], "allow");
+    assert!(records[1]["mock"].is_null());
+
+    // Transcript events show post-rewrite reality: the stubbed call became the
+    // safely-quoted printf, while the spy log (above) kept the original.
+    let events = report["runs"][0]["transcript"]["messages"][1]["events"]
+        .as_array()
+        .expect("assistant turn carries events");
+    let stubbed = events[0]["input"]["command"].as_str().unwrap();
+    assert!(
+        stubbed.starts_with("printf") && stubbed.contains("Everything up-to-date"),
+        "post-rewrite event shows the stub: {stubbed}"
+    );
+
+    // The canned output surfaced to the model (the boolean eval judged it) and
+    // the deterministic evals carry the calls detail.
+    let evals = report["runs"][0]["evals"].as_array().unwrap();
+    assert_eq!(evals.len(), 4);
+    assert_eq!(evals[1]["detail"]["kind"], "calls");
+    assert_eq!(evals[1]["detail"]["count"], 1);
+    assert_eq!(evals[3]["detail"]["negated"], true);
+}
+
+#[test]
+fn mock_violation_fails_not_called_and_reports_the_call() {
+    let out = run_case(case("mock_violation.yaml"), &["--format", "json"]);
+    assert_eq!(out.status.code(), Some(1), "a violated expectation exits 1");
+    let report = json(&out);
+    assert_eq!(report["passed"], Value::Bool(false));
+    let eval = &report["runs"][0]["evals"][0];
+    assert_eq!(eval["passed"], Value::Bool(false));
+    assert_eq!(eval["detail"]["kind"], "calls");
+    assert_eq!(eval["detail"]["count"], 1);
+    assert_eq!(eval["detail"]["negated"], true);
+    // The failure reason shows the offending call and its verdict, so the
+    // report alone diagnoses it.
+    let reason = eval["reason"].as_str().unwrap();
+    assert!(
+        reason.contains("rm -rf") && reason.contains("[deny]"),
+        "reason: {reason}"
+    );
+}
+
+#[test]
+fn invalid_mock_pattern_is_a_usage_error() {
+    // An invalid regex must abort at load (exit 2) — never degrade to a rule
+    // that silently matches nothing.
+    let dir = unique_dir("mock-badregex");
+    let case_path = dir.join("bad.yaml");
+    std::fs::write(
+        &case_path,
+        format!(
+            "skill: {}\ninput: deploy\nmocks:\n  - name: bad\n    match: {{ pattern: \"git push(\" }}\n    stub: x\nevals:\n  - type: boolean\n    criterion: ok\n",
+            fixtures().join("skills/deployer").display()
+        ),
+    )
+    .unwrap();
+    let out = run_case(case_path, &["--format", "json"]);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("not a valid regex"), "stderr: {stderr}");
+}
+
+#[test]
+fn unknown_mock_reference_is_a_usage_error_listing_names() {
+    // A `called` eval naming a mock that doesn't exist is a loud usage error
+    // that lists what is declared — a typo must never match nothing.
+    let dir = unique_dir("mock-unknown");
+    let case_path = dir.join("typo.yaml");
+    std::fs::write(
+        &case_path,
+        format!(
+            "skill: {}\ninput: deploy\nmocks:\n  - name: push\n    match: {{ contains: \"git push\" }}\n    stub: ok\nevals:\n  - type: called\n    mock: psuh\n",
+            fixtures().join("skills/deployer").display()
+        ),
+    )
+    .unwrap();
+    let out = run_case(case_path, &["--format", "json"]);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("unknown mock `psuh`") && stderr.contains("push"),
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
+fn cli_mocks_file_applies_shared_declarations_to_every_case() {
+    // Code-level mocks (what the SDKs send) ride `--mocks <file>`: the case
+    // declares none itself, yet the shared stub intercepts and its name
+    // resolves for the case's `called` eval.
+    let dir = unique_dir("mock-clifile");
+    let mocks_path = dir.join("mocks.yaml");
+    std::fs::write(
+        &mocks_path,
+        "- name: push\n  match: { tool: bash, pattern: \"git push( --force)?\\\\b\" }\n  stub: Everything up-to-date\n",
+    )
+    .unwrap();
+    let case_path = dir.join("shared.yaml");
+    std::fs::write(
+        &case_path,
+        format!(
+            "skill: {}\ninput: deploy\nevals:\n  - type: called\n    mock: push\n    times: 1\n",
+            fixtures().join("skills/deployer").display()
+        ),
+    )
+    .unwrap();
+    let out = run_case(
+        case_path,
+        &["--mocks", mocks_path.to_str().unwrap(), "--format", "json"],
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report = json(&out);
+    assert_eq!(report["runs"][0]["mock_calls"][0]["mock"], "push");
+}
+
+#[test]
+fn spy_flag_records_calls_without_any_mocks() {
+    // `--spy` turns the observation channel on for a case with no mocks: the
+    // report gains `mock_calls` (all `allow`), and without the flag the field
+    // stays null — "channel off" and "zero calls" are distinguishable.
+    let with_spy = run_case(case("tool_events.yaml"), &["--spy", "--format", "json"]);
+    assert!(with_spy.status.success());
+    let report = json(&with_spy);
+    let records = report["runs"][0]["mock_calls"].as_array().unwrap();
+    assert!(!records.is_empty());
+    assert!(records.iter().all(|r| r["action"] == "allow"));
+
+    let without = run_case(case("tool_events.yaml"), &["--format", "json"]);
+    assert!(json(&without)["runs"][0]["mock_calls"].is_null());
 }

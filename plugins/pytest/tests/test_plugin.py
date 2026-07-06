@@ -90,3 +90,18 @@ def test_collected_case_failure_reports_judge_reason(pytester: pytest.Pytester) 
     result = pytester.runpytest_subprocess()
     result.assert_outcomes(failed=1)
     result.stdout.fnmatch_lines(["*skilltest case failed:*", "*says-goodbye*"])
+
+
+def test_mock_api_is_reexported_and_binds(cases: Path) -> None:
+    # The mock/spy API rides the one-dependency re-export; code-level mocks
+    # intercept and bind through the plugin's SDK exactly as through the SDK.
+    from skilltest_pytest import contains, matching, run_skill, spy, stub
+
+    push = stub(pattern=r"git push( --force)?\b", output="Everything up-to-date")
+    git = spy(tool="bash", pattern=r"\bgit\b")
+    report = run_skill(cases / "deploy_plain.yaml", mocks=[push, git])
+    assert report.passed
+    push.assert_called_once()
+    assert push.calls[0].command == "git push origin main"
+    git.assert_called_with(command=contains("git status"))
+    git.where(command=matching(r"\bsudo\b")).assert_not_called()

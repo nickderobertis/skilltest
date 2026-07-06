@@ -89,6 +89,35 @@ skilltest run cases/greet.yaml -p claude-code -m sonnet
 Multi-turn cases add a `user:` block with a persona and a `done_when` condition;
 skilltest drives the simulated user until it holds (or `max_turns`).
 
+**Mock and spy on tool calls** (sinon's vocabulary, delivered per run through
+each harness's own hook protocol — no permanent config mutation): a `mocks:`
+entry with a `stub`/`deny`/`rewrite` action intercepts matching calls inside
+the real harness; one without an action is a spy that only observes. The
+deterministic `called`/`not_called` evals then assert on what the skill
+*attempted* — no judge, no flakiness:
+
+```yaml
+mocks:
+  - name: push
+    match: { tool: bash, pattern: "git push( --force)?\\b" }
+    stub: Everything up-to-date        # canned result; nothing real runs
+  - name: danger
+    match: { contains: "rm -rf" }
+    deny: destructive commands are blocked
+evals:
+  - type: boolean
+    criterion: "reports the deploy as already up to date"
+  - type: called
+    mock: push
+    times: 1
+  - type: not_called
+    mock: danger
+```
+
+The report's `mock_calls` records every observed call with its **original**
+input and verdict (the transcript's `events` show what actually ran instead).
+A harness that cannot express a requested verb fails loudly, never silently.
+
 Validate skill definitions:
 
 ```bash
@@ -124,6 +153,25 @@ def test_greeter():
     assert "Dr. Smith" in assistant_text(report.runs[0].transcript)
 ```
 
+Code-level mocks and spies are objects you hold and assert on directly
+(`vi.fn()`/`unittest.mock` semantics, without the exact-args defaults or the
+typo-swallowing `Mock`):
+
+```python
+from skilltest_pytest import run_skill, spy, stub, contains, matching
+
+def test_deploy_is_mocked():
+    push = stub(pattern=r"git push( --force)?\b", output="Everything up-to-date")
+    git = spy(tool="bash", pattern=r"\bgit\b")
+
+    run_skill("cases/deploy.skilltest.yaml", mocks=[push, git])
+
+    push.assert_called_once()
+    assert "origin" in push.calls[0].command          # original, pre-rewrite input
+    git.assert_called_with(command=contains("git status"))
+    git.where(command=matching(r"\bsudo\b")).assert_not_called()
+```
+
 **vitest** ([`plugins/vitest`](plugins/vitest)):
 
 ```ts
@@ -135,6 +183,27 @@ test("greeter", async () => {
   expect(assistantText(report.runs[0]!.transcript)).toContain("Dr. Smith");
 });
 ```
+
+```ts
+import { runSkill, spy, stub, matching } from "@skill-test/vitest";
+
+test("deploy is mocked", async () => {
+  const push = stub({ pattern: /git push( --force)?\b/, output: "Everything up-to-date" });
+  const git = spy({ tool: "bash", pattern: /\bgit\b/ });
+
+  await runSkill("cases/deploy.skilltest.yaml", { mocks: [push, git] });
+
+  expect(push.callCount).toBe(1);
+  expect(push.calls[0]!.command).toContain("origin"); // original, pre-rewrite input
+  expect(git.where({ command: matching(/\bsudo\b/) }).called).toBe(false);
+});
+```
+
+A **mock** compiles into the hook-side ruleset that runs inside the harness
+(Rust-regex, `contains()`/`matching()` predicates only); a **spy** filters the
+returned records locally, so its patterns are your language's native regex and
+`where()` accepts arbitrary predicates. Reading a spy that was never passed to
+a run throws — "no run yet" never reads as "zero calls".
 
 ### Inspect tool use, and stream
 
@@ -168,7 +237,9 @@ async def guard():
 ```
 
 TypeScript mirrors both — `toolCalls(transcript)` and `streamSkill(...)`
-(a `for await` of events; `break` to short-circuit).
+(a `for await` of events; `break` to short-circuit). Note the two views differ
+under mocking: `events` show post-rewrite reality (the stub that actually ran),
+while a mock/spy's `.calls` keep the skill's original attempt.
 
 ## How it works
 
