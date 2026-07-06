@@ -14,6 +14,7 @@ from skilltest_sdk import (
     describe_failures,
     failed_evals,
     run_skill,
+    tool_calls,
     validate_skill,
 )
 
@@ -24,6 +25,13 @@ def test_happy_path_passes_and_exposes_transcript(cases: Path) -> None:
     assert report.summary.runs == 1
     # Deterministic mix-in check on top of the natural-language evals.
     assert "Dr. Smith" in assistant_text(report.runs[0].transcript)
+
+
+def test_tool_calls_are_exposed_for_analysis(cases: Path) -> None:
+    report = run_skill(cases / "tool_events.yaml")
+    calls = tool_calls(report.runs[0].transcript)
+    assert [c.name for c in calls] == ["edit_file", "bash"]
+    assert calls[1].input == {"command": 'git commit -m "update config"'}
 
 
 def test_numeric_eval_detail_is_typed(cases: Path) -> None:

@@ -10,13 +10,14 @@
 //! used by the gate and any custom provider you write. The [`Provider`] trait
 //! also lets the runner be unit-tested against an in-memory fake.
 
-use std::io::Write as _;
+use std::io::{BufRead as _, BufReader, Write as _};
+use std::ops::ControlFlow;
 use std::process::{Command, Stdio};
 
 use serde::{Deserialize, Serialize};
 
 use crate::config::{ApiJudgeConfig, ApiVendor, OneharnessConfig};
-use crate::conversation::{Message, Role};
+use crate::conversation::{Message, Role, ToolEvent};
 use crate::error::{Error, Result};
 use crate::eval::JudgeValue;
 
@@ -100,6 +101,11 @@ pub struct AssistantTurn {
     /// continue the same conversation against the real harness (only some
     /// harnesses expose this — see `OneharnessProvider::supports_resume`).
     pub session_id: Option<String>,
+    /// Normalized tool events the skill took this turn (shell commands, file
+    /// edits, tool uses), from oneharness `--events`. Empty when the harness
+    /// exposed no tool transcript. Attached to the assistant message so consumers
+    /// can analyze — and stream — what the skill *did*.
+    pub events: Vec<ToolEvent>,
 }
 
 /// A simulated-user turn produced by the provider.
@@ -137,6 +143,36 @@ pub trait Provider {
         messages: &[Message],
         session: Option<&str>,
     ) -> Result<AssistantTurn>;
+
+    /// Like [`Provider::respond`], but delivers each normalized tool event to
+    /// `on_event` as it is observed, so a caller can stream events live and
+    /// short-circuit. `on_event` returns [`ControlFlow::Break`] to abort the
+    /// turn — the provider tears down the harness and returns the partial turn.
+    ///
+    /// The default implementation runs the buffered [`Provider::respond`] and
+    /// replays the finished turn's events once; providers that can stream (like
+    /// [`OneharnessProvider`], via `oneharness --stream`) override it so events
+    /// arrive — and an abort takes effect — mid-turn.
+    ///
+    /// # Errors
+    /// [`Error::Provider`] if the command fails or returns malformed output.
+    fn respond_streaming(
+        &self,
+        platform: &str,
+        model: &str,
+        skill: &SkillRef<'_>,
+        messages: &[Message],
+        session: Option<&str>,
+        on_event: &mut dyn FnMut(&ToolEvent) -> ControlFlow<()>,
+    ) -> Result<AssistantTurn> {
+        let turn = self.respond(platform, model, skill, messages, session)?;
+        for event in &turn.events {
+            if on_event(event).is_break() {
+                break;
+            }
+        }
+        Ok(turn)
+    }
 
     /// Produce one simulated-user turn.
     ///
@@ -212,6 +248,10 @@ struct RespondPayload {
     usage: Option<Usage>,
     #[serde(default)]
     session_id: Option<String>,
+    /// Optional normalized tool events a custom provider may report (parallel to
+    /// oneharness's `events`); absent/`null` when the provider surfaces none.
+    #[serde(default)]
+    events: Option<Vec<ToolEvent>>,
 }
 
 #[derive(Deserialize)]
@@ -346,6 +386,7 @@ impl Provider for CommandProvider {
             done: payload.done,
             usage: payload.usage,
             session_id: payload.session_id,
+            events: payload.events.unwrap_or_default(),
         })
     }
 
@@ -395,9 +436,9 @@ impl Provider for CommandProvider {
 // ---------------------------------------------------------------------------
 
 /// The default [`Provider`]: runs each prompt on a harness through the
-/// `oneharness` CLI.
+/// `oneharness` CLI (targets **v0.3.6+**).
 ///
-/// Wires four real oneharness features that ship in v0.2.0:
+/// Wires five real oneharness features:
 ///
 /// * `--system <skill instructions>` — the skill becomes a *real* system prompt
 ///   on the underlying harness (e.g. `--append-system-prompt` for claude-code),
@@ -408,11 +449,20 @@ impl Provider for CommandProvider {
 ///   transcript. Used only for harnesses that report `supports_resume` in the
 ///   registry (claude-code, opencode, cursor today); other harnesses fall back
 ///   to the inline-transcript path.
+/// * `--events` — normalized tool events (`{kind, name, input, output, index}`)
+///   lifted from each harness's transcript, so consumers can analyze *what the
+///   skill did*, not just its final text. Attached to the assistant turn.
 /// * Normalized `usage` (`input_tokens`, `output_tokens`, `cost_usd`) — surfaced
 ///   on every turn so cross-model cost reporting is portable.
 /// * Normalized `failure_kind` (`auth`, `rate_limit`, `model_not_found`, …) —
 ///   classified provider errors so the CLI can distinguish a broken environment
 ///   from a broken skill.
+///
+/// Note on approval mode: skilltest deliberately passes **no `--mode`** flag, so
+/// oneharness applies its own default (v0.3.0+ normalized approval modes). Users
+/// who need a different mode — e.g. `bypass` to let the skill take every action
+/// without prompting — configure it through oneharness's own config
+/// (`ONEHARNESS_MODE` / its config file), keeping approval policy in one place.
 ///
 /// Evals and the simulated user always run on the configured `judge_harness`,
 /// independent of the harness under test, so the evaluator does not drift with
@@ -450,6 +500,10 @@ struct OhResult {
     session_id: Option<String>,
     #[serde(default)]
     usage: Option<Usage>,
+    /// Normalized tool events oneharness lifted from the harness transcript (its
+    /// `--events` output); `null`/absent when the harness exposes none.
+    #[serde(default)]
+    events: Option<Vec<ToolEvent>>,
     #[serde(default)]
     failure_kind: Option<String>,
 }
@@ -472,6 +526,7 @@ struct RunOutcome {
     text: String,
     session_id: Option<String>,
     usage: Option<Usage>,
+    events: Vec<ToolEvent>,
 }
 
 /// Choose the harness's reply text: oneharness's extracted `text` when non-empty,
@@ -509,11 +564,24 @@ impl OneharnessProvider {
         // extracts the reply accordingly. Forcing `json` everywhere broke the
         // text-native harnesses — oneharness would json-extract their plain-text
         // reply and find nothing ("harness produced no extractable text").
+        //
+        // `--events` asks oneharness to surface normalized tool events. It is safe
+        // for text extraction: oneharness only upgrades a harness whose default
+        // format carries no tool transcript to its events-capable format
+        // (claude→stream-json, codex→exec --json, qwen→stream-json) and still
+        // extracts the reply from it; harnesses whose default already carries a
+        // transcript (opencode, cursor) or expose none (goose/crush/copilot) are
+        // left on their default. So the reply keeps working everywhere and
+        // `events` is populated wherever the harness can express it.
+        //
+        // No `--mode`: oneharness applies its own default approval mode; users
+        // tune it (e.g. `bypass`) via oneharness config, not from here.
         cmd.args([
             "run",
             "--harness",
             args.harness,
             "--compact",
+            "--events",
             "--timeout",
             &timeout,
             "--prompt-file",
@@ -607,6 +675,180 @@ impl OneharnessProvider {
             text,
             session_id: result.session_id,
             usage: result.usage,
+            events: result.events.unwrap_or_default(),
+        })
+    }
+
+    /// Like [`OneharnessProvider::run`], but drives `oneharness run --stream`,
+    /// forwarding each normalized tool event to `on_event` the instant it is
+    /// observed. When `on_event` returns [`ControlFlow::Break`], the oneharness
+    /// child is killed — closing its stream tears the harness down, so a bad turn
+    /// is cut off instead of paid for in full — and the partial outcome (the
+    /// events seen so far) is returned.
+    fn run_streaming(
+        &self,
+        args: &RunArgs<'_>,
+        on_event: &mut dyn FnMut(&ToolEvent) -> ControlFlow<()>,
+    ) -> Result<RunOutcome> {
+        let timeout = self.timeout_secs.to_string();
+        let mut cmd = Command::new(&self.bin);
+        // `--stream` emits NDJSON: one `{"type":"event",…}` line per tool event
+        // as observed, then a terminal `{"type":"result","report":{…}}`. It
+        // implies `--events`; no `--compact` (the stream is line-oriented) and no
+        // `--mode` (oneharness's default applies — see `run`).
+        cmd.args([
+            "run",
+            "--harness",
+            args.harness,
+            "--stream",
+            "--events",
+            "--timeout",
+            &timeout,
+            "--prompt-file",
+            "-",
+        ]);
+        if !args.model.is_empty() {
+            cmd.args(["--model", args.model]);
+        }
+        if let Some(system) = args.system {
+            cmd.args(["--system", system]);
+        }
+        if let Some(resume) = args.resume {
+            cmd.args(["--resume", resume]);
+        }
+
+        let mut child = cmd
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| {
+                Error::provider(
+                    "oneharness",
+                    format!(
+                        "could not run `{}`: {e}. Is oneharness installed and on PATH?",
+                        self.bin
+                    ),
+                )
+            })?;
+
+        // Write the prompt and close stdin so oneharness starts, then read its
+        // NDJSON incrementally — events arrive live and we never deadlock on a
+        // full stdout pipe.
+        {
+            let mut stdin = child
+                .stdin
+                .take()
+                .ok_or_else(|| Error::provider("oneharness", "could not open oneharness stdin"))?;
+            stdin.write_all(args.prompt.as_bytes()).map_err(|e| {
+                Error::provider("oneharness", format!("could not write prompt: {e}"))
+            })?;
+        }
+
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| Error::provider("oneharness", "could not open oneharness stdout"))?;
+        let reader = BufReader::new(stdout);
+
+        let mut events: Vec<ToolEvent> = Vec::new();
+        let mut result_env: Option<OhEnvelope> = None;
+        let mut aborted = false;
+
+        for line in reader.lines() {
+            let line = line.map_err(|e| {
+                Error::provider("oneharness", format!("could not read stream: {e}"))
+            })?;
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            // Tolerate non-JSON log lines interleaved on the stream.
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) else {
+                continue;
+            };
+            match value.get("type").and_then(serde_json::Value::as_str) {
+                Some("event") => {
+                    if let Ok(event) = serde_json::from_value::<ToolEvent>(value["event"].clone()) {
+                        let flow = on_event(&event);
+                        events.push(event);
+                        if flow.is_break() {
+                            aborted = true;
+                            let _ = child.kill();
+                            break;
+                        }
+                    }
+                }
+                Some("result") => {
+                    if let Ok(env) = serde_json::from_value::<OhEnvelope>(value["report"].clone()) {
+                        result_env = Some(env);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let output = child.wait_with_output().map_err(|e| {
+            Error::provider("oneharness", format!("oneharness did not complete: {e}"))
+        })?;
+
+        if aborted {
+            // Torn down on purpose; return the partial turn (events seen so far).
+            return Ok(RunOutcome {
+                text: String::new(),
+                session_id: None,
+                usage: None,
+                events,
+            });
+        }
+
+        let envelope = result_env.ok_or_else(|| {
+            Error::provider(
+                "oneharness",
+                format!(
+                    "oneharness stream produced no result; stderr: {}",
+                    String::from_utf8_lossy(&output.stderr).trim()
+                ),
+            )
+        })?;
+        let result = envelope
+            .results
+            .into_iter()
+            .next()
+            .ok_or_else(|| Error::provider("oneharness", "oneharness returned no results"))?;
+        if result.status != "ok" {
+            let detail = result
+                .error
+                .filter(|e| !e.is_empty())
+                .or_else(|| Some(result.stderr.clone()).filter(|s| !s.is_empty()))
+                .unwrap_or_else(|| format!("status `{}`", result.status));
+            let context = format!("oneharness:{}", args.harness);
+            let message = format!("harness run failed: {detail}");
+            return Err(match result.failure_kind {
+                Some(kind) if !kind.is_empty() => {
+                    Error::provider_classified(context, message, kind)
+                }
+                _ => Error::provider(context, message),
+            });
+        }
+        let text = select_reply_text(result.text, &result.stdout).ok_or_else(|| {
+            Error::provider(
+                format!("oneharness:{}", args.harness),
+                "harness produced neither extractable text nor stdout",
+            )
+        })?;
+        // Prefer the events we streamed; fall back to the result's events only if
+        // the stream carried none.
+        let events = if events.is_empty() {
+            result.events.unwrap_or_default()
+        } else {
+            events
+        };
+        Ok(RunOutcome {
+            text,
+            session_id: result.session_id,
+            usage: result.usage,
+            events,
         })
     }
 }
@@ -641,6 +883,40 @@ impl Provider for OneharnessProvider {
             done: false,
             usage: outcome.usage,
             session_id: outcome.session_id,
+            events: outcome.events,
+        })
+    }
+
+    fn respond_streaming(
+        &self,
+        platform: &str,
+        model: &str,
+        skill: &SkillRef<'_>,
+        messages: &[Message],
+        session: Option<&str>,
+        on_event: &mut dyn FnMut(&ToolEvent) -> ControlFlow<()>,
+    ) -> Result<AssistantTurn> {
+        let prompt = if session.is_some() {
+            latest_user_message(messages).unwrap_or_default()
+        } else {
+            render_transcript_for_respond(messages)
+        };
+        let outcome = self.run_streaming(
+            &RunArgs {
+                harness: platform,
+                model,
+                prompt: &prompt,
+                system: Some(skill.instructions),
+                resume: session,
+            },
+            on_event,
+        )?;
+        Ok(AssistantTurn {
+            message: outcome.text.trim().to_string(),
+            done: false,
+            usage: outcome.usage,
+            session_id: outcome.session_id,
+            events: outcome.events,
         })
     }
 
@@ -1988,6 +2264,214 @@ mod tests {
             assert_eq!(turn.message, "hello back");
             assert_eq!(turn.session_id.as_deref(), Some("oh1"));
             assert_eq!(turn.usage.unwrap().input_tokens, Some(5));
+            assert!(turn.events.is_empty());
+        }
+
+        #[test]
+        fn oneharness_respond_surfaces_normalized_events() {
+            // oneharness `--events` populates a per-result `events` array; the
+            // provider lifts it onto the assistant turn so consumers can analyze
+            // what the skill did.
+            let bin = script(
+                "oh-events",
+                "cat >/dev/null\necho '{\"results\":[{\"status\":\"ok\",\
+                 \"text\":\"done\",\"events\":[{\"kind\":\"tool_call\",\"name\":\"bash\",\
+                 \"input\":{\"command\":\"git commit -m x\"},\"output\":\"ok\",\"index\":0}]}]}'\n",
+            );
+            let turn = oh_provider(bin)
+                .respond(
+                    "claude-code",
+                    "sonnet",
+                    &skill_ref(),
+                    &[Message::user("hi")],
+                    None,
+                )
+                .unwrap();
+            assert_eq!(turn.events.len(), 1);
+            assert_eq!(turn.events[0].kind, "tool_call");
+            assert_eq!(turn.events[0].name.as_deref(), Some("bash"));
+            assert_eq!(
+                turn.events[0].input,
+                Some(serde_json::json!({"command": "git commit -m x"}))
+            );
+            assert_eq!(turn.events[0].output.as_deref(), Some("ok"));
+        }
+
+        #[test]
+        fn oneharness_respond_events_absent_is_empty_not_error() {
+            // A harness that exposes no tool transcript yields no `events`; the
+            // turn simply carries an empty list (never an error).
+            let bin = script(
+                "oh-noevents",
+                "cat >/dev/null\necho '{\"results\":[{\"status\":\"ok\",\"text\":\"hi\"}]}'\n",
+            );
+            let turn = oh_provider(bin)
+                .respond("goose", "m", &skill_ref(), &[Message::user("hi")], None)
+                .unwrap();
+            assert!(turn.events.is_empty());
+        }
+
+        #[test]
+        fn oneharness_stream_forwards_events_then_parses_the_result() {
+            // `oneharness run --stream` emits one NDJSON `{"type":"event",…}` line
+            // per tool event, then a terminal `{"type":"result","report":{…}}`.
+            // `respond_streaming` forwards each event live and returns the turn
+            // parsed from the result.
+            let bin = script(
+                "oh-stream",
+                "cat >/dev/null\n\
+                 printf '%s\\n' '{\"type\":\"event\",\"event\":{\"kind\":\"tool_call\",\
+                 \"name\":\"bash\",\"input\":{\"command\":\"ls\"},\"index\":0}}'\n\
+                 printf '%s\\n' '{\"type\":\"result\",\"report\":{\"results\":[{\"status\":\"ok\",\
+                 \"text\":\"  done  \",\"session_id\":\"s1\",\"usage\":{\"input_tokens\":7}}]}}'\n",
+            );
+            let mut seen = Vec::new();
+            let turn = oh_provider(bin)
+                .respond_streaming(
+                    "claude-code",
+                    "sonnet",
+                    &skill_ref(),
+                    &[Message::user("hi")],
+                    None,
+                    &mut |event| {
+                        seen.push(event.name.clone());
+                        ControlFlow::Continue(())
+                    },
+                )
+                .unwrap();
+            // The event was forwarded live, and the result was parsed for the turn.
+            assert_eq!(seen, vec![Some("bash".to_string())]);
+            assert_eq!(turn.message, "done");
+            assert_eq!(turn.session_id.as_deref(), Some("s1"));
+            assert_eq!(turn.usage.unwrap().input_tokens, Some(7));
+            assert_eq!(turn.events.len(), 1);
+            assert_eq!(turn.events[0].name.as_deref(), Some("bash"));
+        }
+
+        #[test]
+        fn oneharness_stream_short_circuits_on_break() {
+            // The sink breaks on the first event; the oneharness child is killed
+            // and the later events/result are never delivered. The turn carries
+            // only the events seen before the abort.
+            let bin = script(
+                "oh-stream-abort",
+                "cat >/dev/null\n\
+                 printf '%s\\n' '{\"type\":\"event\",\"event\":{\"kind\":\"tool_call\",\
+                 \"name\":\"rm\",\"input\":{\"command\":\"rm -rf /\"},\"index\":0}}'\n\
+                 printf '%s\\n' '{\"type\":\"event\",\"event\":{\"kind\":\"tool_call\",\
+                 \"name\":\"bash\",\"input\":{\"command\":\"ls\"},\"index\":1}}'\n\
+                 printf '%s\\n' '{\"type\":\"result\",\"report\":{\"results\":[{\"status\":\"ok\",\
+                 \"text\":\"done\"}]}}'\n",
+            );
+            let mut seen = 0usize;
+            let turn = oh_provider(bin)
+                .respond_streaming(
+                    "claude-code",
+                    "sonnet",
+                    &skill_ref(),
+                    &[Message::user("hi")],
+                    None,
+                    &mut |event| {
+                        seen += 1;
+                        assert_eq!(event.name.as_deref(), Some("rm"));
+                        ControlFlow::Break(())
+                    },
+                )
+                .unwrap();
+            assert_eq!(seen, 1, "aborted after the first event");
+            assert_eq!(turn.events.len(), 1);
+            assert_eq!(turn.events[0].name.as_deref(), Some("rm"));
+            // Torn off before the result line, so no reply text.
+            assert!(turn.message.is_empty());
+        }
+
+        #[test]
+        fn oneharness_stream_errors_when_no_result_line() {
+            // A stream that ends without a terminal `result` line is a protocol
+            // error (distinct from a deliberate abort).
+            let bin = script(
+                "oh-stream-noresult",
+                "cat >/dev/null\n\
+                 printf '%s\\n' '{\"type\":\"event\",\"event\":{\"kind\":\"tool_call\",\
+                 \"name\":\"bash\",\"input\":{},\"index\":0}}'\n",
+            );
+            let err = oh_provider(bin)
+                .respond_streaming(
+                    "claude-code",
+                    "sonnet",
+                    &skill_ref(),
+                    &[Message::user("hi")],
+                    None,
+                    &mut |_| ControlFlow::Continue(()),
+                )
+                .unwrap_err();
+            assert!(
+                matches!(err, Error::Provider { .. }),
+                "expected a provider error, got: {err:?}"
+            );
+        }
+
+        #[test]
+        fn oneharness_buffered_run_passes_events_and_omits_mode() {
+            // The buffered path uses `--compact --events` and — deliberately —
+            // passes no `--mode` (oneharness's default applies).
+            let bin = script(
+                "oh-args",
+                "d=$(dirname \"$0\"); printf '%s\\n' \"$@\" > \"$d/args\"\n\
+                 cat >/dev/null\necho '{\"results\":[{\"status\":\"ok\",\"text\":\"hi\"}]}'\n",
+            );
+            let dir = bin.parent().unwrap().to_path_buf();
+            oh_provider(bin)
+                .respond(
+                    "claude-code",
+                    "sonnet",
+                    &skill_ref(),
+                    &[Message::user("hi")],
+                    None,
+                )
+                .unwrap();
+            let args: Vec<String> = std::fs::read_to_string(dir.join("args"))
+                .unwrap()
+                .lines()
+                .map(str::to_string)
+                .collect();
+            assert!(args.iter().any(|a| a == "--events"), "got: {args:?}");
+            assert!(args.iter().any(|a| a == "--compact"), "got: {args:?}");
+            assert!(!args.iter().any(|a| a == "--mode"), "got: {args:?}");
+            assert!(!args.iter().any(|a| a == "--stream"), "got: {args:?}");
+        }
+
+        #[test]
+        fn oneharness_stream_run_passes_stream_and_omits_mode() {
+            // The streaming path uses `--stream --events` and — like the buffered
+            // path — passes no `--mode`.
+            let bin = script(
+                "oh-args-stream",
+                "d=$(dirname \"$0\"); printf '%s\\n' \"$@\" > \"$d/args\"\n\
+                 cat >/dev/null\n\
+                 printf '%s\\n' '{\"type\":\"result\",\"report\":{\"results\":[{\"status\":\"ok\",\
+                 \"text\":\"hi\"}]}}'\n",
+            );
+            let dir = bin.parent().unwrap().to_path_buf();
+            oh_provider(bin)
+                .respond_streaming(
+                    "claude-code",
+                    "sonnet",
+                    &skill_ref(),
+                    &[Message::user("hi")],
+                    None,
+                    &mut |_| ControlFlow::Continue(()),
+                )
+                .unwrap();
+            let args: Vec<String> = std::fs::read_to_string(dir.join("args"))
+                .unwrap()
+                .lines()
+                .map(str::to_string)
+                .collect();
+            assert!(args.iter().any(|a| a == "--stream"), "got: {args:?}");
+            assert!(args.iter().any(|a| a == "--events"), "got: {args:?}");
+            assert!(!args.iter().any(|a| a == "--mode"), "got: {args:?}");
+            assert!(!args.iter().any(|a| a == "--compact"), "got: {args:?}");
         }
 
         #[test]

@@ -104,10 +104,41 @@ def run_skill(
     the caller can assert and inspect. Only bad input ([`SkilltestUsageError`])
     and provider failures ([`SkilltestProviderError`]) raise.
     """
+    argv = build_run_argv(
+        case,
+        bin=bin,
+        provider=provider,
+        platforms=platforms,
+        models=models,
+        judge_model=judge_model,
+        max_turns=max_turns,
+        config=config,
+        fmt="json",
+    )
+    proc = _run(argv, cwd)
+    _raise_for_status(proc)
+    return _parse(Report, proc.stdout)
+
+
+def build_run_argv(
+    case: str | Path,
+    *,
+    bin: str | Path | None,
+    provider: str | Sequence[str] | None,
+    platforms: Sequence[str],
+    models: Sequence[str],
+    judge_model: str | None,
+    max_turns: int | None,
+    config: str | Path | None,
+    fmt: str,
+) -> list[str]:
+    """Build the ``skilltest run`` argv for output format ``fmt`` (``json`` for the
+    buffered API, ``json-stream`` for the streaming API). Internal, shared by
+    ``run_skill`` and the streaming API."""
     argv = [_resolve_bin(bin)]
     if config is not None:
         argv += ["--config", str(config)]
-    argv += ["run", str(case), "--format", "json"]
+    argv += ["run", str(case), "--format", fmt]
 
     resolved_provider = _resolve_provider(provider)
     if resolved_provider is not None:
@@ -120,10 +151,7 @@ def run_skill(
         argv += ["--judge-model", judge_model]
     if max_turns is not None:
         argv += ["--max-turns", str(max_turns)]
-
-    proc = _run(argv, cwd)
-    _raise_for_status(proc)
-    return _parse(Report, proc.stdout)
+    return argv
 
 
 def validate_skill(
@@ -140,14 +168,19 @@ def validate_skill(
 
 
 def _raise_for_status(proc: subprocess.CompletedProcess[str]) -> None:
-    if proc.returncode in _REPORTING_CODES:
+    raise_for_code(proc.returncode, proc.stderr.strip() or proc.stdout.strip())
+
+
+def raise_for_code(code: int | None, detail: str) -> None:
+    """Map a skilltest exit code to an exception (shared by the buffered and
+    streaming APIs). Codes 0/1 produce a report and never raise."""
+    if code in _REPORTING_CODES:
         return
-    detail = proc.stderr.strip() or proc.stdout.strip()
-    if proc.returncode == 2:
+    if code == 2:
         raise SkilltestUsageError(detail)
-    if proc.returncode == 3:
+    if code == 3:
         raise SkilltestProviderError(detail)
-    raise SkilltestError(f"skilltest exited {proc.returncode}: {detail}")
+    raise SkilltestError(f"skilltest exited {code}: {detail}")
 
 
 def _parse[T: BaseModel](model: type[T], stdout: str) -> T:

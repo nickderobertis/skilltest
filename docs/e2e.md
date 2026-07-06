@@ -19,7 +19,9 @@ just test-harness goose          # any harness id; skips loudly if it can't run 
 Two layers, both driving the real binary as a subprocess:
 
 - **`test-live`** — the deep, claude-code-specific Rust suite. Asserts the strict
-  `pong` reply, multi-turn roles, and normalized usage. This is what CI runs.
+  `pong` reply, multi-turn roles, normalized usage, and the real `oneharness run
+  --stream` wire (`--format json-stream` emits NDJSON events + a terminal
+  `result`). This is what CI runs.
 - **`test-harness <id>`** — the generic, allowlister-style breadth check. Runs the
   harness-agnostic `tests/fixtures/live/cases/smoke.yaml` and asserts the run
   passed and the reply contained `pong`. The judge is always a **fixed**

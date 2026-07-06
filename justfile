@@ -120,9 +120,10 @@ upgrade:
 # `oneharness`; install it first with `just install-oneharness`. See docs/e2e.md.
 
 # Install the prebuilt oneharness the live e2e drives (verifies the checksum).
-# v0.2.1 first drove codex/goose (not just claude-code); v0.2.37 extracts
-# OpenCode's final text from its JSONL and ships qwen's yolo-warning suppression.
-install-oneharness version="v0.2.37":
+# v0.2.37 extracted OpenCode's final text from its JSONL; v0.3.6 adds the
+# normalized `--events` and `--stream` the provider now uses (keep this in
+# lockstep with `default_version` in scripts/install-oneharness.sh).
+install-oneharness version="v0.3.6":
     @bash scripts/install-oneharness.sh {{version}}
 
 # Deep live suite against real oneharness + claude-code (needs CLAUDE_CODE_OAUTH_TOKEN

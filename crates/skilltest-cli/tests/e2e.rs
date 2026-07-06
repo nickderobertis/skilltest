@@ -103,8 +103,113 @@ fn running_a_directory_discovers_and_aggregates_every_case() {
     let out = run_case(fixtures().join("cases"), &["--format", "json"]);
     assert_eq!(out.status.code(), Some(1));
     let report = json(&out);
-    assert_eq!(report["summary"]["runs"], 4);
+    assert_eq!(report["summary"]["runs"], 5);
     assert!(report["summary"]["failed"].as_u64().unwrap() >= 1);
+}
+
+#[test]
+fn tool_events_surface_on_the_assistant_turn() {
+    // The fake provider emits a normalized `tool_call` per `fake-tool:` marker in
+    // the skill; the runner lifts them onto the assistant message so consumers
+    // can analyze what the skill *did*, not just what it said.
+    let out = run_case(case("tool_events.yaml"), &["--format", "json"]);
+    assert!(out.status.success(), "expected exit 0");
+    let report = json(&out);
+    let messages = report["runs"][0]["transcript"]["messages"]
+        .as_array()
+        .expect("transcript has messages");
+    let assistant = messages
+        .iter()
+        .find(|m| m["role"] == "assistant")
+        .expect("an assistant turn");
+    let events = assistant["events"].as_array().expect("events array");
+    assert_eq!(events.len(), 2, "one event per fake-tool marker");
+    assert_eq!(events[0]["kind"], "tool_call");
+    assert_eq!(events[0]["name"], "edit_file");
+    assert_eq!(events[0]["input"]["command"], "config.yaml");
+    assert_eq!(events[1]["name"], "bash");
+    assert_eq!(
+        events[1]["input"]["command"],
+        "git commit -m \"update config\""
+    );
+}
+
+#[test]
+fn json_stream_emits_events_then_a_terminal_result() {
+    // The streaming format the SDKs consume: one NDJSON `event` line per tool
+    // event as it happens, then a terminal `result` line with the full report.
+    let out = run_case(case("tool_events.yaml"), &["--format", "json-stream"]);
+    assert!(out.status.success(), "expected exit 0");
+    let text = String::from_utf8(out.stdout).expect("stdout is utf8");
+    let lines: Vec<Value> = text
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| serde_json::from_str(l).expect("each line is one JSON object"))
+        .collect();
+    assert_eq!(lines.len(), 3, "two events then a result");
+
+    assert_eq!(lines[0]["type"], "event");
+    assert_eq!(lines[0]["case"], "tool_events");
+    assert_eq!(lines[0]["turn"], 1);
+    assert_eq!(lines[0]["event"]["name"], "edit_file");
+    assert_eq!(lines[1]["type"], "event");
+    assert_eq!(lines[1]["event"]["name"], "bash");
+
+    assert_eq!(lines[2]["type"], "result");
+    assert_eq!(lines[2]["report"]["passed"], Value::Bool(true));
+    // The terminal report carries the same events on the transcript.
+    let messages = lines[2]["report"]["runs"][0]["transcript"]["messages"]
+        .as_array()
+        .unwrap();
+    let assistant = messages.iter().find(|m| m["role"] == "assistant").unwrap();
+    assert_eq!(assistant["events"].as_array().unwrap().len(), 2);
+}
+
+#[test]
+fn json_stream_short_circuits_when_the_consumer_stops_reading() {
+    use std::io::{BufRead, BufReader};
+    use std::process::{Command, Stdio};
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    // The manytools case emits thousands of events — far more than the stdout
+    // pipe buffer holds — so a consumer that reads one line and stops leaves the
+    // CLI mid-write. Its broken-pipe path must then tear the run down and exit,
+    // rather than block forever.
+    let case = fixtures().join("stream/manytools.yaml");
+    let mut child = Command::new(skilltest())
+        .arg("run")
+        .arg(&case)
+        .args(["--format", "json-stream"])
+        .arg("--provider")
+        .arg(fake_provider())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("skilltest spawns");
+
+    {
+        // Read a single event line, then drop the reader (close the read end).
+        let stdout = child.stdout.take().expect("piped stdout");
+        let mut reader = BufReader::new(stdout);
+        let mut line = String::new();
+        reader.read_line(&mut line).expect("reads one line");
+        assert!(
+            line.contains("\"type\":\"event\""),
+            "first line is an event: {line}"
+        );
+    }
+
+    // Wait for exit, with a watchdog so a hang fails the test instead of stalling
+    // the whole suite.
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(child.wait().map(|s| s.success()));
+    });
+    match rx.recv_timeout(Duration::from_secs(20)) {
+        Ok(_) => {} // exited promptly once the consumer closed the stream
+        Err(_) => panic!("CLI did not terminate after the consumer closed the stream"),
+    }
 }
 
 #[test]

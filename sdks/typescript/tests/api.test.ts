@@ -4,6 +4,8 @@ import {
   SkilltestUsageError,
   assistantText,
   runSkill,
+  streamSkill,
+  toolCalls,
   validateSkill,
 } from "../src/index.js";
 import { caseFile, requireBinaries, skillDir } from "./helpers.js";
@@ -22,6 +24,16 @@ describe("runSkill", () => {
     expect(run).toBeDefined();
     if (!run) return;
     expect(assistantText(run.transcript)).toContain("Dr. Smith");
+  });
+
+  it("exposes normalized tool calls for analysis", async () => {
+    const report = await runSkill(caseFile("tool_events.yaml"));
+    const run = report.runs[0];
+    expect(run).toBeDefined();
+    if (!run) return;
+    const calls = toolCalls(run.transcript);
+    expect(calls.map((c) => c.name)).toEqual(["edit_file", "bash"]);
+    expect(calls[1]?.input).toEqual({ command: 'git commit -m "update config"' });
   });
 
   it("returns a typed numeric detail above threshold", async () => {
@@ -44,6 +56,28 @@ describe("runSkill", () => {
     const report = await runSkill(caseFile("booking_multiturn.yaml"));
     expect(report.passed).toBe(true);
     expect(report.runs[0]?.turns).toBe(2);
+  });
+
+  it("streams tool events then exposes the report", async () => {
+    const stream = streamSkill(caseFile("tool_events.yaml"));
+    const names: (string | null | undefined)[] = [];
+    for await (const ev of stream) {
+      expect(ev.case).toBe("tool_events");
+      expect(ev.turn).toBe(1);
+      names.push(ev.event.name);
+    }
+    expect(names).toEqual(["edit_file", "bash"]);
+    expect(stream.report?.passed).toBe(true);
+  });
+
+  it("short-circuits the stream on break", async () => {
+    const stream = streamSkill(caseFile("tool_events.yaml"));
+    let seen = 0;
+    for await (const _ev of stream) {
+      seen++;
+      break; // abort after the first event
+    }
+    expect(seen).toBe(1);
   });
 
   it("throws a provider error when the provider is missing", async () => {

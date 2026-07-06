@@ -98,10 +98,40 @@ export function resolveBin(bin: string | undefined): string {
   return bin ?? process.env[ENV_BIN] ?? bundledBin() ?? "skilltest";
 }
 
-function resolveProvider(provider: string | string[] | undefined): string | undefined {
+export function resolveProvider(provider: string | string[] | undefined): string | undefined {
   const value = provider ?? process.env[ENV_PROVIDER];
   if (value === undefined) return undefined;
   return Array.isArray(value) ? value.join(" ") : value;
+}
+
+/**
+ * Build the `skilltest run` args for output format `format` (`json` for the
+ * buffered API, `json-stream` for the streaming API). Shared by {@link runSkill}
+ * and the streaming API.
+ */
+export function buildRunArgs(casePath: string, options: RunOptions, format: string): string[] {
+  const args: string[] = [];
+  if (options.config) args.push("--config", options.config);
+  args.push("run", casePath, "--format", format);
+
+  const provider = resolveProvider(options.provider);
+  if (provider !== undefined) args.push("--provider", provider);
+  for (const platform of options.platforms ?? []) args.push("--platform", platform);
+  for (const model of options.models ?? []) args.push("--model", model);
+  if (options.judgeModel) args.push("--judge-model", options.judgeModel);
+  if (options.maxTurns !== undefined) args.push("--max-turns", String(options.maxTurns));
+  return args;
+}
+
+/**
+ * Map a skilltest exit code to a thrown error (shared by the buffered and
+ * streaming APIs). Codes 0/1 produce a report and never throw.
+ */
+export function raiseForCode(code: number | null, detail: string): void {
+  if (code === 0 || code === 1 || code === null) return;
+  if (code === 2) throw new SkilltestUsageError(detail);
+  if (code === 3) throw new SkilltestProviderError(detail);
+  throw new SkilltestError(`skilltest exited ${code}: ${detail}`);
 }
 
 function capture(bin: string, args: string[], cwd: string | undefined): Promise<Captured> {
@@ -154,17 +184,7 @@ function parse<T>(stdout: string): T {
  * ({@link SkilltestProviderError}) throw.
  */
 export async function runSkill(casePath: string, options: RunOptions = {}): Promise<Report> {
-  const args: string[] = [];
-  if (options.config) args.push("--config", options.config);
-  args.push("run", casePath, "--format", "json");
-
-  const provider = resolveProvider(options.provider);
-  if (provider !== undefined) args.push("--provider", provider);
-  for (const platform of options.platforms ?? []) args.push("--platform", platform);
-  for (const model of options.models ?? []) args.push("--model", model);
-  if (options.judgeModel) args.push("--judge-model", options.judgeModel);
-  if (options.maxTurns !== undefined) args.push("--max-turns", String(options.maxTurns));
-
+  const args = buildRunArgs(casePath, options, "json");
   const result = await capture(resolveBin(options.bin), args, options.cwd);
   raiseForStatus(result);
   return parse<Report>(result.stdout);

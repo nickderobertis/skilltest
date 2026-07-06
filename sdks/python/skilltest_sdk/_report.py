@@ -2,7 +2,7 @@
 #   filename:  report.schema.json
 
 from __future__ import annotations
-from typing import Literal
+from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
@@ -46,6 +46,41 @@ class EvalOutcome(BaseModel):
     reason: str = Field(..., description="The judge's stated reason.")
 
 
+class ToolEvent(BaseModel):
+    """
+    One normalized tool-call / action event the skill took during a turn, lifted
+    from oneharness's `events` array (its `--events` output). Harness-agnostic, so
+    a consumer can inspect *what the skill did* — shell commands, file edits, tool
+    uses — across any harness, not just the final text. Mirrors the oneharness
+    action-event shape; `input` is the structured, tool-shaped args so a consumer
+    can match on the command string or file path without re-parsing.
+
+    `input` is a free-form JSON value, so `Message`/`Transcript` are `PartialEq`
+    but not `Eq`.
+    """
+
+    index: int | None = Field(
+        0,
+        description='Position within the turn, so ordering ("did X before Y") is expressible.',
+        ge=0,
+    )
+    input: Any | None = Field(
+        None,
+        description="Structured tool arguments (the command, the file path); `null` when none.",
+    )
+    kind: str = Field(
+        ...,
+        description="`tool_call` (the skill invoked a tool) or `tool_result` (the observation).",
+    )
+    name: str | None = Field(
+        None,
+        description="Normalized tool name where knowable (e.g. `bash`, `edit_file`); `null` for\na `tool_result` or when the harness did not name it.",
+    )
+    output: str | None = Field(
+        None, description="The result/observation text, when the transcript exposed it."
+    )
+
+
 class Usage(BaseModel):
     """
     Token / cost usage for one provider call.
@@ -67,6 +102,10 @@ class Message(BaseModel):
     """
 
     content: str
+    events: list[ToolEvent] | None = Field(
+        None,
+        description="The normalized tool events the skill took producing this turn (assistant\nturns only, and only when the harness exposed a tool transcript via\noneharness `--events`). Empty otherwise. Surfaced for post-hoc analysis\nand streamed live for short-circuiting.",
+    )
     role: Literal["user", "assistant", "system"] = Field(..., description="Who produced a message.")
 
 

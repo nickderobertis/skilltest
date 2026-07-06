@@ -8,11 +8,12 @@ whose eval fails — can be asserted on too.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
 
-from skilltest_pytest import describe_failures, run_skill
+from skilltest_pytest import describe_failures, run_skill, stream_skill, tool_calls
 
 SKILL_MD = """\
 ---
@@ -38,6 +39,20 @@ def test_sdk_api_is_reexported_and_works(cases: Path) -> None:
     # available straight from skilltest_pytest.
     report = run_skill(cases / "greet_pass.yaml")
     assert report.passed, describe_failures(report)
+
+
+def test_tool_events_and_streaming_reexported_and_work(cases: Path) -> None:
+    # The tool-event and streaming surfaces are re-exported from the plugin too.
+    report = run_skill(cases / "tool_events.yaml")
+    assert [c.name for c in tool_calls(report.runs[0].transcript)] == ["edit_file", "bash"]
+
+    async def go() -> list[str | None]:
+        names: list[str | None] = []
+        async for ev in stream_skill(cases / "tool_events.yaml"):
+            names.append(ev.event.name)
+        return names
+
+    assert asyncio.run(go()) == ["edit_file", "bash"]
 
 
 def test_collected_case_passes(pytester: pytest.Pytester) -> None:

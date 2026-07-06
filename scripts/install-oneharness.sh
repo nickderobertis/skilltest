@@ -21,10 +21,13 @@ set -euo pipefail
 # delivered `--system` to every harness (so codex/goose could be driven, not just
 # claude-code) and fixed the codex bypass flags; v0.2.37 extracts OpenCode's final
 # text from its JSONL (`text_source: json:opencode-parts`, so transcripts carry
-# clean text instead of raw stdout) and injects qwen's
-# `QWEN_CODE_SUPPRESS_YOLO_WARNING=1` by default. Bump here when skilltest adopts a
-# newer oneharness.
-default_version="v0.2.37"
+# clean text instead of raw stdout). v0.3.6 adds `--events` (normalized tool-call
+# events skilltest lifts onto each turn) and `--stream` (NDJSON events for the
+# streaming/short-circuit API). Note v0.3.0 normalized `--mode` approval modes
+# (breaking): skilltest passes no `--mode`, so oneharness's default applies —
+# configure approval behavior (e.g. `bypass`) via oneharness's own config. Bump
+# here when skilltest adopts a newer oneharness.
+default_version="v0.3.6"
 version="${1:-$default_version}"
 repo="nickderobertis/oneharness"
 dest="${ONEHARNESS_INSTALL_DIR:-$HOME/.local/bin}"

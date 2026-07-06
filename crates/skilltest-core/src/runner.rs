@@ -2,14 +2,39 @@
 //! provider across turns, scores the transcript with evals, and fans out over
 //! the configured platform × model matrix.
 
+use std::ops::ControlFlow;
+
 use crate::config::Config;
-use crate::conversation::{Message, Transcript};
+use crate::conversation::{Message, ToolEvent, Transcript};
 use crate::error::Result;
 use crate::eval::{Eval, JudgeValue};
 use crate::provider::{JudgeKind, JudgeQuery, Provider, SkillRef, Usage};
 use crate::report::{CaseRun, Report};
 use crate::skill::{load_skill, SkillDefinition};
 use crate::testcase::TestCase;
+
+/// One streamed tool event, tagged with the run it belongs to, delivered live to
+/// a [`Runner::run_all_streaming`] sink so a consumer can watch what a skill does
+/// and short-circuit.
+pub struct StreamEvent<'a> {
+    /// The test case's name.
+    pub case: &'a str,
+    /// The platform (harness) under test.
+    pub platform: &'a str,
+    /// The model under test.
+    pub model: &'a str,
+    /// 1-based assistant-turn index within this run.
+    pub turn: usize,
+    /// The normalized tool event.
+    pub event: &'a ToolEvent,
+}
+
+/// The streaming knobs threaded through a run: whether to drive turns live (via
+/// [`Provider::respond_streaming`]) and the sink each tool event is delivered to.
+struct Streaming<'s> {
+    on: bool,
+    sink: &'s mut (dyn FnMut(&StreamEvent) -> ControlFlow<()> + 's),
+}
 
 /// Runs test cases against a provider using a configuration.
 pub struct Runner<'a> {
@@ -31,9 +56,55 @@ impl<'a> Runner<'a> {
     /// Propagates the first [`crate::Error`] from loading a skill or a provider
     /// failure. Eval *failures* are not errors — they are recorded in the report.
     pub fn run_all(&self, cases: &[TestCase]) -> Result<Report> {
+        let mut sink = |_: &StreamEvent| ControlFlow::Continue(());
+        self.run_all_inner(
+            cases,
+            &mut Streaming {
+                on: false,
+                sink: &mut sink,
+            },
+        )
+    }
+
+    /// Like [`Runner::run_all`], but drives each turn through
+    /// [`Provider::respond_streaming`] and delivers each skill tool event to
+    /// `on_event` the instant it is observed. `on_event` returns
+    /// [`ControlFlow::Break`] to short-circuit: the current run is torn down (the
+    /// provider kills the harness), no further runs start, and the partial
+    /// [`Report`] built so far is returned.
+    ///
+    /// # Errors
+    /// As [`Runner::run_all`].
+    pub fn run_all_streaming(
+        &self,
+        cases: &[TestCase],
+        on_event: &mut dyn FnMut(&StreamEvent) -> ControlFlow<()>,
+    ) -> Result<Report> {
+        self.run_all_inner(
+            cases,
+            &mut Streaming {
+                on: true,
+                sink: on_event,
+            },
+        )
+    }
+
+    /// The matrix loop shared by the buffered and streaming entry points.
+    /// `streaming.on` selects the buffered [`Provider::respond`] (`false`) or the
+    /// live [`Provider::respond_streaming`] (`true`) per turn.
+    fn run_all_inner(&self, cases: &[TestCase], streaming: &mut Streaming) -> Result<Report> {
         let mut runs = Vec::new();
         for case in cases {
-            runs.extend(self.run_case(case)?);
+            let skill = load_skill(&case.skill)?;
+            for platform in &self.config.platforms {
+                for model in &self.config.models {
+                    let (run, flow) = self.run_case_on(case, &skill, platform, model, streaming)?;
+                    runs.push(run);
+                    if flow.is_break() {
+                        return Ok(Report::new(runs));
+                    }
+                }
+            }
         }
         Ok(Report::new(runs))
     }
@@ -45,41 +116,61 @@ impl<'a> Runner<'a> {
     pub fn run_case(&self, case: &TestCase) -> Result<Vec<CaseRun>> {
         let skill = load_skill(&case.skill)?;
         let mut runs = Vec::new();
+        let mut sink = |_: &StreamEvent| ControlFlow::Continue(());
+        let mut streaming = Streaming {
+            on: false,
+            sink: &mut sink,
+        };
         for platform in &self.config.platforms {
             for model in &self.config.models {
-                runs.push(self.run_case_on(case, &skill, platform, model)?);
+                let (run, _flow) =
+                    self.run_case_on(case, &skill, platform, model, &mut streaming)?;
+                runs.push(run);
             }
         }
         Ok(runs)
     }
 
-    /// Run a single case on one platform/model pair.
+    /// Run a single case on one platform/model pair. Returns the run plus whether
+    /// the streaming sink asked to short-circuit ([`ControlFlow::Break`]).
     fn run_case_on(
         &self,
         case: &TestCase,
         skill: &SkillDefinition,
         platform: &str,
         model: &str,
-    ) -> Result<CaseRun> {
+        streaming: &mut Streaming,
+    ) -> Result<(CaseRun, ControlFlow<()>)> {
         let mut totals = Usage::default();
-        let transcript = self.converse(case, skill, platform, model, &mut totals)?;
-        let evals = self.score(case, &transcript, &mut totals)?;
-        let passed = evals.iter().all(|e| e.passed);
-        Ok(CaseRun {
-            case: case.name.clone(),
-            skill: skill.dir.to_string_lossy().into_owned(),
-            platform: platform.to_string(),
-            model: model.to_string(),
-            passed,
-            turns: transcript.assistant_turns(),
-            evals,
-            transcript,
-            usage: (!totals.is_empty()).then_some(totals),
-        })
+        let (transcript, flow) =
+            self.converse(case, skill, platform, model, &mut totals, streaming)?;
+        // On an abort we don't spend judge calls scoring a torn-off transcript.
+        let evals = if flow.is_break() {
+            Vec::new()
+        } else {
+            self.score(case, &transcript, &mut totals)?
+        };
+        let passed = flow.is_continue() && evals.iter().all(|e| e.passed);
+        Ok((
+            CaseRun {
+                case: case.name.clone(),
+                skill: skill.dir.to_string_lossy().into_owned(),
+                platform: platform.to_string(),
+                model: model.to_string(),
+                passed,
+                turns: transcript.assistant_turns(),
+                evals,
+                transcript,
+                usage: (!totals.is_empty()).then_some(totals),
+            },
+            flow,
+        ))
     }
 
     /// Drive the conversation: a single assistant turn for single-turn cases, or
-    /// a simulated-user loop for multi-turn cases.
+    /// a simulated-user loop for multi-turn cases. Streams each turn's tool
+    /// events to `on_event`; returns the transcript plus whether the sink asked
+    /// to short-circuit.
     fn converse(
         &self,
         case: &TestCase,
@@ -87,7 +178,8 @@ impl<'a> Runner<'a> {
         platform: &str,
         model: &str,
         totals: &mut Usage,
-    ) -> Result<Transcript> {
+        streaming: &mut Streaming,
+    ) -> Result<(Transcript, ControlFlow<()>)> {
         let dir = skill.dir.to_string_lossy().into_owned();
         let skill_ref = SkillRef {
             name: &skill.name,
@@ -114,13 +206,45 @@ impl<'a> Runner<'a> {
             } else {
                 None
             };
-            let turn = self.provider.respond(
-                platform,
-                model,
-                &skill_ref,
-                &transcript.messages,
-                session_arg,
-            )?;
+            // In streaming mode, drive the turn through `respond_streaming` and
+            // tag each event with the run it belongs to; if the sink breaks, the
+            // provider tears the harness down and returns the partial turn, and we
+            // stop the run below. The buffered path uses the plain `respond` so a
+            // non-streaming run keeps oneharness's buffered (`--compact`) contract.
+            let case_name = case.name.as_str();
+            let turn_index = transcript.assistant_turns() + 1;
+            let mut turn_flow = ControlFlow::Continue(());
+            let turn = if streaming.on {
+                let sink = &mut streaming.sink;
+                self.provider.respond_streaming(
+                    platform,
+                    model,
+                    &skill_ref,
+                    &transcript.messages,
+                    session_arg,
+                    &mut |event| {
+                        let flow = sink(&StreamEvent {
+                            case: case_name,
+                            platform,
+                            model,
+                            turn: turn_index,
+                            event,
+                        });
+                        if flow.is_break() {
+                            turn_flow = ControlFlow::Break(());
+                        }
+                        flow
+                    },
+                )?
+            } else {
+                self.provider.respond(
+                    platform,
+                    model,
+                    &skill_ref,
+                    &transcript.messages,
+                    session_arg,
+                )?
+            };
             if let Some(u) = &turn.usage {
                 totals.add(u);
             }
@@ -129,7 +253,14 @@ impl<'a> Runner<'a> {
                 session = Some(id);
             }
             let skill_done = turn.done;
-            transcript.push(Message::assistant(turn.message));
+            // Carry the turn's normalized tool events onto its assistant message
+            // so consumers can analyze what the skill did.
+            transcript.push(Message::assistant(turn.message).with_events(turn.events));
+
+            // The streaming sink asked to short-circuit: stop the run now.
+            if turn_flow.is_break() {
+                return Ok((transcript, ControlFlow::Break(())));
+            }
 
             // Single-turn cases stop after the first assistant turn.
             let Some(user) = &case.user else {
@@ -172,7 +303,7 @@ impl<'a> Runner<'a> {
             }
         }
 
-        Ok(transcript)
+        Ok((transcript, ControlFlow::Continue(())))
     }
 
     /// Run every eval against the finished transcript.
@@ -430,6 +561,58 @@ mod tests {
         assert_eq!(runs.len(), 4);
     }
 
+    #[test]
+    fn run_all_streaming_short_circuits_on_break() {
+        use crate::conversation::ToolEvent;
+        // A turn that took a disallowed action; the streaming sink breaks on it.
+        let provider = ScriptedProvider {
+            assistant: vec![AssistantTurn {
+                message: "did a bad thing".into(),
+                done: false,
+                usage: None,
+                session_id: None,
+                events: vec![ToolEvent {
+                    kind: "tool_call".into(),
+                    name: Some("bash".into()),
+                    input: Some(serde_json::json!({ "command": "rm -rf /" })),
+                    output: None,
+                    index: 0,
+                }],
+            }],
+            user: vec![],
+            judge: vec![JudgeVerdict {
+                value: JudgeValue::Bool(true),
+                reason: String::new(),
+                usage: None,
+            }],
+            calls: RefCell::new(Calls::default()),
+        };
+        let config = Config {
+            platforms: vec!["a".into(), "b".into()],
+            ..Config::default()
+        };
+        let runner = Runner::new(&provider, &config);
+        let mut seen = 0usize;
+        let report = runner
+            .run_all_streaming(
+                &[boolean_case(temp_skill("stream-abort"))],
+                &mut |ev: &StreamEvent| {
+                    seen += 1;
+                    assert_eq!(ev.event.name.as_deref(), Some("bash"));
+                    assert_eq!(ev.turn, 1);
+                    ControlFlow::Break(())
+                },
+            )
+            .unwrap();
+        // The sink saw the first event and aborted; only the first matrix cell
+        // ran, and it is not passing.
+        assert_eq!(seen, 1);
+        assert_eq!(report.runs.len(), 1);
+        assert!(!report.runs[0].passed);
+        // No judge call was spent scoring the torn-off run.
+        assert_eq!(provider.calls.borrow().judge, 0);
+    }
+
     fn usage(input: u64) -> Option<Usage> {
         Some(Usage {
             input_tokens: Some(input),
@@ -457,12 +640,14 @@ mod tests {
                     usage: usage(3),
                     // A session id the runner should capture for the next turn.
                     session_id: Some("sess-1".into()),
+                    events: Vec::new(),
                 },
                 AssistantTurn {
                     message: "Booked!".into(),
                     done: false,
                     usage: usage(4),
                     session_id: Some("sess-2".into()),
+                    events: Vec::new(),
                 },
             ],
             user: vec![UserTurn {
@@ -533,6 +718,7 @@ mod tests {
                     done: false,
                     usage: None,
                     session_id: Some(format!("sess-{n}")),
+                    events: Vec::new(),
                 })
             }
             fn simulate_user(
