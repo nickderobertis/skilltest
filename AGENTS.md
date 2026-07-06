@@ -223,27 +223,15 @@ projects per PR. Locally, install the toolchains once (see `docs/development.md`
   honor the `mocks` request block (returning `mock_calls`) to participate in
   tool mocking; ignoring the block while it's present is a loud provider error.
 
-**Tool mocking/spying** rides the provider boundary: a case's `mocks:` block
-(and the CLI's `--mocks`/`--spy`, which is how the SDKs deliver code-level
-`stub`/`deny`/`rewrite`/`spy` objects) compiles in `skilltest-core::mock` to
-the oneharness mock ruleset; `OneharnessProvider` delivers it per skill turn
-via `run --mock-rules`/`--spy-file` (never to the judge) and parses the spy
-JSONL back into `CaseRun.mock_calls` — original pre-rewrite inputs + verdicts,
-which the deterministic `called`/`not_called` evals and the SDKs' mock objects
-bind on. Two matching engines exist deliberately: action rules match inside
-the harness hook (`oneharness mock`), and `mock::decide` mirrors those
-semantics for the fake provider so the gate proves identical decision logic —
-the per-harness live e2e is the drift alarm between them (oneharness v0.3.7
-shipped the seam: the `mock` responder + `run --mock-rules`/`--spy-file`). A
-third tier sits between the gate and live: the **hermetic oneharness
-integration suite** (`crates/skilltest-cli/tests/oneharness_integration.rs`,
-`just test-oneharness`) drives the *real* oneharness binary with a scripted
-claude shim (`tests/fixtures/oneharness/fake-claude.sh`) that executes the
-ephemerally-installed hook for real — proving skilltest's flag wiring, the
-real responder's matching, and the spy JSONL parse with no credentials or
-model. Everything is loud-by-default: unsupported verbs,
-unknown mock names in evals, invalid regexes, and a channel-less `not_called`
-are errors, never vacuous passes.
+**Tool mocking/spying**: `skilltest-core::mock` compiles a case's `mocks:` (and
+the CLI's `--mocks`/`--spy`, the SDKs' delivery path) to the oneharness ruleset;
+`OneharnessProvider` passes `run --mock-rules`/`--spy-file` per skill turn
+(never to the judge) and parses the spy JSONL into `CaseRun.mock_calls`
+(original pre-rewrite inputs + verdicts). Two matching engines on purpose:
+the hook-side `oneharness mock`, mirrored by `mock::decide` for the fake
+provider; `just test-oneharness` (real binary + the `fake-claude.sh` shim,
+hermetic) and the live e2e are the drift alarms. Anything inexpressible or
+unresolvable errors loudly — never a vacuous pass.
 
 The fake provider is why the whole pipeline is testable without a live model: it
 implements the protocol deterministically, so the default e2e suites exercise the

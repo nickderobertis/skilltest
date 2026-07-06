@@ -120,11 +120,8 @@ upgrade:
 # `oneharness`; install it first with `just install-oneharness`. See docs/e2e.md.
 
 # Install the prebuilt oneharness the live e2e drives (verifies the checksum).
-# v0.2.37 extracted OpenCode's final text from its JSONL; v0.3.6 added the
-# normalized `--events` and `--stream`; v0.3.7 ships the mock/spy seam
-# (`run --mock-rules`/`--spy-file` + the `oneharness mock` responder) the tool
-# mocking rides (keep this in lockstep with `default_version` in
-# scripts/install-oneharness.sh).
+# Keep in lockstep with `default_version` in scripts/install-oneharness.sh,
+# which documents what each pinned version added.
 install-oneharness version="v0.3.7":
     @bash scripts/install-oneharness.sh {{version}}
 
@@ -133,11 +130,9 @@ install-oneharness version="v0.3.7":
 test-live:
     cargo test -p skilltest-cli --test live -- --ignored
 
-# Hermetic integration suite against the REAL oneharness binary (no harness, no
-# credentials, no model): a scripted claude shim executes the ephemerally
-# installed mock hook for real, proving the mock/spy wiring end to end. Needs
-# only `oneharness` on PATH (`just install-oneharness`); deterministic, so CI's
-# e2e workflows run it before the live phases.
+# Hermetic mock/spy suite against the REAL oneharness binary (no harness, no
+# credentials, no model — a scripted claude shim executes the installed hook).
+# Needs only `oneharness` on PATH (`just install-oneharness`); deterministic.
 test-oneharness:
     cargo test -p skilltest-cli --test oneharness_integration -- --ignored
 
