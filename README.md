@@ -116,12 +116,12 @@ cannot drift from the binary.
 `*.skilltest.yaml`, or call the API:
 
 ```python
-from skilltest_pytest import run_skill
+from skilltest_pytest import run_skill, describe_failures, assistant_text
 
 def test_greeter():
     report = run_skill("cases/greet.yaml")
-    assert report.passed, report.describe_failures()
-    assert "Dr. Smith" in report.runs[0].transcript.assistant_text()
+    assert report.passed, describe_failures(report)
+    assert "Dr. Smith" in assistant_text(report.runs[0].transcript)
 ```
 
 **vitest** ([`plugins/vitest`](plugins/vitest)):
@@ -135,6 +135,40 @@ test("greeter", async () => {
   expect(assistantText(report.runs[0]!.transcript)).toContain("Dr. Smith");
 });
 ```
+
+### Inspect tool use, and stream
+
+Each assistant turn also carries the **normalized tool events** the skill took —
+shell commands, file edits, tool uses — surfaced across every harness by
+oneharness's `--events` and exposed as `tool_calls`/`toolCalls`. Assert on *what
+the skill did*, not just what it said:
+
+```python
+from skilltest_pytest import run_skill, tool_calls
+
+report = run_skill("cases/edit.skilltest.yaml")
+calls = tool_calls(report.runs[0].transcript)          # the tool_call events, in order
+assert any("git commit" in str(c.input) for c in calls)
+assert not any("rm -rf" in str(c.input) for c in calls)
+```
+
+For long runs, an opt-in **streaming** API yields those events live and lets you
+**short-circuit** the moment bad behavior appears — closing the stream tears the
+harness down, so a bad turn is cut off instead of paid for in full:
+
+```python
+from skilltest_pytest import stream_skill
+
+async def guard():
+    stream = stream_skill("cases/edit.skilltest.yaml")
+    async for ev in stream:                            # ev.event is a ToolEvent
+        if ev.event.name == "bash" and "rm -rf" in str(ev.event.input):
+            break                                      # abort the run now
+    return stream.report                               # the full report, if it ran to completion
+```
+
+TypeScript mirrors both — `toolCalls(transcript)` and `streamSkill(...)`
+(a `for await` of events; `break` to short-circuit).
 
 ## How it works
 
@@ -152,15 +186,19 @@ test("greeter", async () => {
   language's SDK.
 
 The boundary to a model is the `Provider` trait ([`docs/protocol.md`](docs/protocol.md))
-with two backends: the default **oneharness** provider runs each skill on a
-harness (Claude Code, Codex, …) by passing the skill via `--system`, threading
-`session_id` through `--resume` for faithful multi-turn on supporting harnesses,
-and surfacing each result's normalized `usage` (token + cost totals) and
-`failure_kind` (auth / rate-limit / … classification). A **custom command**
-provider speaks a small JSON-lines protocol (this is how the deterministic
-`skilltest-fake-provider` keeps the test gate model-free). Today the lineup is
-Python/pytest and TypeScript/vitest; adding a language means one new SDK under
-`sdks/`, and adding a test framework means one new package under `plugins/`.
+with two backends: the default **oneharness** provider (v0.3.6+) runs each skill
+on a harness (Claude Code, Codex, …) by passing the skill via `--system`,
+threading `session_id` through `--resume` for faithful multi-turn on supporting
+harnesses, lifting normalized tool events onto each turn via `--events` (and
+`--stream` for the live streaming API), and surfacing each result's normalized
+`usage` (token + cost totals) and `failure_kind` (auth / rate-limit / …
+classification). It passes no `--mode`, so oneharness's default approval mode
+applies — set `ONEHARNESS_MODE=bypass` (via oneharness config) to let the skill
+take every action without prompting. A **custom command** provider speaks a small
+JSON-lines protocol (this is how the deterministic `skilltest-fake-provider`
+keeps the test gate model-free). Today the lineup is Python/pytest and
+TypeScript/vitest; adding a language means one new SDK under `sdks/`, and adding a
+test framework means one new package under `plugins/`.
 
 ## License
 

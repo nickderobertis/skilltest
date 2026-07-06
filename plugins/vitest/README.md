@@ -29,6 +29,31 @@ import { skillTest } from "@skill-test/vitest";
 skillTest("greeter confirms the appointment", "cases/greet.yaml");
 ```
 
+## Assert on tool use, and stream
+
+The SDK's tool-event and streaming surfaces are re-exported too. `toolCalls`
+returns the normalized `tool_call` events a run took (each a `ToolEvent` with
+`kind`/`name`/`input`/`output`/`index`), and `streamSkill` yields them live so a
+test can **short-circuit** on bad behavior:
+
+```ts
+import { it, expect } from "vitest";
+import { runSkill, toolCalls, streamSkill } from "@skill-test/vitest";
+
+it("commits without deleting", async () => {
+  const report = await runSkill("cases/edit.skilltest.yaml");
+  const calls = toolCalls(report.runs[0]!.transcript);
+  expect(calls.some((c) => String(c.input?.command).includes("git commit"))).toBe(true);
+  expect(calls.some((c) => String(c.input?.command).includes("rm -rf"))).toBe(false);
+});
+
+it("makes no network call", async () => {
+  for await (const ev of streamSkill("cases/edit.skilltest.yaml")) {
+    expect(ev.event.name).not.toBe("curl"); // break to abort early
+  }
+});
+```
+
 ## Recommended: auto-discover a tree of cases
 
 When vitest is your primary test runner, keep your cases as data and let one

@@ -19,6 +19,39 @@ const text = assistantText(report.runs[0]!.transcript);
 const result = await validateSkill("skills/greeter");
 ```
 
+### Tool events
+
+Each assistant turn carries the normalized tool events the skill took (shell
+commands, file edits, tool uses), lifted from oneharness's `--events`. Assert on
+*what the skill did* with `toolCalls` (the `tool_call` events across a transcript,
+in order); each `ToolEvent` has `kind`, `name`, `input`, `output`, `index`:
+
+```ts
+import { runSkill, toolCalls } from "@skill-test/sdk";
+
+const report = await runSkill("cases/edit.skilltest.yaml");
+const calls = toolCalls(report.runs[0]!.transcript);
+console.assert(calls.some((c) => String(c.input?.command).includes("git commit")));
+console.assert(!calls.some((c) => String(c.input?.command).includes("rm -rf")));
+```
+
+### Streaming (opt-in)
+
+`streamSkill` returns a `SkillStream` you iterate with `for await` to receive each
+event live, and `break` to **short-circuit** — closing the stream tears the
+harness down, so a bad turn is cut off instead of paid for in full. `.report`
+holds the final report once the stream runs to completion:
+
+```ts
+import { streamSkill } from "@skill-test/sdk";
+
+const stream = streamSkill("cases/edit.skilltest.yaml");
+for await (const ev of stream) {   // ev: StreamEvent — .case/.platform/.model/.turn/.event
+  if (ev.event.name === "bash" && String(ev.event.input?.command).includes("rm -rf")) break;
+}
+const report = stream.report;
+```
+
 The `skilltest` binary is resolved from the `bin` option, the `SKILLTEST_BIN`
 env var, or `PATH`; a provider override comes from `provider` or
 `SKILLTEST_PROVIDER`. A failing eval is *reported* (`report.passed` is false),
