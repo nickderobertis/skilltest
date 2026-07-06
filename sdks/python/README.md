@@ -7,15 +7,50 @@ integrations build on it — use [`skilltest-pytest`](../../plugins/pytest) if y
 want pytest collection; use this package directly from any other Python code.
 
 ```python
-from skilltest_sdk import run_skill, validate_skill
+from skilltest_sdk import run_skill, validate_skill, describe_failures, assistant_text
 
 report = run_skill("cases/greet.yaml")
-assert report.passed, report.describe_failures()
+assert report.passed, describe_failures(report)
 # Mix in deterministic checks on the transcript:
-assert "Dr. Smith" in report.runs[0].transcript.assistant_text()
+assert "Dr. Smith" in assistant_text(report.runs[0].transcript)
 
 result = validate_skill("skills/greeter")
 assert result.valid
+```
+
+### Tool events
+
+Each assistant turn carries the normalized tool events the skill took (shell
+commands, file edits, tool uses), lifted from oneharness's `--events`. Assert on
+*what the skill did* with `tool_calls` (the `tool_call` events across a
+transcript, in order); each `ToolEvent` has `kind`, `name`, `input`, `output`,
+`index`:
+
+```python
+from skilltest_sdk import run_skill, tool_calls
+
+report = run_skill("cases/edit.skilltest.yaml")
+calls = tool_calls(report.runs[0].transcript)
+assert any("git commit" in str(c.input) for c in calls)
+assert not any("rm -rf" in str(c.input) for c in calls)   # never destructive
+```
+
+### Streaming (opt-in)
+
+`stream_skill` returns a `SkillStream` you iterate with `async for` to receive
+each event live, and `break` to **short-circuit** — closing the stream tears the
+harness down, so a bad turn is cut off instead of paid for in full. `.report`
+holds the final report once the stream runs to completion:
+
+```python
+from skilltest_sdk import stream_skill
+
+async def guard():
+    stream = stream_skill("cases/edit.skilltest.yaml")
+    async for ev in stream:  # ev: StreamEvent — .case/.platform/.model/.turn/.event
+        if ev.event.name == "bash" and "rm -rf" in str(ev.event.input):
+            break
+    return stream.report
 ```
 
 The `skilltest` binary is resolved from the `bin=` argument, the

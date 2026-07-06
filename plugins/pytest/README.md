@@ -23,12 +23,40 @@ evals:
 **As code**, for matrices and deterministic mix-ins:
 
 ```python
-from skilltest_pytest import run_skill
+from skilltest_pytest import run_skill, describe_failures, assistant_text
 
 def test_greeter():
     report = run_skill("cases/greet.yaml", platforms=["claude-code"], models=["claude-opus-4-8"])
-    assert report.passed, report.describe_failures()
-    assert "Dr. Smith" in report.runs[0].transcript.assistant_text()
+    assert report.passed, describe_failures(report)
+    assert "Dr. Smith" in assistant_text(report.runs[0].transcript)
+```
+
+## Assert on tool use, and stream
+
+The SDK's tool-event and streaming surfaces are re-exported too. `tool_calls`
+returns the normalized `tool_call` events a run took (each a `ToolEvent` with
+`kind`/`name`/`input`/`output`/`index`), and `stream_skill` yields them live so a
+test can **short-circuit** on bad behavior:
+
+```python
+from skilltest_pytest import run_skill, tool_calls
+
+def test_commits_but_never_deletes():
+    report = run_skill("cases/edit.skilltest.yaml")
+    calls = tool_calls(report.runs[0].transcript)
+    assert any("git commit" in str(c.input) for c in calls)
+    assert not any("rm -rf" in str(c.input) for c in calls)
+```
+
+```python
+import asyncio
+from skilltest_pytest import stream_skill
+
+def test_makes_no_network_call():
+    async def go():
+        async for ev in stream_skill("cases/edit.skilltest.yaml"):
+            assert ev.event.name != "curl", "skill made a network call"
+    asyncio.run(go())   # or use pytest-asyncio and `async def test_...`
 ```
 
 ## Configuration
