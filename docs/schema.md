@@ -72,6 +72,13 @@ evals:
     max: 10
     threshold: 7
     comparator: ">="               # one of >= > <= < (default >=)
+
+  - type: tool                     # deterministic — no judge, no cost
+    name: committed-once           # optional label
+    input_contains: "git commit"   # match tool calls whose args contain this
+    tool: bash                     # optional: only count this tool (by name)
+    min: 1                         # bounds on the match count (at least one of
+    max: 1                         # min/max is required)
 ```
 
 A **single-turn** case omits `user`: the skill produces one assistant turn, then
@@ -82,6 +89,16 @@ the evals score it. A **multi-turn** case includes `user` and loops.
 - **boolean** passes when the judge's verdict equals `expected` (default `true`).
 - **numeric** clamps the judge's score to `[min, max]`, then passes when it
   satisfies `comparator` against `threshold`.
+- **tool** is *behavioral* and **judge-free**: it counts the assistant's
+  normalized `tool_call` events (surfaced by oneharness `--events`) that match
+  the optional `tool` name (case-insensitive) and `input_contains` substring,
+  then passes when that count satisfies `min`/`max` (inclusive; at least one
+  bound required). It expresses what the skill *did* rather than what it said —
+  "ran `git commit`" (`input_contains: "git commit"`, `min: 1`), "never ran `rm
+  -rf`" (`input_contains: "rm -rf"`, `max: 0`), "≤ 3 tool calls" (`max: 3`),
+  "edited `config.yaml`" (`input_contains: "config.yaml"`, `min: 1`). Tool events
+  are available only where the harness exposes a machine-readable transcript (see
+  the oneharness events matrix); where it does not, no events are counted.
 
 A case run passes when every eval passes. A `skilltest run` exits `0` when all
 runs pass and `1` when any fail.

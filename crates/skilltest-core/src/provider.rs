@@ -16,7 +16,7 @@ use std::process::{Command, Stdio};
 use serde::{Deserialize, Serialize};
 
 use crate::config::{ApiJudgeConfig, ApiVendor, OneharnessConfig};
-use crate::conversation::{Message, Role};
+use crate::conversation::{Message, Role, ToolEvent};
 use crate::error::{Error, Result};
 use crate::eval::JudgeValue;
 
@@ -100,6 +100,11 @@ pub struct AssistantTurn {
     /// continue the same conversation against the real harness (only some
     /// harnesses expose this — see `OneharnessProvider::supports_resume`).
     pub session_id: Option<String>,
+    /// Normalized tool events the skill took this turn (shell commands, file
+    /// edits, tool uses), from oneharness `--events`. Empty when the harness
+    /// exposed no tool transcript. Attached to the assistant message so
+    /// behavioral evals can assert on what the skill *did*.
+    pub events: Vec<ToolEvent>,
 }
 
 /// A simulated-user turn produced by the provider.
@@ -212,6 +217,10 @@ struct RespondPayload {
     usage: Option<Usage>,
     #[serde(default)]
     session_id: Option<String>,
+    /// Optional normalized tool events a custom provider may report (parallel to
+    /// oneharness's `events`); absent/`null` when the provider surfaces none.
+    #[serde(default)]
+    events: Option<Vec<ToolEvent>>,
 }
 
 #[derive(Deserialize)]
@@ -346,6 +355,7 @@ impl Provider for CommandProvider {
             done: payload.done,
             usage: payload.usage,
             session_id: payload.session_id,
+            events: payload.events.unwrap_or_default(),
         })
     }
 
@@ -450,6 +460,10 @@ struct OhResult {
     session_id: Option<String>,
     #[serde(default)]
     usage: Option<Usage>,
+    /// Normalized tool events oneharness lifted from the harness transcript
+    /// (its `--events` output); `null`/absent when the harness exposes none.
+    #[serde(default)]
+    events: Option<Vec<ToolEvent>>,
     #[serde(default)]
     failure_kind: Option<String>,
 }
@@ -472,6 +486,7 @@ struct RunOutcome {
     text: String,
     session_id: Option<String>,
     usage: Option<Usage>,
+    events: Vec<ToolEvent>,
 }
 
 /// Choose the harness's reply text: oneharness's extracted `text` when non-empty,
@@ -503,17 +518,22 @@ impl OneharnessProvider {
     fn run(&self, args: &RunArgs<'_>) -> Result<RunOutcome> {
         let timeout = self.timeout_secs.to_string();
         let mut cmd = Command::new(&self.bin);
-        // Intentionally no `--output-format` override: oneharness already requests
-        // each harness's *default* format (json for claude-code/opencode,
-        // stream-json for cursor, text for codex/goose/qwen/crush/copilot) and
-        // extracts the reply accordingly. Forcing `json` everywhere broke the
-        // text-native harnesses — oneharness would json-extract their plain-text
-        // reply and find nothing ("harness produced no extractable text").
+        // `--events` (not `--output-format`) asks oneharness to surface normalized
+        // tool events. Crucially it is *safe for text*: oneharness upgrades only a
+        // harness whose default format carries no tool transcript to its
+        // events-capable format (claude→stream-json, codex→exec --json,
+        // qwen→stream-json) and still extracts the reply text from it; harnesses
+        // whose default already carries a transcript (opencode, cursor) or that
+        // expose none (goose/crush/copilot) are left on their default. So the
+        // reply keeps working everywhere — unlike a blanket `--output-format json`,
+        // which once broke the text-native harnesses — and `events` is populated
+        // wherever the harness can express it.
         cmd.args([
             "run",
             "--harness",
             args.harness,
             "--compact",
+            "--events",
             "--timeout",
             &timeout,
             "--prompt-file",
@@ -607,6 +627,7 @@ impl OneharnessProvider {
             text,
             session_id: result.session_id,
             usage: result.usage,
+            events: result.events.unwrap_or_default(),
         })
     }
 }
@@ -641,6 +662,7 @@ impl Provider for OneharnessProvider {
             done: false,
             usage: outcome.usage,
             session_id: outcome.session_id,
+            events: outcome.events,
         })
     }
 
@@ -1988,6 +2010,50 @@ mod tests {
             assert_eq!(turn.message, "hello back");
             assert_eq!(turn.session_id.as_deref(), Some("oh1"));
             assert_eq!(turn.usage.unwrap().input_tokens, Some(5));
+        }
+
+        #[test]
+        fn oneharness_respond_surfaces_normalized_events() {
+            // oneharness `--events` populates a per-result `events` array; the
+            // provider lifts it onto the assistant turn so behavioral evals can
+            // assert on what the skill did.
+            let bin = script(
+                "oh-events",
+                "cat >/dev/null\necho '{\"results\":[{\"status\":\"ok\",\
+                 \"text\":\"done\",\"events\":[{\"kind\":\"tool_call\",\"name\":\"bash\",\
+                 \"input\":{\"command\":\"git commit -m x\"},\"output\":\"ok\",\"index\":0}]}]}'\n",
+            );
+            let turn = oh_provider(bin)
+                .respond(
+                    "claude-code",
+                    "sonnet",
+                    &skill_ref(),
+                    &[Message::user("hi")],
+                    None,
+                )
+                .unwrap();
+            assert_eq!(turn.events.len(), 1);
+            assert_eq!(turn.events[0].kind, "tool_call");
+            assert_eq!(turn.events[0].name.as_deref(), Some("bash"));
+            assert_eq!(
+                turn.events[0].input,
+                Some(serde_json::json!({"command": "git commit -m x"}))
+            );
+            assert_eq!(turn.events[0].output.as_deref(), Some("ok"));
+        }
+
+        #[test]
+        fn oneharness_respond_events_absent_is_empty_not_error() {
+            // A harness that exposes no tool transcript yields no `events`; the
+            // turn simply carries an empty list (never an error).
+            let bin = script(
+                "oh-noevents",
+                "cat >/dev/null\necho '{\"results\":[{\"status\":\"ok\",\"text\":\"hi\"}]}'\n",
+            );
+            let turn = oh_provider(bin)
+                .respond("goose", "m", &skill_ref(), &[Message::user("hi")], None)
+                .unwrap();
+            assert!(turn.events.is_empty());
         }
 
         #[test]

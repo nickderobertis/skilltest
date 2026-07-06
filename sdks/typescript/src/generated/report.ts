@@ -11,7 +11,7 @@
  * The variant titles name the generated SDK model for each union arm, so keep
  * them stable: they are part of the SDK API surface.
  */
-export type EvalDetail = BooleanDetail | NumericDetail;
+export type EvalDetail = BooleanDetail | NumericDetail | ToolDetail;
 /**
  * How a numeric score is compared to its threshold.
  */
@@ -115,6 +115,16 @@ export interface NumericDetail {
   value: number;
 }
 /**
+ * A behavioral tool-event assertion: how many matching `tool_call` events
+ * were counted, and the `min`/`max` bounds they were checked against.
+ */
+export interface ToolDetail {
+  count: number;
+  kind: "tool";
+  max?: number | null;
+  min?: number | null;
+}
+/**
  * An ordered list of messages. Thin wrapper so the type reads clearly at call
  * sites and so we can grow conversation-level helpers without churn.
  */
@@ -126,7 +136,46 @@ export interface Transcript {
  */
 export interface Message {
   content: string;
+  /**
+   * The normalized tool events the skill took producing this turn (assistant
+   * turns only, and only when the harness exposed a tool transcript via
+   * oneharness `--events`). Empty otherwise. Feeds behavioral evals.
+   */
+  events?: ToolEvent[];
   role: Role;
+}
+/**
+ * One normalized tool-call / action event the skill took during a turn, lifted
+ * from oneharness's `events` array (its `--events` output). Harness-agnostic, so
+ * a behavioral eval can assert on *what the skill did* — shell commands, file
+ * edits, tool uses — across any harness, not just the final text. Mirrors the
+ * oneharness `ActionEvent` shape; `input` is the structured, tool-shaped args so
+ * a consumer can match on the command string or file path without re-parsing.
+ */
+export interface ToolEvent {
+  /**
+   * Position within the turn, so ordering ("did X before Y") is expressible.
+   */
+  index?: number;
+  /**
+   * Structured tool arguments (the command, the file path); `null` when none.
+   */
+  input?: {
+    [k: string]: unknown;
+  };
+  /**
+   * `tool_call` (the skill invoked a tool) or `tool_result` (the observation).
+   */
+  kind: string;
+  /**
+   * Normalized tool name where knowable (e.g. `bash`, `edit_file`); `null` for
+   * a `tool_result` or when the harness did not name it.
+   */
+  name?: string | null;
+  /**
+   * The result/observation text, when the transcript exposed it.
+   */
+  output?: string | null;
 }
 /**
  * Token / cost usage for one provider call.

@@ -2,7 +2,7 @@
 #   filename:  report.schema.json
 
 from __future__ import annotations
-from typing import Literal
+from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
@@ -35,15 +35,61 @@ class NumericDetail(BaseModel):
     value: float
 
 
+class ToolDetail(BaseModel):
+    """
+    A behavioral tool-event assertion: how many matching `tool_call` events
+    were counted, and the `min`/`max` bounds they were checked against.
+    """
+
+    count: int = Field(..., ge=0)
+    kind: Literal["tool"]
+    max: int | None = Field(None, ge=0)
+    min: int | None = Field(None, ge=0)
+
+
 class EvalOutcome(BaseModel):
     """
     The result of running one eval against a transcript.
     """
 
-    detail: BooleanDetail | NumericDetail = Field(..., description="Kind-specific verdict detail.")
+    detail: BooleanDetail | NumericDetail | ToolDetail = Field(
+        ..., description="Kind-specific verdict detail."
+    )
     label: str = Field(..., description="The eval's label (name or criterion).")
     passed: bool = Field(..., description="Whether the eval passed.")
     reason: str = Field(..., description="The judge's stated reason.")
+
+
+class ToolEvent(BaseModel):
+    """
+    One normalized tool-call / action event the skill took during a turn, lifted
+    from oneharness's `events` array (its `--events` output). Harness-agnostic, so
+    a behavioral eval can assert on *what the skill did* — shell commands, file
+    edits, tool uses — across any harness, not just the final text. Mirrors the
+    oneharness `ActionEvent` shape; `input` is the structured, tool-shaped args so
+    a consumer can match on the command string or file path without re-parsing.
+    """
+
+    index: int | None = Field(
+        0,
+        description='Position within the turn, so ordering ("did X before Y") is expressible.',
+        ge=0,
+    )
+    input: Any | None = Field(
+        None,
+        description="Structured tool arguments (the command, the file path); `null` when none.",
+    )
+    kind: str = Field(
+        ...,
+        description="`tool_call` (the skill invoked a tool) or `tool_result` (the observation).",
+    )
+    name: str | None = Field(
+        None,
+        description="Normalized tool name where knowable (e.g. `bash`, `edit_file`); `null` for\na `tool_result` or when the harness did not name it.",
+    )
+    output: str | None = Field(
+        None, description="The result/observation text, when the transcript exposed it."
+    )
 
 
 class Usage(BaseModel):
@@ -67,6 +113,10 @@ class Message(BaseModel):
     """
 
     content: str
+    events: list[ToolEvent] | None = Field(
+        None,
+        description="The normalized tool events the skill took producing this turn (assistant\nturns only, and only when the harness exposed a tool transcript via\noneharness `--events`). Empty otherwise. Feeds behavioral evals.",
+    )
     role: Literal["user", "assistant", "system"] = Field(..., description="Who produced a message.")
 
 

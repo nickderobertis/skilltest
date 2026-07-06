@@ -129,7 +129,9 @@ impl<'a> Runner<'a> {
                 session = Some(id);
             }
             let skill_done = turn.done;
-            transcript.push(Message::assistant(turn.message));
+            // Carry the turn's normalized tool events onto its assistant message
+            // so behavioral evals can assert on what the skill did.
+            transcript.push(Message::assistant(turn.message).with_events(turn.events));
 
             // Single-turn cases stop after the first assistant turn.
             let Some(user) = &case.user else {
@@ -185,6 +187,12 @@ impl<'a> Runner<'a> {
         let judge_model = self.config.effective_judge_model();
         let mut outcomes = Vec::with_capacity(case.evals.len());
         for eval in &case.evals {
+            // Behavioral evals are scored deterministically from the transcript's
+            // tool events — no judge call (and no cost).
+            if eval.is_behavioral() {
+                outcomes.push(eval.evaluate_over(transcript)?);
+                continue;
+            }
             let query = match eval {
                 Eval::Boolean { criterion, .. } => JudgeQuery {
                     kind: JudgeKind::Boolean,
@@ -201,6 +209,9 @@ impl<'a> Runner<'a> {
                     criterion,
                     scale: Some((*min, *max)),
                 },
+                // is_behavioral() handled Tool above; the judge path is
+                // unreachable for it.
+                Eval::Tool { .. } => unreachable!("behavioral eval handled above"),
             };
             let verdict = self
                 .provider
@@ -457,12 +468,14 @@ mod tests {
                     usage: usage(3),
                     // A session id the runner should capture for the next turn.
                     session_id: Some("sess-1".into()),
+                    events: Vec::new(),
                 },
                 AssistantTurn {
                     message: "Booked!".into(),
                     done: false,
                     usage: usage(4),
                     session_id: Some("sess-2".into()),
+                    events: Vec::new(),
                 },
             ],
             user: vec![UserTurn {
@@ -533,6 +546,7 @@ mod tests {
                     done: false,
                     usage: None,
                     session_id: Some(format!("sess-{n}")),
+                    events: Vec::new(),
                 })
             }
             fn simulate_user(

@@ -85,19 +85,48 @@ pub enum Eval {
         #[serde(default)]
         name: Option<String>,
     },
+    /// A deterministic, **judge-free** assertion over the skill's normalized tool
+    /// events (from oneharness `--events`) — behavioral correctness, not text.
+    /// Counts the `tool_call` events matching the optional `tool` name and
+    /// `input_contains` substring, then checks that count against `min`/`max`.
+    /// Expresses the issue's cases: "ran git commit" (`input_contains: "git
+    /// commit"`, `min: 1`), "never ran rm -rf" (`input_contains: "rm -rf"`,
+    /// `max: 0`), "at most 3 tool calls" (`max: 3`), "edited config.yaml"
+    /// (`input_contains: "config.yaml"`, `min: 1`).
+    Tool {
+        /// Count only `tool_call` events whose normalized name equals this
+        /// (case-insensitive). Omit to count every tool call.
+        #[serde(default)]
+        tool: Option<String>,
+        /// Count only events whose rendered input JSON contains this substring.
+        /// Omit to not filter on input.
+        #[serde(default)]
+        input_contains: Option<String>,
+        /// Inclusive minimum number of matching calls required to pass.
+        #[serde(default)]
+        min: Option<usize>,
+        /// Inclusive maximum number of matching calls allowed to pass.
+        #[serde(default)]
+        max: Option<usize>,
+        /// Optional human label for reports.
+        #[serde(default)]
+        name: Option<String>,
+    },
 }
 
 impl Eval {
-    /// The criterion text the judge sees.
+    /// The criterion text the judge sees. Empty for a behavioral [`Eval::Tool`],
+    /// which is scored deterministically and never reaches the judge.
     #[must_use]
     pub fn criterion(&self) -> &str {
         match self {
             Eval::Boolean { criterion, .. } | Eval::Numeric { criterion, .. } => criterion,
+            Eval::Tool { .. } => "",
         }
     }
 
     /// A short label for reports: the explicit `name` if given, else the
-    /// criterion.
+    /// criterion (or a generic label for a behavioral tool eval).
     #[must_use]
     pub fn label(&self) -> &str {
         match self {
@@ -107,15 +136,39 @@ impl Eval {
             | Eval::Numeric {
                 name, criterion, ..
             } => name.as_deref().unwrap_or(criterion),
+            Eval::Tool { name, .. } => name.as_deref().unwrap_or("tool-call assertion"),
         }
+    }
+
+    /// Whether this eval is scored deterministically from the transcript's tool
+    /// events ([`Eval::Tool`]) rather than by the natural-language judge.
+    #[must_use]
+    pub fn is_behavioral(&self) -> bool {
+        matches!(self, Eval::Tool { .. })
     }
 
     /// Validate the eval's own parameters (independent of any transcript).
     ///
     /// # Errors
     /// [`Error::Invalid`] when a criterion is empty or a numeric scale is
-    /// degenerate (`min >= max`) or the threshold falls outside `[min, max]`.
+    /// degenerate (`min >= max`) or the threshold falls outside `[min, max]`, or
+    /// a `tool` eval bounds nothing / has `min > max`.
     pub fn validate(&self) -> Result<()> {
+        if let Eval::Tool { min, max, .. } = self {
+            if min.is_none() && max.is_none() {
+                return Err(Error::Invalid(
+                    "a `tool` eval needs at least one of `min`/`max` to assert against".into(),
+                ));
+            }
+            if let (Some(mn), Some(mx)) = (min, max) {
+                if mn > mx {
+                    return Err(Error::Invalid(format!(
+                        "`tool` eval bound is inverted: min ({mn}) must be <= max ({mx})"
+                    )));
+                }
+            }
+            return Ok(());
+        }
         if self.criterion().trim().is_empty() {
             return Err(Error::Invalid("an eval has an empty `criterion`".into()));
         }
@@ -138,6 +191,65 @@ impl Eval {
             }
         }
         Ok(())
+    }
+
+    /// Score a behavioral [`Eval::Tool`] deterministically against a transcript's
+    /// normalized tool events — no judge call. Counts the `tool_call` events
+    /// matching the `tool` name and `input_contains` filters, then checks the
+    /// count against `min`/`max`.
+    ///
+    /// # Errors
+    /// [`Error::Invalid`] if called on a non-behavioral eval.
+    pub fn evaluate_over(
+        &self,
+        transcript: &crate::conversation::Transcript,
+    ) -> Result<EvalOutcome> {
+        let Eval::Tool {
+            tool,
+            input_contains,
+            min,
+            max,
+            ..
+        } = self
+        else {
+            return Err(Error::Invalid(
+                "evaluate_over is only valid for a behavioral `tool` eval".into(),
+            ));
+        };
+        let count = transcript
+            .messages
+            .iter()
+            .flat_map(|m| &m.events)
+            .filter(|e| e.kind == "tool_call")
+            .filter(|e| {
+                tool.as_ref()
+                    .is_none_or(|t| e.name.as_deref().is_some_and(|n| n.eq_ignore_ascii_case(t)))
+            })
+            .filter(|e| {
+                input_contains.as_ref().is_none_or(|sub| {
+                    e.input
+                        .as_ref()
+                        .is_some_and(|v| v.to_string().contains(sub))
+                })
+            })
+            .count();
+        let passed = min.is_none_or(|m| count >= m) && max.is_none_or(|m| count <= m);
+        let bounds = match (min, max) {
+            (Some(mn), Some(mx)) => format!("expected between {mn} and {mx}"),
+            (Some(mn), None) => format!("expected at least {mn}"),
+            (None, Some(mx)) => format!("expected at most {mx}"),
+            (None, None) => "no bound".to_string(),
+        };
+        Ok(EvalOutcome {
+            label: self.label().to_string(),
+            passed,
+            detail: EvalDetail::Tool {
+                count,
+                min: *min,
+                max: *max,
+            },
+            reason: format!("matched {count} tool call(s); {bounds}"),
+        })
     }
 
     /// Apply this eval's pass rule to a raw judge value, producing an outcome.
@@ -189,6 +301,12 @@ impl Eval {
                 "judge",
                 "numeric eval received a boolean verdict",
             )),
+            // A behavioral `tool` eval is scored deterministically via
+            // `evaluate_over`, never by the judge — reaching here is a bug.
+            (Eval::Tool { .. }, _) => Err(Error::provider(
+                "judge",
+                "a behavioral `tool` eval must be scored via evaluate_over, not the judge",
+            )),
         }
     }
 }
@@ -217,6 +335,16 @@ pub enum EvalDetail {
         threshold: f64,
         comparator: Comparator,
     },
+    /// A behavioral tool-event assertion: how many matching `tool_call` events
+    /// were counted, and the `min`/`max` bounds they were checked against.
+    #[schemars(title = "ToolDetail")]
+    Tool {
+        count: usize,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        min: Option<usize>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max: Option<usize>,
+    },
 }
 
 impl EvalDetail {
@@ -233,6 +361,12 @@ impl EvalDetail {
                 threshold,
                 comparator,
             } => format!("{value} {} {threshold}", comparator.symbol()),
+            EvalDetail::Tool { count, min, max } => match (min, max) {
+                (Some(mn), Some(mx)) => format!("{count} tool call(s) (want {mn}..={mx})"),
+                (Some(mn), None) => format!("{count} tool call(s) (want >= {mn})"),
+                (None, Some(mx)) => format!("{count} tool call(s) (want <= {mx})"),
+                (None, None) => format!("{count} tool call(s)"),
+            },
         }
     }
 }
@@ -253,6 +387,115 @@ pub struct EvalOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::conversation::{Message, ToolEvent, Transcript};
+
+    /// A transcript with one assistant turn carrying the given tool_call events.
+    fn transcript_with(calls: &[(&str, &str)]) -> Transcript {
+        let events = calls
+            .iter()
+            .enumerate()
+            .map(|(i, (name, cmd))| ToolEvent {
+                kind: "tool_call".into(),
+                name: Some((*name).into()),
+                input: Some(serde_json::json!({ "command": cmd })),
+                output: None,
+                index: i,
+            })
+            .collect();
+        Transcript {
+            messages: vec![
+                Message::user("do it"),
+                Message::assistant("done").with_events(events),
+            ],
+        }
+    }
+
+    #[test]
+    fn tool_eval_counts_matching_calls_and_checks_bounds() {
+        let t = transcript_with(&[("bash", "git commit -m x"), ("bash", "ls"), ("edit", "y")]);
+        // "ran git commit at least once" — matches by input substring.
+        let ran_commit = Eval::Tool {
+            tool: None,
+            input_contains: Some("git commit".into()),
+            min: Some(1),
+            max: None,
+            name: Some("ran git commit".into()),
+        };
+        let o = ran_commit.evaluate_over(&t).unwrap();
+        assert!(o.passed, "{}", o.reason);
+        assert_eq!(o.label, "ran git commit");
+        assert!(matches!(o.detail, EvalDetail::Tool { count: 1, .. }));
+
+        // "never ran rm -rf" — max 0 matches passes when absent.
+        let no_rm = Eval::Tool {
+            tool: None,
+            input_contains: Some("rm -rf".into()),
+            min: None,
+            max: Some(0),
+            name: None,
+        };
+        assert!(no_rm.evaluate_over(&t).unwrap().passed);
+
+        // "at most 2 tool calls" — 3 calls fails.
+        let at_most_two = Eval::Tool {
+            tool: None,
+            input_contains: None,
+            min: None,
+            max: Some(2),
+            name: None,
+        };
+        let o = at_most_two.evaluate_over(&t).unwrap();
+        assert!(!o.passed);
+        assert!(matches!(o.detail, EvalDetail::Tool { count: 3, .. }));
+    }
+
+    #[test]
+    fn tool_eval_filters_by_tool_name_case_insensitively() {
+        let t = transcript_with(&[("Bash", "a"), ("edit", "b"), ("bash", "c")]);
+        let two_bash = Eval::Tool {
+            tool: Some("bash".into()),
+            input_contains: None,
+            min: Some(2),
+            max: Some(2),
+            name: None,
+        };
+        assert!(two_bash.evaluate_over(&t).unwrap().passed);
+    }
+
+    #[test]
+    fn tool_eval_validates_bounds() {
+        // No bound is a usage error.
+        assert!(Eval::Tool {
+            tool: None,
+            input_contains: None,
+            min: None,
+            max: None,
+            name: None,
+        }
+        .validate()
+        .is_err());
+        // Inverted bound is a usage error.
+        assert!(Eval::Tool {
+            tool: None,
+            input_contains: None,
+            min: Some(3),
+            max: Some(1),
+            name: None,
+        }
+        .validate()
+        .is_err());
+        // A single valid bound is fine, and the eval is behavioral.
+        let ok = Eval::Tool {
+            tool: None,
+            input_contains: None,
+            min: Some(1),
+            max: None,
+            name: None,
+        };
+        assert!(ok.validate().is_ok());
+        assert!(ok.is_behavioral());
+        assert_eq!(ok.criterion(), "");
+    }
 
     #[test]
     fn numeric_threshold_gte_passes_at_boundary() {
