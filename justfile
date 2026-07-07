@@ -167,7 +167,7 @@ screenshots-bless: screenshots
 # Install the prebuilt oneharness the live e2e drives (verifies the checksum).
 # Keep in lockstep with `default_version` in scripts/install-oneharness.sh,
 # which documents what each pinned version added.
-install-oneharness version="v0.3.7":
+install-oneharness version="v0.3.8":
     @bash scripts/install-oneharness.sh {{version}}
 
 # Deep live suite against real oneharness + claude-code (needs CLAUDE_CODE_OAUTH_TOKEN

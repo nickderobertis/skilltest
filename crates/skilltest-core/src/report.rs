@@ -46,6 +46,13 @@ pub struct CaseRun {
     /// as "zero calls".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mock_calls: Option<Vec<MockCall>>,
+    /// A ready-to-run command that replays this run's recorded transcript — e.g.
+    /// `oneharness history show <name> --history-dir <dir>` — so a past run can
+    /// be reviewed after the fact. Present only when the run was recorded (the
+    /// oneharness provider with history enabled); `null` for providers/configs
+    /// that record no history.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history_command: Option<String>,
 }
 
 /// Aggregate pass/fail counts for a report.
@@ -134,6 +141,11 @@ impl Report {
                         eval.reason
                     ));
                 }
+            }
+            // Surface the review command so a past run can be replayed straight
+            // from the terminal (oneharness provider with history enabled).
+            if let Some(cmd) = &run.history_command {
+                out.push_str(&format!("      history: {cmd}\n"));
             }
         }
         out.push_str(&format!(
@@ -304,6 +316,7 @@ mod tests {
             transcript: Transcript::from_input("hi"),
             usage,
             mock_calls: None,
+            history_command: None,
         }
     }
 
@@ -455,6 +468,21 @@ mod tests {
     fn to_human_without_usage_has_no_usage_line() {
         let report = Report::new(vec![run("a", true, vec![bool_eval("x", true)], None)]);
         assert!(!report.to_human().contains("usage:"));
+    }
+
+    #[test]
+    fn to_human_shows_history_command_when_present() {
+        let mut with = run("a", true, vec![bool_eval("x", true)], None);
+        with.history_command = Some("oneharness history show sess --history-dir /h".into());
+        let report = Report::new(vec![with]);
+        let human = report.to_human();
+        assert!(
+            human.contains("history: oneharness history show sess --history-dir /h"),
+            "got:\n{human}"
+        );
+        // Runs that recorded nothing show no history line.
+        let without = Report::new(vec![run("b", true, vec![bool_eval("x", true)], None)]);
+        assert!(!without.to_human().contains("history:"));
     }
 
     #[test]

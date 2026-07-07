@@ -37,6 +37,17 @@ struct Streaming<'s> {
     sink: &'s mut (dyn FnMut(&StreamEvent) -> ControlFlow<()> + 's),
 }
 
+/// What driving one case's conversation produces, before scoring.
+struct ConverseOutcome {
+    transcript: Transcript,
+    /// Accumulated mock/spy records across turns (`None` = channel off).
+    mock_calls: Option<Vec<MockCall>>,
+    /// The provider's command to review this run's recorded history, if any.
+    history_command: Option<String>,
+    /// Whether the streaming sink asked to short-circuit the run.
+    flow: ControlFlow<()>,
+}
+
 /// Runs test cases against a provider using a configuration.
 pub struct Runner<'a> {
     provider: &'a dyn Provider,
@@ -147,7 +158,12 @@ impl<'a> Runner<'a> {
         // wins, so the most local rule shadows), then the case's own.
         let mock_set =
             MockSet::build(&self.config.mocks, &case.mocks, self.config.spy || case.spy)?;
-        let (transcript, mock_calls, flow) = self.converse(
+        let ConverseOutcome {
+            transcript,
+            mock_calls,
+            history_command,
+            flow,
+        } = self.converse(
             case,
             skill,
             platform,
@@ -182,6 +198,7 @@ impl<'a> Runner<'a> {
                 transcript,
                 usage: (!totals.is_empty()).then_some(totals),
                 mock_calls,
+                history_command,
             },
             flow,
         ))
@@ -201,7 +218,7 @@ impl<'a> Runner<'a> {
         mock_set: &MockSet,
         totals: &mut Usage,
         streaming: &mut Streaming,
-    ) -> Result<(Transcript, Option<Vec<MockCall>>, ControlFlow<()>)> {
+    ) -> Result<ConverseOutcome> {
         let dir = skill.dir.to_string_lossy().into_owned();
         let skill_ref = SkillRef {
             name: &skill.name,
@@ -229,6 +246,10 @@ impl<'a> Runner<'a> {
             rules: mock_set.rules(),
         });
         let mut mock_calls: Option<Vec<MockCall>> = None;
+        // The command to review this run's recorded history (oneharness only,
+        // with history enabled). The name is stable across turns, so keeping the
+        // latest non-empty one yields a single command that covers the run.
+        let mut history_command: Option<String> = None;
 
         loop {
             let session_arg = if resume_supported {
@@ -287,6 +308,10 @@ impl<'a> Runner<'a> {
             if let Some(id) = turn.session_id {
                 session = Some(id);
             }
+            // Capture the review command; stable across turns of the same run.
+            if let Some(cmd) = turn.history_command {
+                history_command = Some(cmd);
+            }
             let skill_done = turn.done;
             // Carry the turn's normalized tool events onto its assistant message
             // so consumers can analyze what the skill did.
@@ -294,7 +319,12 @@ impl<'a> Runner<'a> {
 
             // The streaming sink asked to short-circuit: stop the run now.
             if turn_flow.is_break() {
-                return Ok((transcript, mock_calls, ControlFlow::Break(())));
+                return Ok(ConverseOutcome {
+                    transcript,
+                    mock_calls,
+                    history_command,
+                    flow: ControlFlow::Break(()),
+                });
             }
 
             // Single-turn cases stop after the first assistant turn.
@@ -338,7 +368,12 @@ impl<'a> Runner<'a> {
             }
         }
 
-        Ok((transcript, mock_calls, ControlFlow::Continue(())))
+        Ok(ConverseOutcome {
+            transcript,
+            mock_calls,
+            history_command,
+            flow: ControlFlow::Continue(()),
+        })
     }
 
     /// Run every eval against the finished transcript: judge-backed kinds go
@@ -521,6 +556,80 @@ mod tests {
         assert!(runs[0].passed);
         assert_eq!(runs[0].turns, 1);
         assert_eq!(provider.calls.borrow().assistant, 1);
+        // No provider history → the run carries no review command.
+        assert!(runs[0].history_command.is_none());
+    }
+
+    #[test]
+    fn history_command_from_a_turn_lands_on_the_run() {
+        // A provider that records history surfaces a review command on the turn;
+        // the runner lifts it onto the run so a past run can be reviewed.
+        let provider = ScriptedProvider {
+            assistant: vec![AssistantTurn {
+                message: "Hello, Dr. Smith!".into(),
+                history_command: Some("oneharness history show sess --history-dir /h".into()),
+                ..Default::default()
+            }],
+            user: vec![],
+            judge: vec![JudgeVerdict {
+                value: JudgeValue::Bool(true),
+                reason: "names her".into(),
+                usage: None,
+            }],
+            calls: RefCell::new(Calls::default()),
+        };
+        let config = Config::default();
+        let runner = Runner::new(&provider, &config);
+        let runs = runner
+            .run_case(&boolean_case(temp_skill("history")))
+            .unwrap();
+        assert_eq!(
+            runs[0].history_command.as_deref(),
+            Some("oneharness history show sess --history-dir /h"),
+        );
+    }
+
+    #[test]
+    fn multi_turn_run_surfaces_one_history_command() {
+        // Across turns the provider reports the same (stable-name) command; the
+        // run surfaces exactly one, covering the whole multi-turn conversation.
+        let mut case = boolean_case(temp_skill("history-multi"));
+        case.user = Some(crate::testcase::SimulatedUser {
+            persona: "a patient".into(),
+            done_when: None,
+            max_turns: Some(2),
+        });
+        let cmd = "oneharness history show skilltest-p-m-x-1a2b --history-dir /h";
+        let provider = ScriptedProvider {
+            assistant: vec![
+                AssistantTurn {
+                    message: "turn 1".into(),
+                    history_command: Some(cmd.into()),
+                    ..Default::default()
+                },
+                AssistantTurn {
+                    message: "turn 2".into(),
+                    history_command: Some(cmd.into()),
+                    ..Default::default()
+                },
+            ],
+            user: vec![UserTurn {
+                message: "go on".into(),
+                stop: false,
+                ..Default::default()
+            }],
+            judge: vec![JudgeVerdict {
+                value: JudgeValue::Bool(true),
+                reason: String::new(),
+                usage: None,
+            }],
+            calls: RefCell::new(Calls::default()),
+        };
+        let config = Config::default();
+        let runner = Runner::new(&provider, &config);
+        let runs = runner.run_case(&case).unwrap();
+        assert_eq!(runs[0].turns, 2);
+        assert_eq!(runs[0].history_command.as_deref(), Some(cmd));
     }
 
     #[test]
@@ -638,6 +747,7 @@ mod tests {
                     output: None,
                     index: 0,
                 }],
+                history_command: None,
             }],
             user: vec![],
             judge: vec![JudgeVerdict {
@@ -702,6 +812,7 @@ mod tests {
                     session_id: Some("sess-1".into()),
                     events: Vec::new(),
                     mock_calls: None,
+                    history_command: None,
                 },
                 AssistantTurn {
                     message: "Booked!".into(),
@@ -710,6 +821,7 @@ mod tests {
                     session_id: Some("sess-2".into()),
                     events: Vec::new(),
                     mock_calls: None,
+                    history_command: None,
                 },
             ],
             user: vec![UserTurn {
@@ -983,6 +1095,7 @@ mod tests {
                     session_id: Some(format!("sess-{n}")),
                     events: Vec::new(),
                     mock_calls: None,
+                    history_command: None,
                 })
             }
             fn simulate_user(
