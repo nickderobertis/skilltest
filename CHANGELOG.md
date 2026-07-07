@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.9.0](https://github.com/nickderobertis/skilltest/compare/v0.8.0...v0.9.0) (2026-07-07)
+
+### Features
+
+* record oneharness run history and surface a per-run review command ([#29](https://github.com/nickderobertis/skilltest/issues/29)) ([49afc94](https://github.com/nickderobertis/skilltest/commit/49afc94dc0c253dcab46293ad73a91447443a1f0))
+
+### Documentation
+
+* **screenshots:** add terminal screenshot + diffing (screencomp) setup ([#28](https://github.com/nickderobertis/skilltest/issues/28)) ([8d1854d](https://github.com/nickderobertis/skilltest/commit/8d1854ddc42ca92027136340d321b100518da065))
+
 ## [0.8.0](https://github.com/nickderobertis/skilltest/compare/v0.7.0...v0.8.0) (2026-07-07)
 
 ### ⚠ BREAKING CHANGES
