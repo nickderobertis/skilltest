@@ -58,10 +58,16 @@ returns the normalized `tool_call` events a run took (each a `ToolEvent` with
 test can **short-circuit** on bad behavior:
 
 ```python
-from skilltest_pytest import run_skill, tool_calls
+from skilltest_pytest import TestCase, run_skill, tool_calls, boolean
+
+EDIT_CASE = TestCase(
+    skill="skills/editor",
+    input="Update the config and commit it.",
+    evals=[boolean("the change was committed")],
+)
 
 def test_commits_but_never_deletes():
-    report = run_skill("cases/edit.skilltest.yaml")
+    report = run_skill(EDIT_CASE)
     calls = tool_calls(report.runs[0].transcript)
     assert any("git commit" in str(c.input) for c in calls)
     assert not any("rm -rf" in str(c.input) for c in calls)
@@ -73,7 +79,7 @@ from skilltest_pytest import stream_skill
 
 def test_makes_no_network_call():
     async def go():
-        async for ev in stream_skill("cases/edit.skilltest.yaml"):
+        async for ev in stream_skill(EDIT_CASE):
             assert ev.event.name != "curl", "skill made a network call"
     asyncio.run(go())   # or use pytest-asyncio and `async def test_...`
 ```

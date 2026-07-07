@@ -8,25 +8,12 @@ Schemas. Test-framework integrations build on it — use
 [`@skill-test/vitest`](../../plugins/vitest) if you want the vitest helpers; use
 this package directly from any other TypeScript/JavaScript code.
 
-```ts
-import { runSkill, validateSkill, assistantText, describeFailures } from "@skill-test/sdk";
-
-const report = await runSkill("cases/greet.yaml");
-if (!report.passed) throw new Error(describeFailures(report));
-// Mix in deterministic checks on the transcript:
-const text = assistantText(report.runs[0]!.transcript);
-
-const result = await validateSkill("skills/greeter");
-```
-
-### Define the case in code (recommended)
-
-Instead of a YAML file, build the whole case — skill, input, evals, an optional
-simulated user, mocks — in code and pass it straight to `runSkill`. Everything
-the YAML carries has a typed builder:
+Define the whole case — skill, input, evals, an optional simulated user, mocks —
+in code and pass it straight to `runSkill`. Everything a case YAML carries has a
+typed builder, so the case and its checks live in one place:
 
 ```ts
-import { runSkill, testCase, boolean, numeric } from "@skill-test/sdk";
+import { runSkill, testCase, boolean, numeric, assistantText, describeFailures } from "@skill-test/sdk";
 
 const report = await runSkill(
   testCase({
@@ -39,13 +26,27 @@ const report = await runSkill(
   }),
 );
 if (!report.passed) throw new Error(describeFailures(report));
+// Mix in deterministic checks on the transcript:
+const text = assistantText(report.runs[0]!.transcript);
 ```
 
 Add `user(persona, { doneWhen })` for a multi-turn case, and a `mocks` array of
 `stub`/`spy`/`deny`/`rewrite` (name them to reference from a `called` /
-`notCalled` eval). A YAML path (`runSkill("cases/greet.yaml")`) works everywhere
-a case object does; the field reference for both is
-[`docs/schema.md`](../../docs/schema.md).
+`notCalled` eval). Validate a skill definition with
+`validateSkill("skills/greeter")`.
+
+### Or point at existing YAML cases
+
+`runSkill` also takes a path to a test-case YAML file — or a directory of
+them — so a suite that keeps cases as data works unchanged, and the
+[vitest plugin](../../plugins/vitest)'s `discover` collects a whole tree of
+`*.skilltest.yaml` files in one line:
+
+```ts
+const report = await runSkill("cases/greet.yaml"); // or runSkill("cases/")
+```
+
+The field reference for both forms is [`docs/schema.md`](../../docs/schema.md).
 
 ### Tool events
 
@@ -55,9 +56,15 @@ commands, file edits, tool uses), lifted from oneharness's `--events`. Assert on
 in order); each `ToolEvent` has `kind`, `name`, `input`, `output`, `index`:
 
 ```ts
-import { runSkill, toolCalls } from "@skill-test/sdk";
+import { runSkill, testCase, toolCalls, boolean } from "@skill-test/sdk";
 
-const report = await runSkill("cases/edit.skilltest.yaml");
+const report = await runSkill(
+  testCase({
+    skill: "skills/editor",
+    input: "Update the config and commit it.",
+    evals: [boolean("the change was committed")],
+  }),
+);
 const calls = toolCalls(report.runs[0]!.transcript);
 console.assert(calls.some((c) => String(c.input?.command).includes("git commit")));
 console.assert(!calls.some((c) => String(c.input?.command).includes("rm -rf")));
@@ -65,15 +72,16 @@ console.assert(!calls.some((c) => String(c.input?.command).includes("rm -rf")));
 
 ### Streaming (opt-in)
 
-`streamSkill` returns a `SkillStream` you iterate with `for await` to receive each
-event live, and `break` to **short-circuit** — closing the stream tears the
-harness down, so a bad turn is cut off instead of paid for in full. `.report`
-holds the final report once the stream runs to completion:
+`streamSkill` takes the same case (or path) and returns a `SkillStream` you
+iterate with `for await` to receive each event live, and `break` to
+**short-circuit** — closing the stream tears the harness down, so a bad turn is
+cut off instead of paid for in full. `.report` holds the final report once the
+stream runs to completion:
 
 ```ts
 import { streamSkill } from "@skill-test/sdk";
 
-const stream = streamSkill("cases/edit.skilltest.yaml");
+const stream = streamSkill(myCase);
 for await (const ev of stream) {   // ev: StreamEvent — .case/.platform/.model/.turn/.event
   if (ev.event.name === "bash" && String(ev.event.input?.command).includes("rm -rf")) break;
 }
@@ -86,9 +94,11 @@ env var, or `PATH`; a provider override comes from `provider` or
 not thrown; bad input throws `SkilltestUsageError` (CLI exit 2) and provider
 problems throw `SkilltestProviderError` (exit 3).
 
-The types in `src/generated/` are **generated** from
-`schemas/report.schema.json` / `schemas/validation.schema.json` — themselves
-generated from the CLI's own types — via `just gen-contract`, and a drift gate
-in CI fails if anything is stale, so the types cannot diverge from the binary.
-They are types only: the runner trusts the shape after `JSON.parse`, because
-the gate (not runtime re-validation) is what guarantees it.
+The types in `src/generated/` are **generated** from the golden schemas in
+`schemas/` — themselves generated from the CLI's own types — via `just
+gen-contract`, and a drift gate in CI fails if anything is stale, so the types
+cannot diverge from the binary. That covers both directions: the report types
+the SDK parses (`generated/report.ts`) and the case types the builders
+construct (`generated/case.ts`). They are types only: the runner trusts the
+shape after `JSON.parse`, because the gate (not runtime re-validation) is what
+guarantees it.

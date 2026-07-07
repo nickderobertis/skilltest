@@ -60,27 +60,33 @@ test can **short-circuit** on bad behavior:
 
 ```ts
 import { it, expect } from "vitest";
-import { runSkill, toolCalls, streamSkill } from "@skill-test/vitest";
+import { runSkill, streamSkill, testCase, toolCalls, boolean } from "@skill-test/vitest";
+
+const editCase = testCase({
+  skill: "skills/editor",
+  input: "Update the config and commit it.",
+  evals: [boolean("the change was committed")],
+});
 
 it("commits without deleting", async () => {
-  const report = await runSkill("cases/edit.skilltest.yaml");
+  const report = await runSkill(editCase);
   const calls = toolCalls(report.runs[0]!.transcript);
   expect(calls.some((c) => String(c.input?.command).includes("git commit"))).toBe(true);
   expect(calls.some((c) => String(c.input?.command).includes("rm -rf"))).toBe(false);
 });
 
 it("makes no network call", async () => {
-  for await (const ev of streamSkill("cases/edit.skilltest.yaml")) {
+  for await (const ev of streamSkill(editCase)) {
     expect(ev.event.name).not.toBe("curl"); // break to abort early
   }
 });
 ```
 
-## Recommended: auto-discover a tree of cases
+## Auto-discover existing YAML cases
 
-When vitest is your primary test runner, keep your cases as data and let one
-test module collect them. Name each case `*.skilltest.yaml` (or `.yml`) and add
-a single `skills.test.ts`:
+Cases can also live as data: name each `*.skilltest.yaml` (or `.yml`) and let
+one test module collect the whole tree — useful when a suite already has YAML
+cases, or when non-engineers author them:
 
 ```ts
 // skills.test.ts
@@ -102,8 +108,7 @@ This is the closest vitest equivalent to pytest's auto-collection: vitest only
 collects its own test modules, so the one-line `discover()` call stands in for a
 file collector. Adding a case is then just dropping in a YAML file — no code
 change. Pass run options as the second argument (`discover("cases", { platforms:
-["claude-code"] })`); for matrices or deterministic mix-in assertions, reach for
-`runSkill` in an ordinary `test()` instead.
+["claude-code"] })`). YAML cases and code-defined ones mix freely in one suite.
 
 ## Configuration
 

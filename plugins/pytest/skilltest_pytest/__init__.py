@@ -1,17 +1,23 @@
 """skilltest-pytest: run AI-skill tests and natural-language evals as pytest.
 
-The pytest integration on top of [`skilltest-sdk`][skilltest_sdk]: drop a
-``*.skilltest.yaml`` next to your other tests and pytest collects it as a test
-item. The SDK's code-level API is re-exported here for convenience, so a pytest
-suite only needs one dependency:
+The pytest integration on top of [`skilltest-sdk`][skilltest_sdk], whose API is
+re-exported here so a pytest suite needs only this one dependency. Define the
+whole case in code (the recommended form):
 
-    from skilltest_pytest import run_skill, validate_skill
+    from skilltest_pytest import TestCase, run_skill, boolean, describe_failures
 
     def test_greeter():
-        report = run_skill("cases/greet.yaml")
+        case = TestCase(
+            skill="skills/greeter",
+            input="Greet Dr. Smith.",
+            evals=[boolean("the reply greets Dr. Smith by name")],
+        )
+        report = run_skill(case)
         assert report.passed, describe_failures(report)
-        # Mix in a deterministic check on the transcript:
-        assert "Dr. Smith" in assistant_text(report.runs[0].transcript)
+
+Existing YAML cases stay first-class: ``run_skill("cases/greet.yaml")`` runs a
+file, and any ``*.skilltest.yaml`` dropped next to your tests is auto-collected
+as a test item with no code at all.
 """
 
 from __future__ import annotations
