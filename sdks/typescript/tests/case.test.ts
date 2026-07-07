@@ -1,8 +1,10 @@
 import { beforeAll, describe, expect, it } from "vitest";
+import { compileCase } from "../src/case.js";
 import {
   SkilltestUsageError,
   boolean,
   called,
+  contains,
   notCalled,
   numeric,
   runSkill,
@@ -94,6 +96,62 @@ describe("code-defined cases", () => {
     expect(sudo.called).toBe(false);
   });
 
+  it("resolves evals referencing the mock/spy object directly", async () => {
+    // No string names to keep in sync: `called`/`notCalled` take the
+    // spy/stub object itself and resolve to its compiled declaration name —
+    // including an unnamed spy, which gets a declaration only because an
+    // eval references it. `where` narrows an object ref just like a string ref.
+    const push = stub({ pattern: /git push( --force)?\b/, output: "Everything up-to-date" });
+    const sudo = spy({ contains: "sudo" });
+    const report = await runSkill({
+      skill: skillDir("deployer"),
+      input: "Deploy the app",
+      mocks: [push, sudo],
+      evals: [
+        boolean("the reply reports `Everything up-to-date`"),
+        called(push, { times: 1, where: { command: contains("origin") } }),
+        notCalled(sudo),
+      ],
+    });
+    expect(report.passed).toBe(true);
+    expect(push.callCount).toBe(1);
+    expect(sudo.called).toBe(false);
+  });
+
+  it("compiles object refs to the assigned declaration names", () => {
+    // The compile-level pin for object references: unnamed mocks/spies get
+    // the positional auto-name, named ones keep their name, and every
+    // referencing eval carries the resolved string.
+    const push = stub({ pattern: /git push\b/, output: "ok" });
+    const sudo = spy({ contains: "sudo" });
+    const net = spy({ contains: "curl", name: "net" });
+    const compiled = compileCase({
+      skill: "skills/deployer",
+      input: "Deploy the app",
+      mocks: [push, sudo, net],
+      evals: [called(push), notCalled(sudo), notCalled(net)],
+    });
+    expect(compiled.mocks?.map((m) => m.name)).toEqual(["__case_mock_0", "__case_mock_1", "net"]);
+    expect(compiled.evals.map((e) => ("mock" in e ? e.mock : null))).toEqual([
+      "__case_mock_0",
+      "__case_mock_1",
+      "net",
+    ]);
+  });
+
+  it("throws when an eval references a mock outside the case", async () => {
+    // An object reference only resolves against the case's own `mocks` — a
+    // forgotten entry must be a loud usage error, never a vacuous pass.
+    const orphan = spy({ contains: "sudo" });
+    await expect(
+      runSkill({
+        skill: skillDir("deployer"),
+        input: "Deploy the app",
+        evals: [notCalled(orphan)],
+      }),
+    ).rejects.toThrowError(/not in this case's `mocks`/);
+  });
+
   it("composes with run-level mocks on an inline case", async () => {
     const git = spy({ tool: "bash", pattern: /\bgit\b/ });
     const report = await runSkill(
@@ -156,6 +214,8 @@ describe("code-defined cases", () => {
   });
 
   it("binds case-level mocks when a stream completes", async () => {
+    // A *named* mock passed by object: the eval resolves to the given name,
+    // and the streaming path compiles the case identically to the buffered one.
     const push = stub({
       pattern: /git push( --force)?\b/,
       output: "Everything up-to-date",
@@ -165,7 +225,7 @@ describe("code-defined cases", () => {
       skill: skillDir("deployer"),
       input: "Deploy the app",
       mocks: [push],
-      evals: [boolean("the reply reports `Everything up-to-date`")],
+      evals: [boolean("the reply reports `Everything up-to-date`"), called(push, { times: 1 })],
     });
     for await (const _ of stream) {
       // drain

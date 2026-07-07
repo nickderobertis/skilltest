@@ -15,14 +15,15 @@ skillTest(
   }),
 );
 
+// The eval references the stub by object — no name to keep in sync — and the
+// reference resolves through the plugin's re-export.
+const push = stub({ pattern: /git push( --force)?\b/, output: "Everything up-to-date" });
 skillTest(
   "deployer pushes exactly once (code-defined with a mock)",
   testCase({
     skill: skillDir("deployer"),
     input: "Deploy the app",
-    mocks: [
-      stub({ pattern: /git push( --force)?\b/, output: "Everything up-to-date", name: "push" }),
-    ],
-    evals: [boolean("the reply reports `Everything up-to-date`"), called("push", { times: 1 })],
+    mocks: [push],
+    evals: [boolean("the reply reports `Everything up-to-date`"), called(push, { times: 1 })],
   }),
 );

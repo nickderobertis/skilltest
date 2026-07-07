@@ -13,6 +13,7 @@ from skilltest_sdk import (
     TestCase,
     boolean,
     called,
+    contains,
     describe_failures,
     not_called,
     numeric,
@@ -106,6 +107,60 @@ def test_inline_case_with_named_mocks_and_call_evals(fixtures: Path) -> None:
     sudo.assert_not_called()
 
 
+def test_inline_case_evals_reference_mock_objects_directly(fixtures: Path) -> None:
+    # No string names to keep in sync: `called`/`not_called` take the
+    # spy/stub object itself and resolve to its compiled declaration name —
+    # including an unnamed spy, which gets a declaration only because an eval
+    # references it. `where` narrows an object ref just like a string ref.
+    push = stub(pattern=r"git push( --force)?\b", output="Everything up-to-date")
+    sudo = spy(contains="sudo")
+    case = TestCase(
+        skill=skills(fixtures) / "deployer",
+        input="Deploy the app",
+        mocks=[push, sudo],
+        evals=[
+            boolean("the reply reports `Everything up-to-date`"),
+            called(push, times=1, where={"command": contains("origin")}),
+            not_called(sudo),
+        ],
+    )
+    report = run_skill(case)
+    assert report.passed, describe_failures(report)
+    push.assert_called_once()
+    sudo.assert_not_called()
+
+
+def test_object_refs_compile_to_the_assigned_declaration_names() -> None:
+    # The compile-level pin for object references: unnamed mocks/spies get the
+    # positional auto-name, named ones keep their name, and every referencing
+    # eval carries the resolved string.
+    push = stub(pattern=r"git push\b", output="ok")
+    sudo = spy(contains="sudo")
+    net = spy(contains="curl", name="net")
+    case = TestCase(
+        skill="skills/deployer",
+        input="Deploy the app",
+        mocks=[push, sudo, net],
+        evals=[called(push), not_called(sudo), not_called(net)],
+    )
+    compiled = case._compile()
+    assert [m["name"] for m in compiled["mocks"]] == ["__case_mock_0", "__case_mock_1", "net"]
+    assert [e["mock"] for e in compiled["evals"]] == ["__case_mock_0", "__case_mock_1", "net"]
+
+
+def test_eval_referencing_a_mock_outside_the_case_is_loud(fixtures: Path) -> None:
+    # An object reference only resolves against the case's own `mocks` — a
+    # forgotten entry must be a loud usage error, never a vacuous pass.
+    orphan = spy(contains="sudo")
+    case = TestCase(
+        skill=skills(fixtures) / "deployer",
+        input="Deploy the app",
+        evals=[not_called(orphan)],
+    )
+    with pytest.raises(SkilltestUsageError, match="not in this case's `mocks`"):
+        run_skill(case)
+
+
 def test_inline_case_run_level_mocks_still_compose(fixtures: Path) -> None:
     # A case with no mocks of its own can still take run-level `mocks=`.
     git = spy(tool="bash", pattern=r"\bgit\b")
@@ -164,12 +219,14 @@ def test_case_spy_flag_turns_on_the_observation_channel(fixtures: Path) -> None:
 
 
 def test_streaming_binds_case_level_mocks_on_completion(fixtures: Path) -> None:
+    # A *named* mock passed by object: the eval resolves to the given name,
+    # and the streaming path compiles the case identically to the buffered one.
     push = stub(pattern=r"git push( --force)?\b", output="Everything up-to-date", name="push")
     case = TestCase(
         skill=skills(fixtures) / "deployer",
         input="Deploy the app",
         mocks=[push],
-        evals=[boolean("the reply reports `Everything up-to-date`")],
+        evals=[boolean("the reply reports `Everything up-to-date`"), called(push, times=1)],
     )
     stream = stream_skill(case)
 
@@ -221,7 +278,7 @@ def test_builders_compile_to_the_kitchen_sink_golden(fixtures: Path) -> None:
     golden, the Rust construction, and every SDK's builders together."""
     import json
 
-    from skilltest_sdk import contains, deny, rewrite
+    from skilltest_sdk import deny, rewrite
 
     push = stub(
         tool="bash",
@@ -255,7 +312,9 @@ def test_builders_compile_to_the_kitchen_sink_golden(fixtures: Path) -> None:
                 comparator=">",
                 name="finished",
             ),
-            called("push", times=1, where={"command": contains("origin")}, name="pushed-once"),
+            # One eval references its mock by *object*, one by string name —
+            # the two forms must compile to the identical golden JSON.
+            called(push, times=1, where={"command": contains("origin")}, name="pushed-once"),
             not_called("sudo", name="no-sudo"),
         ],
     )

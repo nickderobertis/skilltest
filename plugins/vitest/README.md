@@ -29,7 +29,7 @@ skillTest(
 ```
 
 Multi-turn cases add `user(...)`; call-count checks use `called` / `notCalled`
-referencing a named `stub`/`spy`. For a matrix or extra deterministic checks,
+taking the `stub`/`spy` object itself or a name you gave it. For a matrix or extra deterministic checks,
 call `runSkill` from an ordinary `test` — it takes the same case object:
 
 ```ts

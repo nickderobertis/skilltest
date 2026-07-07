@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from .case import (
     Eval,
+    MockRefEval,
     SimulatedUser,
     TestCase,
     boolean,
@@ -83,6 +84,7 @@ __all__ = [
     "Matcher",
     "Message",
     "MockCall",
+    "MockRefEval",
     "NumericDetail",
     "Report",
     "SimulatedUser",

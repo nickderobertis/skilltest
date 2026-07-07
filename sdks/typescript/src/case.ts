@@ -24,8 +24,20 @@
  * {@link import("./mock.js").spy | spy} / {@link import("./mock.js").stub | stub}
  * / {@link import("./mock.js").deny | deny} / {@link import("./mock.js").rewrite | rewrite}
  * objects you would pass to `runSkill({ mocks })` (bound for assertions after
- * the run, and referenceable by name from a `called`/`notCalled` eval), and
- * `evals` decide pass/fail.
+ * the run, and referenceable from a `called`/`notCalled` eval — pass the
+ * object itself, or its `name`), and `evals` decide pass/fail.
+ *
+ * ```ts
+ * const push = stub({ pattern: /git push\b/, output: "Everything up-to-date" });
+ * const report = await runSkill(
+ *   testCase({
+ *     skill: "skills/deployer",
+ *     input: "Deploy the app",
+ *     mocks: [push],
+ *     evals: [called(push, { times: 1 })], // the object, no string name to keep in sync
+ *   }),
+ * );
+ * ```
  *
  * The builders construct types **generated from the CLI's own input schema**
  * (`schemas/case.schema.json` → `src/generated/case.ts`, via `just
@@ -50,7 +62,7 @@ import type {
   NumericEval,
   SimulatedUser,
 } from "./generated/case.js";
-import { type Criterion, ToolMock, type ToolSpy, type WhereCriteria } from "./mock.js";
+import { type Criterion, ToolMock, ToolSpy, type WhereCriteria } from "./mock.js";
 
 export type {
   BooleanEval,
@@ -61,6 +73,24 @@ export type {
   SimulatedUser,
 } from "./generated/case.js";
 
+/** A `called`/`notCalled` eval holding the referenced {@link ToolSpy}/
+ * {@link ToolMock} *object* instead of a string name. Built by passing the
+ * object to {@link called}/{@link notCalled}; resolved to the object's
+ * compiled declaration name when the case compiles — the object must be in
+ * that case's `mocks`. */
+export interface MockRefEval {
+  type: "called" | "not_called";
+  mock: ToolSpy;
+  times?: number;
+  where?: Record<string, FieldPredicate>;
+  name?: string;
+}
+
+/** One eval as accepted by a {@link TestCaseInput}: a generated contract
+ * eval, or a {@link MockRefEval} (a `called`/`notCalled` holding the spy/mock
+ * object itself). */
+export type CaseEval = Eval | MockRefEval;
+
 /** A full test case defined in code — the twin of a `*.skilltest.yaml` file.
  * Pass one (via {@link testCase}) to {@link import("./runner.js").runSkill}. */
 export interface TestCaseInput {
@@ -70,14 +100,15 @@ export interface TestCaseInput {
   /** The initial data/prompt handed to the skill as the first user message. */
   input: string;
   /** The evals that decide pass/fail (must be non-empty). */
-  evals: Eval[];
+  evals: CaseEval[];
   /** Optional report label (defaults to `case`). */
   name?: string;
   /** Present ⇒ multi-turn (see {@link user}). */
   user?: SimulatedUser;
   /** Mock/spy objects for this case — the same builders `runSkill({ mocks })`
-   * takes. Bound for assertions after the run; a named one is referenceable
-   * from a `called`/`notCalled` eval. */
+   * takes. Bound for assertions after the run; referenceable from a
+   * `called`/`notCalled` eval (pass the object itself, or give it a `name`
+   * and reference that). */
   mocks?: ToolSpy[];
   /** Force the observation channel even without mocks (implied when `mocks` is
    * non-empty), so the report carries `mock_calls`. */
@@ -136,34 +167,54 @@ export function numeric(
   };
 }
 
-/** Deterministic (no judge): assert the named `mock`/spy observed at least one
- * matching call, or exactly `times`. Reference a spy/stub/… by the `name` you
- * gave it in the case's `mocks`. `where` narrows by input field. */
+/** Deterministic (no judge): assert the `mock`/spy observed at least one
+ * matching call, or exactly `times`. Pass the spy/stub/… object from the
+ * case's `mocks` directly, or reference it by the `name` you gave it. `where`
+ * narrows by input field. */
 export function called(
   mock: string,
+  options?: { times?: number; where?: WhereCriteria; name?: string },
+): CalledEval;
+export function called(
+  mock: ToolSpy,
+  options?: { times?: number; where?: WhereCriteria; name?: string },
+): MockRefEval;
+export function called(
+  mock: string | ToolSpy,
   options: { times?: number; where?: WhereCriteria; name?: string } = {},
-): CalledEval {
-  return {
-    type: "called",
-    mock,
+): CalledEval | MockRefEval {
+  const rest = {
     ...(options.times !== undefined && { times: options.times }),
     ...(options.where !== undefined && { where: compileWhere(options.where) }),
     ...(options.name !== undefined && { name: options.name }),
   };
+  return typeof mock === "string"
+    ? { type: "called", mock, ...rest }
+    : { type: "called", mock, ...rest };
 }
 
-/** Deterministic: assert the named `mock`/spy observed **no** matching call
- * (optionally narrowed by `where`). */
+/** Deterministic: assert the `mock`/spy (the object from the case's `mocks`,
+ * or its `name`) observed **no** matching call (optionally narrowed by
+ * `where`). */
 export function notCalled(
   mock: string,
+  options?: { where?: WhereCriteria; name?: string },
+): NotCalledEval;
+export function notCalled(
+  mock: ToolSpy,
+  options?: { where?: WhereCriteria; name?: string },
+): MockRefEval;
+export function notCalled(
+  mock: string | ToolSpy,
   options: { where?: WhereCriteria; name?: string } = {},
-): NotCalledEval {
-  return {
-    type: "not_called",
-    mock,
+): NotCalledEval | MockRefEval {
+  const rest = {
     ...(options.where !== undefined && { where: compileWhere(options.where) }),
     ...(options.name !== undefined && { name: options.name }),
   };
+  return typeof mock === "string"
+    ? { type: "not_called", mock, ...rest }
+    : { type: "not_called", mock, ...rest };
 }
 
 /** A simulated user for a multi-turn case: after each assistant turn the judge
@@ -197,19 +248,49 @@ export function isTestCaseInput(value: unknown): value is TestCaseInput {
 /** @internal The JSON the CLI ingests via `--case-json`, typed as the
  * generated case model so the payload shape is pinned to the input contract:
  * assigns names to the case's mocks (so binding and `called`/`notCalled`
- * references resolve) and turns the spy channel on when any mock/spy is
- * present. */
+ * references resolve — including evals holding the mock/spy *object*) and
+ * turns the spy channel on when any mock/spy is present. */
 export function compileCase(input: TestCaseInput): CaseJson {
-  const decls = compileCaseMocks(input.mocks ?? []);
+  const referenced = new Set(input.evals.filter(isMockRefEval).map((evalRef) => evalRef.mock));
+  const { decls, names } = compileCaseMocks(input.mocks ?? [], referenced);
   return {
     skill: input.skill,
     input: input.input,
-    evals: input.evals,
+    evals: input.evals.map((entry) => resolveEval(entry, names)),
     ...(input.name !== undefined && { name: input.name }),
     ...(input.user !== undefined && { user: input.user }),
     ...(decls.length > 0 && { mocks: decls }),
     ...((input.spy || (input.mocks?.length ?? 0) > 0) && { spy: true }),
   };
+}
+
+function isMockRefEval(entry: CaseEval): entry is MockRefEval {
+  return (entry.type === "called" || entry.type === "not_called") && entry.mock instanceof ToolSpy;
+}
+
+/** The generated eval, with an object reference swapped for its compiled
+ * declaration name — which only exists when the object is in the case's own
+ * `mocks`, so a forgotten entry is a loud usage error, never a vacuous pass. */
+function resolveEval(entry: CaseEval, names: Map<ToolSpy, string>): Eval {
+  if (!isMockRefEval(entry)) return entry;
+  const resolved = names.get(entry.mock);
+  if (resolved === undefined) {
+    throw new SkilltestUsageError(
+      `a ${entry.type} eval references a spy/mock object that is not in this case's \`mocks\` — pass the same object in the case's mocks array`,
+    );
+  }
+  const rest = {
+    ...(entry.where !== undefined && { where: entry.where }),
+    ...(entry.name !== undefined && { name: entry.name }),
+  };
+  return entry.type === "called"
+    ? {
+        type: "called",
+        mock: resolved,
+        ...(entry.times !== undefined && { times: entry.times }),
+        ...rest,
+      }
+    : { type: "not_called", mock: resolved, ...rest };
 }
 
 function compileWhere(where: WhereCriteria): Record<string, FieldPredicate> {
@@ -236,14 +317,31 @@ function compileWhereCriterion(key: string, criterion: Criterion): FieldPredicat
   );
 }
 
-function compileCaseMocks(mocks: readonly ToolSpy[]): import("./generated/case.js").MockDecl[] {
+/** Compile a case's `mocks` into declarations plus the object→assigned-name
+ * map eval object references resolve through: every intercepting mock becomes
+ * an action declaration; a **named** spy — or an unnamed one a
+ * `called`/`notCalled` eval references — becomes a no-action declaration.
+ * Other unnamed spies contribute nothing here (they filter locally after the
+ * run) but still turn the channel on via the case's `spy` flag. */
+function compileCaseMocks(
+  mocks: readonly ToolSpy[],
+  referenced: ReadonlySet<ToolSpy>,
+): { decls: import("./generated/case.js").MockDecl[]; names: Map<ToolSpy, string> } {
   const decls: import("./generated/case.js").MockDecl[] = [];
+  const names = new Map<ToolSpy, string>();
   mocks.forEach((mock, index) => {
     if (mock instanceof ToolMock) {
-      decls.push(mock.decl(mock.mockName ?? `__case_mock_${index}`));
+      const assigned = mock.mockName ?? `__case_mock_${index}`;
+      decls.push(mock.decl(assigned));
+      names.set(mock, assigned);
     } else if (mock.mockName !== undefined) {
       decls.push(mock.caseDecl(mock.mockName));
+      names.set(mock, mock.mockName);
+    } else if (referenced.has(mock)) {
+      const assigned = `__case_mock_${index}`;
+      decls.push(mock.caseDecl(assigned));
+      names.set(mock, assigned);
     }
   });
-  return decls;
+  return { decls, names };
 }

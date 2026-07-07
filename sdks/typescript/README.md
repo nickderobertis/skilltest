@@ -31,8 +31,8 @@ const text = assistantText(report.runs[0]!.transcript);
 ```
 
 Add `user(persona, { doneWhen })` for a multi-turn case, and a `mocks` array of
-`stub`/`spy`/`deny`/`rewrite` (name them to reference from a `called` /
-`notCalled` eval). Validate a skill definition with
+`stub`/`spy`/`deny`/`rewrite` (a `called` / `notCalled` eval takes the mock
+object itself, or a `name` you gave it). Validate a skill definition with
 `validateSkill("skills/greeter")`.
 
 ### Or point at existing YAML cases

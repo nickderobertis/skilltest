@@ -133,15 +133,16 @@ builders map one-to-one onto the fields above:
 # Python (skilltest-sdk / skilltest-pytest)
 from skilltest_sdk import TestCase, run_skill, boolean, numeric, called, stub, user
 
+push = stub(pattern=r"git push\b", output="Everything up-to-date")
 case = TestCase(
     skill="skills/greeter",          # relative to the working directory, not a file
     input="Greet Dr. Smith, who has an appointment today.",
     user=user("a terse patient", done_when="the appointment is confirmed"),  # optional
-    mocks=[stub(pattern=r"git push\b", output="Everything up-to-date", name="push")],
+    mocks=[push],
     evals=[
         boolean("the reply greets Dr. Smith by name"),
         numeric("how warm is the tone", min=0, max=10, threshold=7),
-        called("push", times=1),     # references the named mock above
+        called(push, times=1),       # the mock object itself; a name= string also works
     ],
 )
 report = run_skill(case)
@@ -151,15 +152,16 @@ report = run_skill(case)
 // TypeScript (@skill-test/sdk / @skill-test/vitest)
 import { runSkill, testCase, boolean, numeric, called, stub, user } from "@skill-test/sdk";
 
+const push = stub({ pattern: /git push\b/, output: "Everything up-to-date" });
 const report = await runSkill(testCase({
   skill: "skills/greeter",
   input: "Greet Dr. Smith, who has an appointment today.",
   user: user("a terse patient", { doneWhen: "the appointment is confirmed" }),
-  mocks: [stub({ pattern: /git push\b/, output: "Everything up-to-date", name: "push" })],
+  mocks: [push],
   evals: [
     boolean("the reply greets Dr. Smith by name"),
     numeric("how warm is the tone", { min: 0, max: 10, threshold: 7 }),
-    called("push", { times: 1 }),
+    called(push, { times: 1 }), // the mock object itself; a name string also works
   ],
 }));
 ```
