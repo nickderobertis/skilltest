@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import {
   SkilltestProviderError,
+  SkilltestTimeoutError,
   SkilltestUsageError,
   assistantText,
   runSkill,
@@ -113,9 +114,10 @@ describe("runSkill", () => {
     ).rejects.toBeInstanceOf(SkilltestProviderError);
   });
 
-  it("carries the structured kind/context on a classified provider failure", async () => {
-    // oneharness reports a deadline as `status: "timeout"`; the SDK surfaces it
-    // as a typed `kind` so consumers branch on the category, not the message.
+  it("throws the kind-specific subclass on a classified provider failure", async () => {
+    // oneharness reports a deadline as `status: "timeout"`; the SDK throws the
+    // kind-specific SkilltestTimeoutError (still a SkilltestProviderError) so a
+    // handler can `instanceof`-check one category, not parse the message.
     const { config, cleanup } = fakeOneharnessConfig(
       '{"results":[{"status":"timeout","stderr":"deadline exceeded"}]}',
     );
@@ -130,8 +132,9 @@ describe("runSkill", () => {
       await runSkill(caseFile("greet_pass.yaml"), { config }).catch((err) => {
         caught = err;
       });
+      expect(caught).toBeInstanceOf(SkilltestTimeoutError);
       expect(caught).toBeInstanceOf(SkilltestProviderError);
-      const err = caught as SkilltestProviderError;
+      const err = caught as SkilltestTimeoutError;
       expect(err.kind).toBe("timeout");
       expect(err.context).toBe("oneharness:claude-code");
     } finally {

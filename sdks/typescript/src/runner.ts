@@ -19,7 +19,12 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { type TestCaseInput, compileCase, isTestCaseInput } from "./case.js";
-import { SkilltestError, SkilltestProviderError, SkilltestUsageError } from "./errors.js";
+import {
+  SkilltestError,
+  SkilltestProviderError,
+  SkilltestUsageError,
+  providerErrorFor,
+} from "./errors.js";
 import type { ReportError } from "./generated/error.js";
 import type { Report } from "./generated/report.js";
 import type { ValidationReport } from "./generated/validation.js";
@@ -243,7 +248,9 @@ export function raiseForCode(code: number | null, detail: string, structured?: R
   const message = structured?.message || detail;
   if (code === 2) throw new SkilltestUsageError(message);
   if (code === 3) {
-    throw new SkilltestProviderError(message, {
+    // The kind-specific subclass (SkilltestTimeoutError, …) so a handler can
+    // `instanceof`-check one category; falls back to the base for other/none.
+    throw providerErrorFor(message, {
       kind: structured?.kind ?? undefined,
       context: structured?.context ?? undefined,
     });

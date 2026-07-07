@@ -36,8 +36,16 @@ from .case import (
 )
 from .errors import (
     ProviderErrorKind,
+    SkilltestAuthError,
     SkilltestError,
+    SkilltestModelNotFoundError,
+    SkilltestOverloadedError,
+    SkilltestProtocolError,
     SkilltestProviderError,
+    SkilltestQuotaError,
+    SkilltestRateLimitError,
+    SkilltestSpawnError,
+    SkilltestTimeoutError,
     SkilltestUsageError,
 )
 from .mock import (
@@ -95,8 +103,16 @@ __all__ = [
     "ReportError",
     "SimulatedUser",
     "SkillStream",
+    "SkilltestAuthError",
     "SkilltestError",
+    "SkilltestModelNotFoundError",
+    "SkilltestOverloadedError",
+    "SkilltestProtocolError",
     "SkilltestProviderError",
+    "SkilltestQuotaError",
+    "SkilltestRateLimitError",
+    "SkilltestSpawnError",
+    "SkilltestTimeoutError",
     "SkilltestUsageError",
     "StreamEvent",
     "Summary",

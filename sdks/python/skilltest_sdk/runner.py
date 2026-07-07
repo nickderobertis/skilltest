@@ -276,7 +276,9 @@ def raise_for_code(
     if code == 3:
         kind = structured.kind if structured else None
         context = structured.context if structured else None
-        raise SkilltestProviderError(message, kind=kind, context=context)
+        # The kind-specific subclass (SkilltestTimeoutError, …) so a handler can
+        # catch one category; falls back to the base for None/"other".
+        raise SkilltestProviderError.for_kind(message, kind=kind, context=context)
     raise SkilltestError(f"skilltest exited {code}: {message}")
 
 

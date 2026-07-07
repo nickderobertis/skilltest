@@ -292,9 +292,18 @@ a machine consumer gets the failure category without parsing stderr:
 The human hint still goes to stderr for the terminal; the structured object is
 additive on a stdout channel that was previously empty on failure. Under
 `--format json-stream` the same object is the terminal
-`{"type":"error","error":{…}}` NDJSON line. The SDKs surface it as a typed
-exception: `SkilltestProviderError.kind`/`.context` (Python) and
-`SkilltestProviderError.kind`/`.context` (TypeScript).
+`{"type":"error","error":{…}}` NDJSON line.
+
+The SDKs surface it as a **kind-specific exception** carrying `.kind`/`.context`
+— one subclass per concrete kind (`SkilltestTimeoutError`, `SkilltestAuthError`,
+…), all extending `SkilltestProviderError`, so a handler catches one category
+directly (`except SkilltestTimeoutError` / `catch (e) { if (e instanceof
+SkilltestTimeoutError) }`) while a catch on the base still catches every provider
+failure. The `other` catch-all and unclassified failures surface as the base
+`SkilltestProviderError`. The subclass set can't drift from the Rust enum: in
+TypeScript the kind→class registry is a `Record<ProviderErrorKind, …>` (a missing
+kind fails `tsc`), and in Python a test ties the registry to the generated
+`ProviderErrorKind` vocabulary.
 
 ## The contracts: how the CLI and the SDKs stay in sync
 

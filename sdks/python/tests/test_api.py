@@ -10,7 +10,9 @@ import pytest
 from skilltest_sdk import (
     NumericDetail,
     ProviderErrorKind,
+    SkilltestAuthError,
     SkilltestProviderError,
+    SkilltestTimeoutError,
     SkilltestUsageError,
     assistant_text,
     describe_failures,
@@ -105,22 +107,24 @@ def _fake_oneharness_config(tmp_path: Path, results_json: str) -> Path:
     return cfg
 
 
-def test_provider_error_carries_structured_kind(
+def test_provider_error_raises_the_kind_specific_subclass(
     cases: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # oneharness reports a deadline as `status: "timeout"`; the SDK surfaces it as
-    # a typed `kind`, so consumers branch on the category instead of the message.
+    # oneharness reports a deadline as `status: "timeout"`; the SDK raises the
+    # kind-specific SkilltestTimeoutError so a handler can catch it directly —
+    # and it is still a SkilltestProviderError.
     monkeypatch.delenv("SKILLTEST_PROVIDER", raising=False)
     cfg = _fake_oneharness_config(
         tmp_path, '{"results":[{"status":"timeout","stderr":"deadline exceeded"}]}'
     )
-    with pytest.raises(SkilltestProviderError) as exc:
+    with pytest.raises(SkilltestTimeoutError) as exc:
         run_skill(cases / "greet_pass.yaml", config=cfg)
+    assert isinstance(exc.value, SkilltestProviderError)
     assert exc.value.kind == "timeout"
     assert exc.value.context == "oneharness:claude-code"
 
 
-def test_classified_auth_failure_carries_its_kind(
+def test_classified_auth_failure_raises_auth_subclass(
     cases: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.delenv("SKILLTEST_PROVIDER", raising=False)
@@ -128,9 +132,22 @@ def test_classified_auth_failure_carries_its_kind(
         tmp_path,
         '{"results":[{"status":"error","failure_kind":"auth","error":"no creds"}]}',
     )
-    with pytest.raises(SkilltestProviderError) as exc:
+    with pytest.raises(SkilltestAuthError) as exc:
         run_skill(cases / "greet_pass.yaml", config=cfg)
     assert exc.value.kind == "auth"
+
+
+def test_provider_error_subclasses_cover_every_kind() -> None:
+    # Drift guard: every generated `ProviderErrorKind` (bar the `other`
+    # catch-all, which maps to the base) has a registered subclass, and none is
+    # extra — so a kind added to the Rust enum fails here until its subclass
+    # exists.
+    registered = set(SkilltestProviderError._registry)
+    expected = set(get_args(ProviderErrorKind)) - {"other"}
+    assert registered == expected
+    # `other` and unclassified failures resolve to the base type.
+    assert type(SkilltestProviderError.for_kind("x", kind="other")) is SkilltestProviderError
+    assert type(SkilltestProviderError.for_kind("x")) is SkilltestProviderError
 
 
 def test_usage_error_has_no_kind(tmp_path: Path) -> None:
