@@ -68,6 +68,21 @@ fn fake_oneharness(dir: &std::path::Path, failure_kind: &str) -> PathBuf {
     )
 }
 
+/// A fake `oneharness` speaking the `run --stream` NDJSON protocol: a single
+/// terminal `{"type":"result","report":{…}}` line whose result has the given
+/// `status` (no `failure_kind`), so the streaming pipeline's failure path is
+/// exercised end to end.
+fn fake_oneharness_stream(dir: &std::path::Path, status: &str) -> PathBuf {
+    script(
+        dir,
+        "oneharness",
+        &format!(
+            "cat >/dev/null\nprintf '%s\\n' '{{\"type\":\"result\",\"report\":\
+             {{\"results\":[{{\"status\":\"{status}\",\"stderr\":\"simulated {status}\"}}]}}}}'\n"
+        ),
+    )
+}
+
 fn run_passing_case(extra: &[&str]) -> Output {
     let mut cmd = Command::new(skilltest());
     cmd.arg("run")
@@ -230,6 +245,30 @@ fn json_stream_error_emits_a_terminal_error_line() {
     let obj: Value = serde_json::from_str(line).expect("the terminal line is JSON");
     assert_eq!(obj["type"], "error");
     assert_eq!(obj["error"]["code"], "usage");
+}
+
+#[test]
+fn json_stream_provider_error_emits_a_classified_terminal_line() {
+    // A provider failure *during* a streamed run (not a pre-stream usage error)
+    // is emitted as the terminal `{"type":"error",…}` line, classified — so the
+    // streaming SDK path surfaces the same typed error as the buffered one.
+    let dir = temp_dir("json-stream-provider");
+    let oh = fake_oneharness_stream(&dir, "timeout");
+    let out = Command::new(skilltest())
+        .arg("run")
+        .arg(fixtures().join("cases/greet_pass.yaml"))
+        .args(["--oneharness-bin", oh.to_str().unwrap()])
+        .args(["--platform", "claude-code", "--model", "sonnet"])
+        .args(["--format", "json-stream"])
+        .output()
+        .expect("executes");
+    assert_eq!(out.status.code(), Some(3));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let line = stdout.lines().last().expect("a terminal NDJSON line");
+    let obj: Value = serde_json::from_str(line).expect("the terminal line is JSON");
+    assert_eq!(obj["type"], "error");
+    assert_eq!(obj["error"]["code"], "provider");
+    assert_eq!(obj["error"]["kind"], "timeout");
 }
 
 #[test]

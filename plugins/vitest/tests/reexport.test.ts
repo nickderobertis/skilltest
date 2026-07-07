@@ -1,7 +1,12 @@
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { beforeAll, expect, it } from "vitest";
 // One dependency is enough for a vitest suite: the SDK's code-level API is
 // re-exported straight from @skill-test/vitest.
 import {
+  SkilltestProviderError,
+  SkilltestTimeoutError,
   assistantText,
   boolean,
   called,
@@ -79,4 +84,37 @@ it("re-exports the tool-event and streaming surfaces", async () => {
     names.push(ev.event.name);
   }
   expect(names).toEqual(["edit_file", "bash"]);
+});
+
+it("re-exports the kind-specific provider error and throws it", async () => {
+  // A plugin user can `catch (e) { if (e instanceof SkilltestTimeoutError) }`
+  // without importing the SDK: the error surface rides the one-dependency
+  // re-export, and a provider failure through the plugin's runSkill throws it.
+  const dir = mkdtempSync(join(tmpdir(), "skilltest-vitest-err-"));
+  const oh = join(dir, "oneharness");
+  writeFileSync(
+    oh,
+    `#!/bin/sh\ncat >/dev/null\nprintf '%s' '{"results":[{"status":"timeout","stderr":"deadline"}]}'\n`,
+  );
+  chmodSync(oh, 0o755);
+  const config = join(dir, "skilltest.yaml");
+  writeFileSync(
+    config,
+    `provider:\n  kind: oneharness\n  bin: ${oh}\n  judge_harness: claude-code\n  timeout_secs: 5\nplatforms: [claude-code]\nmodels: [sonnet]\n`,
+  );
+  const savedProvider = process.env.SKILLTEST_PROVIDER;
+  // biome-ignore lint/performance/noDelete: the env var must be truly removed, not set to "undefined"
+  delete process.env.SKILLTEST_PROVIDER;
+  try {
+    let caught: unknown;
+    await runSkill(caseFile("greet_pass.yaml"), { config }).catch((err) => {
+      caught = err;
+    });
+    expect(caught).toBeInstanceOf(SkilltestTimeoutError);
+    expect(caught).toBeInstanceOf(SkilltestProviderError);
+    expect((caught as SkilltestTimeoutError).kind).toBe("timeout");
+  } finally {
+    if (savedProvider !== undefined) process.env.SKILLTEST_PROVIDER = savedProvider;
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
