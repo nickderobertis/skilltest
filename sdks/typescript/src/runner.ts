@@ -33,6 +33,13 @@ import { type ToolSpy, bindMocks, compileDecls } from "./mock.js";
 /** Environment variables supplying defaults for the binary and provider. */
 export const ENV_BIN = "SKILLTEST_BIN";
 export const ENV_PROVIDER = "SKILLTEST_PROVIDER";
+/**
+ * Env var the CLI reads as the default `oneharness` binary (only when a config
+ * does not set `provider.bin`). The runner points it at the `oneharness-cli`
+ * dependency so the default provider works with no separate install and without
+ * `node_modules/.bin` on PATH.
+ */
+export const ENV_ONEHARNESS_BIN = "SKILLTEST_ONEHARNESS_BIN";
 
 export interface RunOptions {
   /** Path to the `skilltest` binary (default: `$SKILLTEST_BIN` or `skilltest`). */
@@ -123,6 +130,63 @@ function ensureExecutable(bin: string): void {
  */
 export function resolveBin(bin: string | undefined): string {
   return bin ?? process.env[ENV_BIN] ?? bundledBin() ?? "skilltest";
+}
+
+/**
+ * `process.platform`-`process.arch` -> the `@oneharness/cli-*` package that
+ * carries the prebuilt native binary (a transitive optional dependency of
+ * `oneharness-cli`). Mirrors the map in the oneharness-cli launcher.
+ */
+const ONEHARNESS_PACKAGES: Record<string, string | undefined> = {
+  "linux-x64": "@oneharness/cli-linux-x64",
+  "linux-arm64": "@oneharness/cli-linux-arm64",
+  "darwin-x64": "@oneharness/cli-darwin-x64",
+  "darwin-arm64": "@oneharness/cli-darwin-arm64",
+  "win32-x64": "@oneharness/cli-win32-x64",
+};
+
+/**
+ * Absolute path to the **native** `oneharness` binary inside the host's
+ * `@oneharness/cli-<platform>` package (oneharness-cli's optional dependency),
+ * or `undefined` when it is not resolvable — an unsupported host, or an install
+ * that skipped optional dependencies. The caller then falls back to `oneharness`
+ * on PATH.
+ *
+ * skilltest execs this binary directly. We deliberately do *not* fall back to
+ * oneharness-cli's `bin/oneharness.js` launcher: it is a Node shim that boots a
+ * second `node` process per call, and it resolves the platform package the same
+ * way this does — so it can only ever fail where this fails, never succeed, while
+ * ignoring PATH. Returning `undefined` (→ PATH) is both simpler and more useful.
+ */
+export function bundledOneharness(): string | undefined {
+  const pkg = ONEHARNESS_PACKAGES[`${process.platform}-${process.arch}`];
+  if (pkg === undefined) return undefined;
+  try {
+    // Resolve the platform package in oneharness-cli's scope: it is a transitive
+    // optional dependency, so it is not resolvable from the SDK directly.
+    const cliDir = dirname(require.resolve("oneharness-cli/package.json"));
+    const manifest = require.resolve(`${pkg}/package.json`, { paths: [cliDir] });
+    const exe = process.platform === "win32" ? "oneharness.exe" : "oneharness";
+    const native = join(dirname(manifest), "bin", exe);
+    if (!existsSync(native)) return undefined;
+    ensureExecutable(native);
+    return native;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The environment for the `skilltest` subprocess: the parent's, plus
+ * {@link ENV_ONEHARNESS_BIN} pointed at the bundled oneharness. Returns
+ * `process.env` unchanged when the caller already set the variable (honoring
+ * their choice) or when no bundled oneharness is resolvable.
+ */
+export function childEnv(): NodeJS.ProcessEnv {
+  if (process.env[ENV_ONEHARNESS_BIN]) return process.env;
+  const bundled = bundledOneharness();
+  if (bundled === undefined) return process.env;
+  return { ...process.env, [ENV_ONEHARNESS_BIN]: bundled };
 }
 
 export function resolveProvider(provider: string | string[] | undefined): string | undefined {
@@ -260,7 +324,7 @@ export function raiseForCode(code: number | null, detail: string, structured?: R
 
 function capture(bin: string, args: string[], cwd: string | undefined): Promise<Captured> {
   return new Promise((resolve, reject) => {
-    const child = spawn(bin, args, { cwd });
+    const child = spawn(bin, args, { cwd, env: childEnv() });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (chunk: Buffer) => {

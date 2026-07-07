@@ -21,6 +21,9 @@
     }
   },
   "files": ["dist"],
+  "dependencies": {
+    "oneharness-cli": "^0.3.7"
+  },
   "optionalDependencies": {
     "@skill-test/cli-linux-x64": "workspace:*",
     "@skill-test/cli-linux-arm64": "workspace:*",

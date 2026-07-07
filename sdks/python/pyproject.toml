@@ -8,6 +8,11 @@ license = "MIT"
 authors = [{ name = "Nick DeRobertis" }]
 dependencies = [
     "pydantic>=2.7",
+    # Bundles the `oneharness` binary the default provider drives, so installing
+    # the SDK is all the setup a live run needs — no separate oneharness install.
+    # The runner points skilltest at it via SKILLTEST_ONEHARNESS_BIN. Bounded to
+    # the 0.3.x line skilltest's OneharnessProvider targets (v0.3.6+ features).
+    "oneharness-cli>=0.3.7,<0.4",
 ]
 
 [dependency-groups]

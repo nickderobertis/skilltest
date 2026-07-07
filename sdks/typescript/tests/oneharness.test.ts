@@ -5,30 +5,27 @@
  * proven against the real seam — rules compile, `--mocks` delivery, the real
  * `oneharness mock` responder, the spy JSONL, and binding.
  *
- * Skipped (not failed) when `oneharness` is not on PATH; install it with
- * `just install-oneharness` to run these locally.
+ * oneharness now ships as the SDK's `oneharness-cli` dependency, so under an
+ * installed workspace these run against the bundled launcher (resolved by
+ * {@link bundledOneharness}). Still skipped (not failed) when it is not
+ * resolvable, e.g. a checkout without `pnpm install`.
  */
-import { execFileSync } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { contains, matching, runSkill, spy, stub } from "../src/index.js";
+import { bundledOneharness } from "../src/runner.js";
 import { FIXTURES } from "./helpers.js";
 
-function hasOneharness(): boolean {
-  try {
-    execFileSync("oneharness", ["--version"], { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
-}
+// The `oneharness` binary the CLI drives: the bundled launcher when installed
+// (the common case), else `oneharness` on PATH as a fallback.
+const ONEHARNESS_BIN = bundledOneharness();
 
 const OH_FIXTURES = join(FIXTURES, "oneharness");
 const CASE = join(OH_FIXTURES, "cases", "spy_plain.yaml");
 
-describe.skipIf(!hasOneharness())("mocks through real oneharness", () => {
+describe.skipIf(!ONEHARNESS_BIN)("mocks through real oneharness", () => {
   let config: string;
   let savedProvider: string | undefined;
 
@@ -46,7 +43,7 @@ describe.skipIf(!hasOneharness())("mocks through real oneharness", () => {
       [
         "provider:",
         "  kind: oneharness",
-        "  bin: oneharness",
+        `  bin: ${JSON.stringify(ONEHARNESS_BIN)}`,
         "  judge_harness: claude-code",
         "  timeout_secs: 60",
         "platforms: [claude-code]",

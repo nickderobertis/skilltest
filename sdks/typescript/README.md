@@ -94,6 +94,11 @@ env var, or `PATH`; a provider override comes from `provider` or
 not thrown; bad input throws `SkilltestUsageError` (CLI exit 2) and provider
 problems throw `SkilltestProviderError` (exit 3).
 
+The default provider drives [`oneharness`](https://github.com/nickderobertis/oneharness),
+which installs with this package (the `oneharness-cli` dependency) — no separate
+step. The SDK points the CLI at it via `SKILLTEST_ONEHARNESS_BIN`; set that
+variable, or a config `provider.bin`, to use a different `oneharness`.
+
 The types in `src/generated/` are **generated** from the golden schemas in
 `schemas/` — themselves generated from the CLI's own types — via `just
 gen-contract`, and a drift gate in CI fails if anything is stale, so the types

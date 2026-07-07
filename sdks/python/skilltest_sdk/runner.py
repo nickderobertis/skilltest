@@ -11,8 +11,9 @@ import contextlib
 import json
 import os
 import subprocess
+import sysconfig
 import tempfile
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 
 from pydantic import BaseModel, ValidationError
@@ -27,6 +28,10 @@ from .models import Report, ValidationReport
 #: packages, CI) can locate the binary and provider without per-call arguments.
 ENV_BIN = "SKILLTEST_BIN"
 ENV_PROVIDER = "SKILLTEST_PROVIDER"
+#: Env var the CLI reads as the default ``oneharness`` binary (only when a config
+#: does not set ``provider.bin``). The runner points it at the ``oneharness-cli``
+#: dependency so the default provider works with no separate install.
+ENV_ONEHARNESS_BIN = "SKILLTEST_ONEHARNESS_BIN"
 
 # Exit codes that still produce a JSON report (0 = all passed, 1 = some failed).
 _REPORTING_CODES = frozenset({0, 1})
@@ -75,6 +80,38 @@ def _resolve_provider(provider: str | Sequence[str] | None) -> str | None:
     return " ".join(provider)
 
 
+#: Name of the ``oneharness`` console entry point the ``oneharness-cli`` dependency
+#: installs into the environment's scripts directory.
+_ONEHARNESS_NAME = "oneharness.exe" if os.name == "nt" else "oneharness"
+
+
+def _bundled_oneharness() -> str | None:
+    """Path to the ``oneharness`` binary the ``oneharness-cli`` dependency installs,
+    or ``None`` when it is not present. ``oneharness-cli`` drops its console entry
+    into this interpreter's scripts directory (the venv's ``bin``), so the default
+    provider resolves oneharness even when that directory is not on ``PATH`` (e.g.
+    a non-activated venv, or a Node test runner spawning the CLI)."""
+    scripts = sysconfig.get_path("scripts")
+    if scripts:
+        candidate = Path(scripts) / _ONEHARNESS_NAME
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
+def child_env() -> Mapping[str, str] | None:
+    """The environment for the ``skilltest`` subprocess: the parent's, plus
+    [`ENV_ONEHARNESS_BIN`] pointed at the bundled oneharness. Returns ``None``
+    (inherit the parent env unchanged) when the caller already set the variable —
+    honoring their choice — or when no bundled oneharness is present."""
+    if os.environ.get(ENV_ONEHARNESS_BIN):
+        return None
+    bundled = _bundled_oneharness()
+    if bundled is None:
+        return None
+    return {**os.environ, ENV_ONEHARNESS_BIN: bundled}
+
+
 def _run(argv: list[str], cwd: str | Path | None) -> subprocess.CompletedProcess[str]:
     try:
         return subprocess.run(
@@ -83,6 +120,7 @@ def _run(argv: list[str], cwd: str | Path | None) -> subprocess.CompletedProcess
             text=True,
             cwd=cwd,
             check=False,
+            env=child_env(),
         )
     except FileNotFoundError as exc:
         raise SkilltestProviderError(

@@ -11,8 +11,17 @@ use serde::{Deserialize, Serialize};
 use crate::error::{Error, Result};
 use crate::mock::MockDecl;
 
+/// Environment variable the SDKs set to the `oneharness` binary they bundle (the
+/// `oneharness-cli` PyPI/npm package installed alongside the SDK), so a run
+/// resolves oneharness with no `PATH` setup. It is only a *default*: an explicit
+/// config `provider.bin` (or the `--oneharness-bin` flag) still wins.
+pub const ONEHARNESS_BIN_ENV: &str = "SKILLTEST_ONEHARNESS_BIN";
+
 fn default_oneharness_bin() -> String {
-    "oneharness".to_string()
+    match std::env::var(ONEHARNESS_BIN_ENV) {
+        Ok(bin) if !bin.trim().is_empty() => bin,
+        _ => "oneharness".to_string(),
+    }
 }
 
 fn default_judge_harness() -> String {
@@ -40,7 +49,9 @@ fn default_true() -> bool {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OneharnessConfig {
-    /// The `oneharness` binary (resolved on `PATH`).
+    /// The `oneharness` binary. When unset, defaults to `$SKILLTEST_ONEHARNESS_BIN`
+    /// (the path the SDKs point at their bundled `oneharness-cli`), else
+    /// `oneharness` resolved on `PATH`.
     #[serde(default = "default_oneharness_bin")]
     pub bin: String,
     /// The harness used for evals and the simulated user (kept independent of the
@@ -423,6 +434,46 @@ mod tests {
             panic!("expected oneharness provider");
         };
         assert_eq!(oh.bin, "/tmp/oneharness");
+    }
+
+    #[test]
+    fn oneharness_bin_defaults_to_env_when_set() {
+        // The SDKs export SKILLTEST_ONEHARNESS_BIN to their bundled oneharness;
+        // a config that omits `bin` picks it up. (nextest isolates each test in
+        // its own process, so this env write does not leak to other tests.)
+        std::env::set_var(ONEHARNESS_BIN_ENV, "/opt/bundled/oneharness");
+        let yaml = "provider:\n  kind: oneharness\n  judge_harness: codex\n";
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        let ProviderConfig::Oneharness(oh) = &config.provider else {
+            panic!("expected oneharness provider");
+        };
+        assert_eq!(oh.bin, "/opt/bundled/oneharness");
+        std::env::remove_var(ONEHARNESS_BIN_ENV);
+    }
+
+    #[test]
+    fn explicit_bin_wins_over_env_default() {
+        // An explicit `provider.bin` is a present field, so serde never calls the
+        // env-aware default — the user's choice is honored over the bundled one.
+        std::env::set_var(ONEHARNESS_BIN_ENV, "/opt/bundled/oneharness");
+        let yaml = "provider:\n  kind: oneharness\n  bin: /custom/oneharness\n";
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        let ProviderConfig::Oneharness(oh) = &config.provider else {
+            panic!("expected oneharness provider");
+        };
+        assert_eq!(oh.bin, "/custom/oneharness");
+        std::env::remove_var(ONEHARNESS_BIN_ENV);
+    }
+
+    #[test]
+    fn oneharness_bin_defaults_to_path_name_without_env() {
+        std::env::remove_var(ONEHARNESS_BIN_ENV);
+        let yaml = "provider:\n  kind: oneharness\n";
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        let ProviderConfig::Oneharness(oh) = &config.provider else {
+            panic!("expected oneharness provider");
+        };
+        assert_eq!(oh.bin, "oneharness");
     }
 
     #[test]
