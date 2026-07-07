@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.10.0](https://github.com/nickderobertis/skilltest/compare/v0.9.0...v0.10.0) (2026-07-07)
+
+### Features
+
+* bundle oneharness with the SDKs via the oneharness-cli dependency ([#30](https://github.com/nickderobertis/skilltest/issues/30)) ([5f8ef73](https://github.com/nickderobertis/skilltest/commit/5f8ef73dcb5d4290e3c133ec86c3b27cbfffe249))
+
 ## [0.9.0](https://github.com/nickderobertis/skilltest/compare/v0.8.0...v0.9.0) (2026-07-07)
 
 ### Features
