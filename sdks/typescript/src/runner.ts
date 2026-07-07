@@ -18,6 +18,7 @@ import {
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { type TestCaseInput, compileCase, isTestCaseInput } from "./case.js";
 import { SkilltestError, SkilltestProviderError, SkilltestUsageError } from "./errors.js";
 import type { Report } from "./generated/report.js";
 import type { ValidationReport } from "./generated/validation.js";
@@ -125,19 +126,46 @@ export function resolveProvider(provider: string | string[] | undefined): string
 }
 
 /**
+ * The `skilltest run` fragments a `case` becomes (shared with the streaming
+ * API): a YAML file/directory rides as a positional path; a code-defined
+ * {@link TestCaseInput} is written to a temp JSON file passed as `--case-json`.
+ * Call `cleanup()` once the run has finished with the file.
+ */
+export function caseRunArgs(caseInput: string | TestCaseInput): {
+  args: string[];
+  cleanup: () => void;
+} {
+  if (typeof caseInput === "string") return { args: [caseInput], cleanup: () => {} };
+  const dir = mkdtempSync(join(tmpdir(), "skilltest-case-"));
+  const file = join(dir, "case.json");
+  writeFileSync(file, JSON.stringify([compileCase(caseInput)]));
+  return {
+    args: ["--case-json", file],
+    cleanup: () => {
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch {
+        // best-effort temp cleanup
+      }
+    },
+  };
+}
+
+/**
  * Build the `skilltest run` args for output format `format` (`json` for the
- * buffered API, `json-stream` for the streaming API). Shared by {@link runSkill}
- * and the streaming API.
+ * buffered API, `json-stream` for the streaming API). `caseArgs` are the
+ * fragments identifying the case(s) — a positional path or `--case-json <file>`
+ * (see {@link caseRunArgs}). Shared by {@link runSkill} and the streaming API.
  */
 export function buildRunArgs(
-  casePath: string,
+  caseArgs: string[],
   options: RunOptions,
   format: string,
   mockArgs: string[] = [],
 ): string[] {
   const args: string[] = [];
   if (options.config) args.push("--config", options.config);
-  args.push("run", casePath, "--format", format);
+  args.push("run", ...caseArgs, "--format", format);
 
   const provider = resolveProvider(options.provider);
   if (provider !== undefined) args.push("--provider", provider);
@@ -233,23 +261,31 @@ function parse<T>(stdout: string): T {
 }
 
 /**
- * Run one or more test cases and return the parsed {@link Report}. A failing
- * eval is reported in `report.passed`, not thrown; only bad input
- * ({@link SkilltestUsageError}) and provider failures
+ * Run one or more test cases and return the parsed {@link Report}. `caseInput`
+ * is a code-defined {@link TestCaseInput} (the recommended form) or a path to a
+ * YAML file/directory. A failing eval is reported in `report.passed`, not
+ * thrown; only bad input ({@link SkilltestUsageError}) and provider failures
  * ({@link SkilltestProviderError}) throw.
  */
-export async function runSkill(casePath: string, options: RunOptions = {}): Promise<Report> {
+export async function runSkill(
+  caseInput: string | TestCaseInput,
+  options: RunOptions = {},
+): Promise<Report> {
+  const caseArgs = caseRunArgs(caseInput);
   const mocks = mockRunArgs(options.mocks);
   let result: Captured;
   try {
-    const args = buildRunArgs(casePath, options, "json", mocks.args);
+    const args = buildRunArgs(caseArgs.args, options, "json", mocks.args);
     result = await capture(resolveBin(options.bin), args, options.cwd);
   } finally {
     mocks.cleanup();
+    caseArgs.cleanup();
   }
   raiseForStatus(result);
   const report = parse<Report>(result.stdout);
-  if (options.mocks && options.mocks.length > 0) bindMocks(options.mocks, report.runs);
+  const caseMocks = isTestCaseInput(caseInput) ? (caseInput.mocks ?? []) : [];
+  const bound = [...caseMocks, ...(options.mocks ?? [])];
+  if (bound.length > 0) bindMocks(bound, report.runs);
   return report;
 }
 

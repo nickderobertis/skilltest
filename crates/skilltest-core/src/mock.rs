@@ -32,24 +32,32 @@ use serde_json::{json, Value};
 
 use crate::error::{Error, Result};
 
+/// The explicit form of a [`FieldPredicate`]; every given key must hold.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FieldPredicateSpec {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub equals: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contains: Option<String>,
+    /// Unanchored regex (linear-time; same engine oneharness uses).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pattern: Option<String>,
+}
+
 /// A predicate on one tool-input field. Written in YAML either as a bare
 /// string (exact equality) or as a map with any of `equals` / `contains` /
 /// `pattern` (all given forms must hold).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// Newtype variants around `deny_unknown_fields` structs, so a typo'd key
+/// inside a predicate is a loud parse error, never silently dropped.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(untagged)]
 pub enum FieldPredicate {
     /// Bare-string shorthand: the field must equal this exactly.
     Equals(String),
     /// The explicit form; every given key must hold.
-    Spec {
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        equals: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        contains: Option<String>,
-        /// Unanchored regex (linear-time; same engine oneharness uses).
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        pattern: Option<String>,
-    },
+    Spec(FieldPredicateSpec),
 }
 
 impl FieldPredicate {
@@ -57,11 +65,11 @@ impl FieldPredicate {
     fn validate(&self, who: &str, key: &str) -> Result<()> {
         match self {
             FieldPredicate::Equals(_) => Ok(()),
-            FieldPredicate::Spec {
+            FieldPredicate::Spec(FieldPredicateSpec {
                 equals,
                 contains,
                 pattern,
-            } => {
+            }) => {
                 if equals.is_none() && contains.is_none() && pattern.is_none() {
                     return Err(Error::Invalid(format!(
                         "{who}: `input.{key}` needs one of `equals`/`contains`/`pattern`"
@@ -84,11 +92,11 @@ impl FieldPredicate {
     fn matches(&self, value: &str) -> bool {
         match self {
             FieldPredicate::Equals(want) => value == want,
-            FieldPredicate::Spec {
+            FieldPredicate::Spec(FieldPredicateSpec {
                 equals,
                 contains,
                 pattern,
-            } => {
+            }) => {
                 if let Some(want) = equals {
                     if value != want {
                         return false;
@@ -116,11 +124,11 @@ impl FieldPredicate {
     fn to_oneharness(&self) -> Value {
         match self {
             FieldPredicate::Equals(want) => json!({ "equals": want }),
-            FieldPredicate::Spec {
+            FieldPredicate::Spec(FieldPredicateSpec {
                 equals,
                 contains,
                 pattern,
-            } => {
+            }) => {
                 let mut spec = serde_json::Map::new();
                 if let Some(v) = equals {
                     spec.insert("equals".into(), json!(v));
@@ -139,7 +147,7 @@ impl FieldPredicate {
 
 /// What a mock/spy declaration matches on. At least one criterion is required;
 /// every given criterion must hold (AND).
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MockMatch {
     /// Case-insensitive exact match on the tool name. Tool names are
@@ -249,19 +257,26 @@ impl MockMatch {
     }
 }
 
+/// The explicit form of a [`StubSpec`]: the canned output plus an exit code.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct StubOutput {
+    pub output: String,
+    /// Non-zero fakes a failing command. Default 0.
+    #[serde(default)]
+    pub exit_code: i32,
+}
+
 /// A `stub` action: fake a shell call's result by declaring only the output.
 /// Written as a bare string (the output) or a map with `output` + `exit_code`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// A typo'd key inside the map form is a loud parse error (deny on the inner
+/// struct), never a silently-applied default exit code.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(untagged)]
 pub enum StubSpec {
     /// Bare-string shorthand: the canned stdout, exit code 0.
     Text(String),
-    Full {
-        output: String,
-        /// Non-zero fakes a failing command. Default 0.
-        #[serde(default)]
-        exit_code: i32,
-    },
+    Full(StubOutput),
 }
 
 impl StubSpec {
@@ -269,7 +284,7 @@ impl StubSpec {
     #[must_use]
     pub fn output(&self) -> &str {
         match self {
-            StubSpec::Text(output) | StubSpec::Full { output, .. } => output,
+            StubSpec::Text(output) | StubSpec::Full(StubOutput { output, .. }) => output,
         }
     }
 
@@ -278,18 +293,25 @@ impl StubSpec {
     pub fn exit_code(&self) -> i32 {
         match self {
             StubSpec::Text(_) => 0,
-            StubSpec::Full { exit_code, .. } => *exit_code,
+            StubSpec::Full(StubOutput { exit_code, .. }) => *exit_code,
         }
     }
 }
 
+/// The explicit form of a [`DenySpec`]: the model-visible message.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DenyMessage {
+    pub message: String,
+}
+
 /// A `deny` action: block the call with a model-visible message. Written as a
 /// bare string (the message) or a map with `message`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(untagged)]
 pub enum DenySpec {
     Text(String),
-    Full { message: String },
+    Full(DenyMessage),
 }
 
 impl DenySpec {
@@ -297,7 +319,7 @@ impl DenySpec {
     #[must_use]
     pub fn message(&self) -> &str {
         match self {
-            DenySpec::Text(message) | DenySpec::Full { message } => message,
+            DenySpec::Text(message) | DenySpec::Full(DenyMessage { message }) => message,
         }
     }
 }
@@ -306,7 +328,7 @@ impl DenySpec {
 /// the CLI's `--mocks` file, or synthesized by an SDK. Exactly one of `stub` /
 /// `deny` / `rewrite` makes it a **mock** (the call is intercepted); none makes
 /// it a **spy** (observed only, matched locally against the returned records).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MockDecl {
     /// Name evals (`type: called` / `not_called`) reference this declaration
@@ -916,6 +938,25 @@ mod tests {
         let spy = decl("name: git\nmatch: { tool: bash, pattern: \"\\\\bgit\\\\b\" }\n");
         assert!(!spy.is_mock());
         assert_eq!(spy.action_kind(), None);
+    }
+
+    #[test]
+    fn typoed_keys_inside_untagged_forms_are_parse_errors() {
+        // The map forms of `stub`/`deny` and a field predicate deny unknown
+        // keys: a typo must not silently degrade to a default (e.g. a stub
+        // whose `exit_cod: 2` quietly ran with exit 0).
+        assert!(serde_yaml::from_str::<MockDecl>(
+            "match: { tool: bash }\nstub: { output: boom, exit_cod: 2 }\n"
+        )
+        .is_err());
+        assert!(serde_yaml::from_str::<MockDecl>(
+            "match: { tool: bash }\ndeny: { mesage: nope }\n"
+        )
+        .is_err());
+        assert!(serde_yaml::from_str::<MockDecl>(
+            "match: { input: { command: { contians: origin } } }\nstub: ok\n"
+        )
+        .is_err());
     }
 
     #[test]

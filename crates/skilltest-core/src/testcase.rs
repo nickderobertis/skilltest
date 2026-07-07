@@ -4,6 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
@@ -13,43 +14,51 @@ use crate::mock::MockDecl;
 /// The simulated-user block that turns a single-turn case into a multi-turn one.
 /// When present, after each assistant turn the runner asks the provider to play
 /// the user (guided by `persona`) until `done_when` holds or `max_turns` is hit.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SimulatedUser {
     /// Instructions describing how the simulated user should behave.
     pub persona: String,
     /// A plain-English condition; when the judge decides it holds, the
     /// conversation ends. Optional — without it the run ends at `max_turns` or
     /// when the skill reports itself done.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub done_when: Option<String>,
     /// Per-case override of the global assistant-turn cap.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_turns: Option<u32>,
 }
 
 /// One test case.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+///
+/// This type is the source of truth for the **input contract**
+/// (`schemas/case.schema.json`): the shape a `--case-json` payload — and the
+/// SDKs' generated case models — must have. Serialization skips
+/// absent/default fields so the canonical JSON form is minimal; the SDK case
+/// builders emit that same form (pinned by the kitchen-sink golden in
+/// `tests/fixtures/contract/`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TestCase {
     /// Human-readable name (defaults to the file stem when loaded from a file).
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub name: String,
     /// Path to the skill directory under test, relative to the test-case file.
     pub skill: PathBuf,
     /// The initial data/prompt handed to the skill as the first user message.
     pub input: String,
     /// Present for multi-turn cases; absent for single-turn.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user: Option<SimulatedUser>,
     /// Mock/spy declarations for this case: a declaration with a `stub`/`deny`/
     /// `rewrite` action intercepts matching tool calls; one without observes
     /// only. `called`/`not_called` evals reference these by `name`.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub mocks: Vec<MockDecl>,
     /// Record every tool call through the mock/spy channel even with no
     /// `mocks` declared, so code-level consumers (the SDKs' spies) get records.
     /// Implied whenever `mocks` is non-empty.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub spy: bool,
     /// The evals that decide whether this case passes. Must be non-empty.
     pub evals: Vec<Eval>,
@@ -71,20 +80,62 @@ impl TestCase {
             path: path.to_path_buf(),
             source,
         })?;
-        if case.name.is_empty() {
-            case.name = path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("case")
-                .to_string();
-        }
-        if let Some(parent) = path.parent() {
-            if case.skill.is_relative() {
-                case.skill = parent.join(&case.skill);
-            }
-        }
-        case.validate()?;
+        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("case");
+        let base = path.parent().unwrap_or_else(|| Path::new(""));
+        case.finalize(base, stem)?;
         Ok(case)
+    }
+
+    /// Parse one or more fully-specified test cases from JSON — a single case
+    /// object or an array — the shape the language SDKs emit when a case is
+    /// built in code rather than written as YAML (`skilltest run --case-json`).
+    ///
+    /// Unlike [`load`](Self::load) these cases have no source file, so each is
+    /// finalized against `base_dir` (typically the working directory): a
+    /// relative `skill` resolves there, and an unnamed case defaults to `case`
+    /// (suffixed with its index when several are unnamed, keeping report keys
+    /// distinct).
+    ///
+    /// # Errors
+    /// [`Error::Invalid`] if the JSON does not parse into test cases, or if any
+    /// case is internally inconsistent.
+    pub fn from_json(json: &str, base_dir: &Path) -> Result<Vec<Self>> {
+        // Accept either a bare object (one case) or an array of them, so a
+        // single code-defined case need not be wrapped.
+        let value: serde_json::Value = serde_json::from_str(json)
+            .map_err(|e| Error::Invalid(format!("invalid --case-json: {e}")))?;
+        let mut cases: Vec<TestCase> = match value {
+            serde_json::Value::Array(_) => serde_json::from_value(value),
+            _ => serde_json::from_value(value).map(|c| vec![c]),
+        }
+        .map_err(|e| Error::Invalid(format!("invalid --case-json: {e}")))?;
+        for (index, case) in cases.iter_mut().enumerate() {
+            let default_name = if index == 0 {
+                "case".to_string()
+            } else {
+                format!("case-{}", index + 1)
+            };
+            case.finalize(base_dir, &default_name)?;
+        }
+        Ok(cases)
+    }
+
+    /// Finalize an in-memory case: default `name` to `default_name` when unset,
+    /// resolve a relative `skill` against `base_dir`, and validate. Shared by
+    /// [`load`](Self::load) (anchored at the file's directory) and
+    /// [`from_json`](Self::from_json) (anchored at the working directory, since
+    /// a code-defined case has no file).
+    ///
+    /// # Errors
+    /// [`Error::Invalid`] if the case is internally inconsistent.
+    pub fn finalize(&mut self, base_dir: &Path, default_name: &str) -> Result<()> {
+        if self.name.is_empty() {
+            self.name = default_name.to_string();
+        }
+        if self.skill.is_relative() {
+            self.skill = base_dir.join(&self.skill);
+        }
+        self.validate()
     }
 
     /// Whether this is a multi-turn case (has a simulated user).
@@ -176,7 +227,7 @@ pub fn discover_cases(path: &Path) -> Result<Vec<PathBuf>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::eval::Eval;
+    use crate::eval::{BooleanEval, Eval};
 
     #[test]
     fn parses_single_turn_case() {
@@ -190,7 +241,7 @@ evals:
         let case: TestCase = serde_yaml::from_str(yaml).unwrap();
         assert!(!case.is_multi_turn());
         assert_eq!(case.evals.len(), 1);
-        assert!(matches!(case.evals[0], Eval::Boolean { .. }));
+        assert!(matches!(case.evals[0], Eval::Boolean(BooleanEval { .. })));
     }
 
     #[test]
@@ -227,6 +278,31 @@ evals:
     fn unknown_field_is_rejected() {
         let yaml = "skill: ./x\ninput: hi\nbogus: 1\nevals: []\n";
         assert!(serde_yaml::from_str::<TestCase>(yaml).is_err());
+    }
+
+    #[test]
+    fn unknown_eval_field_is_rejected_not_silently_ignored() {
+        // A typo'd eval key (`expcted`) must be a loud parse error naming the
+        // field — never a silently-applied default, which could invert the
+        // eval's intent into a vacuous pass.
+        let yaml = "skill: ./x\ninput: hi\nevals:\n  - type: boolean\n    criterion: c\n    expcted: false\n";
+        let err = serde_yaml::from_str::<TestCase>(yaml).unwrap_err();
+        assert!(
+            err.to_string().contains("expcted"),
+            "error names the unknown field: {err}"
+        );
+        // Same strictness through the JSON path the SDKs use.
+        let json =
+            r#"{"skill":"./x","input":"hi","evals":[{"type":"called","mock":"m","tmies":1}]}"#;
+        let err = TestCase::from_json(json, Path::new(".")).unwrap_err();
+        assert!(err.to_string().contains("tmies"), "{err}");
+    }
+
+    #[test]
+    fn unknown_user_field_is_rejected() {
+        let yaml = "skill: ./x\ninput: hi\nuser:\n  persona: p\n  don_when: x\nevals:\n  - type: boolean\n    criterion: c\n";
+        let err = serde_yaml::from_str::<TestCase>(yaml).unwrap_err();
+        assert!(err.to_string().contains("don_when"), "{err}");
     }
 
     /// Write `yaml` into a unique temp dir as `name`, returning the file path.
@@ -301,11 +377,11 @@ evals:
             user: None,
             mocks: Vec::new(),
             spy: false,
-            evals: vec![Eval::Boolean {
+            evals: vec![Eval::Boolean(BooleanEval {
                 criterion: "c".into(),
                 expected: true,
                 name: None,
-            }],
+            })],
         };
         assert!(case.validate().is_err(), "blank input");
         case.input = "ok".into();
@@ -322,11 +398,11 @@ evals:
             user: None,
             mocks: Vec::new(),
             spy: false,
-            evals: vec![Eval::Boolean {
+            evals: vec![Eval::Boolean(BooleanEval {
                 criterion: "c".into(),
                 expected: true,
                 name: None,
-            }],
+            })],
         };
         let mut blank_persona = base.clone();
         blank_persona.user = Some(SimulatedUser {
@@ -343,6 +419,54 @@ evals:
             max_turns: Some(0),
         });
         assert!(zero_turns.validate().is_err());
+    }
+
+    #[test]
+    fn from_json_parses_a_single_object_and_resolves_skill() {
+        let json = r#"{"skill":"./greeter","input":"hi","evals":[{"type":"boolean","criterion":"greets"}]}"#;
+        let base = Path::new("/work/cases");
+        let cases = TestCase::from_json(json, base).unwrap();
+        assert_eq!(cases.len(), 1);
+        assert_eq!(cases[0].name, "case");
+        // A relative skill resolves against the supplied base directory.
+        assert_eq!(cases[0].skill, PathBuf::from("/work/cases/greeter"));
+    }
+
+    #[test]
+    fn from_json_parses_an_array_and_indexes_unnamed_cases() {
+        let json = r#"[
+            {"skill":"/abs/a","input":"hi","evals":[{"type":"boolean","criterion":"c"}]},
+            {"name":"named","skill":"/abs/b","input":"hi","evals":[{"type":"boolean","criterion":"c"}]},
+            {"skill":"/abs/c","input":"hi","evals":[{"type":"boolean","criterion":"c"}]}
+        ]"#;
+        let cases = TestCase::from_json(json, Path::new("/work")).unwrap();
+        assert_eq!(
+            cases.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(),
+            ["case", "named", "case-3"]
+        );
+        // An absolute skill is left untouched.
+        assert_eq!(cases[0].skill, PathBuf::from("/abs/a"));
+    }
+
+    #[test]
+    fn from_json_rejects_malformed_and_inconsistent_cases() {
+        // Not JSON at all.
+        assert!(matches!(
+            TestCase::from_json("{not json", Path::new(".")),
+            Err(Error::Invalid(_))
+        ));
+        // An unknown field is rejected (the case type denies them).
+        let unknown = r#"{"skill":"./x","input":"hi","bogus":1,"evals":[{"type":"boolean","criterion":"c"}]}"#;
+        assert!(matches!(
+            TestCase::from_json(unknown, Path::new(".")),
+            Err(Error::Invalid(_))
+        ));
+        // Parses, but validation fails (no evals).
+        let empty_evals = r#"{"skill":"./x","input":"hi","evals":[]}"#;
+        assert!(matches!(
+            TestCase::from_json(empty_evals, Path::new(".")),
+            Err(Error::Invalid(_))
+        ));
     }
 
     #[test]

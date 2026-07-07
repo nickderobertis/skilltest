@@ -6,15 +6,34 @@ models are generated from the CLI's own JSON Schemas (``just gen-contract``),
 so they cannot drift from the binary. Test frameworks build on this —
 ``skilltest-pytest`` adds pytest collection on top.
 
-    from skilltest_sdk import run_skill, describe_failures, assistant_text
+Define the whole case in code (the recommended form):
 
-    report = run_skill("cases/greet.yaml")
+    from skilltest_sdk import TestCase, run_skill, boolean, describe_failures
+
+    case = TestCase(
+        skill="skills/greeter",
+        input="Greet Dr. Smith, who has an appointment today.",
+        evals=[boolean("the reply greets Dr. Smith by name")],
+    )
+    report = run_skill(case)
     assert report.passed, describe_failures(report)
-    assert "Dr. Smith" in assistant_text(report.runs[0].transcript)
+
+``run_skill`` also takes a path to an existing test-case YAML file (or a
+directory of them), and the pytest plugin auto-discovers ``*.skilltest.yaml``.
 """
 
 from __future__ import annotations
 
+from .case import (
+    Eval,
+    SimulatedUser,
+    TestCase,
+    boolean,
+    called,
+    not_called,
+    numeric,
+    user,
+)
 from .errors import SkilltestError, SkilltestProviderError, SkilltestUsageError
 from .mock import (
     Matcher,
@@ -59,18 +78,21 @@ __all__ = [
     "BooleanDetail",
     "CallsDetail",
     "CaseRun",
+    "Eval",
     "EvalOutcome",
     "Matcher",
     "Message",
     "MockCall",
     "NumericDetail",
     "Report",
+    "SimulatedUser",
     "SkillStream",
     "SkilltestError",
     "SkilltestProviderError",
     "SkilltestUsageError",
     "StreamEvent",
     "Summary",
+    "TestCase",
     "ToolCall",
     "ToolEvent",
     "ToolMock",
@@ -81,17 +103,22 @@ __all__ = [
     "ValidationReport",
     "anything",
     "assistant_text",
+    "boolean",
+    "called",
     "contains",
     "deny",
     "describe_failures",
     "failed_evals",
     "failed_runs",
     "matching",
+    "not_called",
+    "numeric",
     "rewrite",
     "run_skill",
     "spy",
     "stream_skill",
     "stub",
     "tool_calls",
+    "user",
     "validate_skill",
 ]

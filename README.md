@@ -141,14 +141,23 @@ framework built on it, which re-exports the SDK so a test suite needs a single
 dependency. SDK models are generated from the CLI's own JSON Schemas, so they
 cannot drift from the binary.
 
-**pytest** ([`plugins/pytest`](plugins/pytest)) — auto-collects
-`*.skilltest.yaml`, or call the API:
+**pytest** ([`plugins/pytest`](plugins/pytest)) — define the whole case in code
+(the recommended form) and mix in deterministic checks; a YAML path works too,
+and `*.skilltest.yaml` files are auto-collected:
 
 ```python
-from skilltest_pytest import run_skill, describe_failures, assistant_text
+from skilltest_pytest import TestCase, run_skill, boolean, numeric, describe_failures, assistant_text
 
 def test_greeter():
-    report = run_skill("cases/greet.yaml")
+    case = TestCase(
+        skill="skills/greeter",
+        input="Greet Dr. Smith, who has an appointment today.",
+        evals=[
+            boolean("the reply greets Dr. Smith by name"),
+            numeric("how warm is the tone", min=0, max=10, threshold=7),
+        ],
+    )
+    report = run_skill(case)  # or run_skill("cases/greet.yaml")
     assert report.passed, describe_failures(report)
     assert "Dr. Smith" in assistant_text(report.runs[0].transcript)
 ```
@@ -158,13 +167,19 @@ Code-level mocks and spies are objects you hold and assert on directly
 typo-swallowing `Mock`):
 
 ```python
-from skilltest_pytest import run_skill, spy, stub, contains, matching
+from skilltest_pytest import TestCase, run_skill, spy, stub, boolean, contains, matching
+
+DEPLOY = TestCase(
+    skill="skills/deployer",
+    input="Deploy the app",
+    evals=[boolean("the deploy is reported successful")],
+)
 
 def test_deploy_is_mocked():
     push = stub(pattern=r"git push( --force)?\b", output="Everything up-to-date")
     git = spy(tool="bash", pattern=r"\bgit\b")
 
-    run_skill("cases/deploy.skilltest.yaml", mocks=[push, git])
+    run_skill(DEPLOY, mocks=[push, git])
 
     push.assert_called_once()
     assert "origin" in push.calls[0].command          # original, pre-rewrite input
@@ -172,26 +187,40 @@ def test_deploy_is_mocked():
     git.where(command=matching(r"\bsudo\b")).assert_not_called()
 ```
 
-**vitest** ([`plugins/vitest`](plugins/vitest)):
+**vitest** ([`plugins/vitest`](plugins/vitest)) — same, with a `testCase({...})`
+object (or a YAML path):
 
 ```ts
-import { runSkill, assistantText } from "@skill-test/vitest";
+import { runSkill, testCase, boolean, numeric, assistantText } from "@skill-test/vitest";
 
 test("greeter", async () => {
-  const report = await runSkill("cases/greet.yaml");
+  const report = await runSkill(testCase({
+    skill: "skills/greeter",
+    input: "Greet Dr. Smith, who has an appointment today.",
+    evals: [
+      boolean("the reply greets Dr. Smith by name"),
+      numeric("how warm is the tone", { min: 0, max: 10, threshold: 7 }),
+    ],
+  }));
   expect(report.passed).toBe(true);
   expect(assistantText(report.runs[0]!.transcript)).toContain("Dr. Smith");
 });
 ```
 
 ```ts
-import { runSkill, spy, stub, matching } from "@skill-test/vitest";
+import { runSkill, testCase, spy, stub, boolean, matching } from "@skill-test/vitest";
+
+const deploy = testCase({
+  skill: "skills/deployer",
+  input: "Deploy the app",
+  evals: [boolean("the deploy is reported successful")],
+});
 
 test("deploy is mocked", async () => {
   const push = stub({ pattern: /git push( --force)?\b/, output: "Everything up-to-date" });
   const git = spy({ tool: "bash", pattern: /\bgit\b/ });
 
-  await runSkill("cases/deploy.skilltest.yaml", { mocks: [push, git] });
+  await runSkill(deploy, { mocks: [push, git] });
 
   expect(push.callCount).toBe(1);
   expect(push.calls[0]!.command).toContain("origin"); // original, pre-rewrite input
@@ -213,9 +242,14 @@ oneharness's `--events` and exposed as `tool_calls`/`toolCalls`. Assert on *what
 the skill did*, not just what it said:
 
 ```python
-from skilltest_pytest import run_skill, tool_calls
+from skilltest_pytest import TestCase, run_skill, tool_calls, boolean
 
-report = run_skill("cases/edit.skilltest.yaml")
+case = TestCase(
+    skill="skills/editor",
+    input="Update the config and commit it.",
+    evals=[boolean("the change was committed")],
+)
+report = run_skill(case)
 calls = tool_calls(report.runs[0].transcript)          # the tool_call events, in order
 assert any("git commit" in str(c.input) for c in calls)
 assert not any("rm -rf" in str(c.input) for c in calls)
@@ -228,8 +262,8 @@ harness down, so a bad turn is cut off instead of paid for in full:
 ```python
 from skilltest_pytest import stream_skill
 
-async def guard():
-    stream = stream_skill("cases/edit.skilltest.yaml")
+async def guard(case):
+    stream = stream_skill(case)                        # a TestCase or a YAML path
     async for ev in stream:                            # ev.event is a ToolEvent
         if ev.event.name == "bash" and "rm -rf" in str(ev.event.input):
             break                                      # abort the run now

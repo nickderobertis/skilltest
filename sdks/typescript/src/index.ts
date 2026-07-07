@@ -7,15 +7,43 @@
  * drift from the binary. Test frameworks build on this — `@skill-test/vitest`
  * adds the vitest helpers on top.
  *
- * ```ts
- * import { runSkill, assistantText, describeFailures } from "@skill-test/sdk";
+ * Define the whole case in code (the recommended form):
  *
- * const report = await runSkill("cases/greet.yaml");
+ * ```ts
+ * import { runSkill, testCase, boolean, describeFailures } from "@skill-test/sdk";
+ *
+ * const report = await runSkill(
+ *   testCase({
+ *     skill: "skills/greeter",
+ *     input: "Greet Dr. Smith, who has an appointment today.",
+ *     evals: [boolean("the reply greets Dr. Smith by name")],
+ *   }),
+ * );
  * if (!report.passed) throw new Error(describeFailures(report));
  * ```
+ *
+ * `runSkill` also takes a path to an existing test-case YAML file (or a
+ * directory of them), and the vitest plugin's `discover` collects a tree of
+ * `*.skilltest.yaml` files.
  */
 export { runSkill, validateSkill, ENV_BIN, ENV_PROVIDER, type RunOptions } from "./runner.js";
 export { streamSkill, type SkillStream, type StreamEvent } from "./stream.js";
+export {
+  testCase,
+  boolean,
+  numeric,
+  called,
+  notCalled,
+  user,
+  type BooleanEval,
+  type CalledEval,
+  type ComparatorInput,
+  type Eval,
+  type NotCalledEval,
+  type NumericEval,
+  type SimulatedUser,
+  type TestCaseInput,
+} from "./case.js";
 export {
   ToolMock,
   ToolSpy,

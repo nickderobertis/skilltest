@@ -7,7 +7,7 @@ use std::ops::ControlFlow;
 use crate::config::Config;
 use crate::conversation::{Message, ToolEvent, Transcript};
 use crate::error::{Error, Result};
-use crate::eval::{Eval, JudgeValue};
+use crate::eval::{BooleanEval, CalledEval, Eval, JudgeValue, NotCalledEval, NumericEval};
 use crate::mock::{describe_records, where_matches, MockCall, MockPlan, MockSet};
 use crate::provider::{JudgeKind, JudgeQuery, Provider, SkillRef, Usage};
 use crate::report::{CaseRun, Report};
@@ -356,22 +356,23 @@ impl<'a> Runner<'a> {
         let mut outcomes = Vec::with_capacity(case.evals.len());
         for eval in &case.evals {
             let query = match eval {
-                Eval::Boolean { criterion, .. } => JudgeQuery {
+                Eval::Boolean(BooleanEval { criterion, .. }) => JudgeQuery {
                     kind: JudgeKind::Boolean,
                     criterion,
                     scale: None,
                 },
-                Eval::Numeric {
+                Eval::Numeric(NumericEval {
                     criterion,
                     min,
                     max,
                     ..
-                } => JudgeQuery {
+                }) => JudgeQuery {
                     kind: JudgeKind::Numeric,
                     criterion,
                     scale: Some((*min, *max)),
                 },
-                Eval::Called { mock, r#where, .. } | Eval::NotCalled { mock, r#where, .. } => {
+                Eval::Called(CalledEval { mock, r#where, .. })
+                | Eval::NotCalled(NotCalledEval { mock, r#where, .. }) => {
                     // Deterministic: no judge call. A missing channel is loud —
                     // a `not_called` scored against nothing must never pass.
                     let records = mock_calls.ok_or_else(|| {
@@ -487,11 +488,11 @@ mod tests {
             user: None,
             mocks: Vec::new(),
             spy: false,
-            evals: vec![Eval::Boolean {
+            evals: vec![Eval::Boolean(BooleanEval {
                 criterion: "greets Dr. Smith".into(),
                 expected: true,
                 name: None,
-            }],
+            })],
         }
     }
 

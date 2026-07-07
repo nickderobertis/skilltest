@@ -20,6 +20,7 @@
  */
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
+import { type TestCaseInput, isTestCaseInput } from "./case.js";
 import { SkilltestProviderError } from "./errors.js";
 import type { Report, ToolEvent } from "./generated/report.js";
 import { type ToolSpy, bindMocks } from "./mock.js";
@@ -27,6 +28,7 @@ import {
   ENV_BIN,
   type RunOptions,
   buildRunArgs,
+  caseRunArgs,
   mockRunArgs,
   raiseForCode,
   resolveBin,
@@ -110,16 +112,26 @@ class SkillStreamImpl implements SkillStream {
 
 /**
  * Start a streaming run and return a {@link SkillStream} to iterate. Same options
- * as {@link runSkill}; the run does not begin until iteration starts.
+ * as {@link runSkill} — `caseInput` may be a code-defined {@link TestCaseInput}
+ * or a path, and a case's own `mocks` bind alongside `options.mocks`. The run
+ * does not begin until iteration starts.
  */
-export function streamSkill(casePath: string, options: RunOptions = {}): SkillStream {
+export function streamSkill(
+  caseInput: string | TestCaseInput,
+  options: RunOptions = {},
+): SkillStream {
+  const caseArgs = caseRunArgs(caseInput);
   const mocks = mockRunArgs(options.mocks);
-  const args = buildRunArgs(casePath, options, "json-stream", mocks.args);
+  const args = buildRunArgs(caseArgs.args, options, "json-stream", mocks.args);
+  const caseMocks = isTestCaseInput(caseInput) ? (caseInput.mocks ?? []) : [];
   return new SkillStreamImpl(
     resolveBin(options.bin),
     args,
     options.cwd,
-    options.mocks ?? [],
-    mocks.cleanup,
+    [...caseMocks, ...(options.mocks ?? [])],
+    () => {
+      mocks.cleanup();
+      caseArgs.cleanup();
+    },
   );
 }

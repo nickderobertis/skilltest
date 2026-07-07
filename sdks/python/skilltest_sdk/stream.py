@@ -28,10 +28,11 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from ._report import ToolEvent
+from .case import TestCase
 from .errors import SkilltestProviderError
 from .mock import ToolSpy, bind_mocks
 from .models import Report
-from .runner import ENV_BIN, build_run_argv, mock_run_args, raise_for_code
+from .runner import ENV_BIN, build_run_argv, case_run_args, mock_run_args, raise_for_code
 
 
 class StreamEvent(BaseModel):
@@ -113,7 +114,7 @@ class SkillStream:
 
 
 def stream_skill(
-    case: str | Path,
+    case: str | Path | TestCase,
     *,
     bin: str | Path | None = None,
     provider: str | Sequence[str] | None = None,
@@ -126,16 +127,19 @@ def stream_skill(
     mocks: Sequence[ToolSpy] = (),
 ) -> SkillStream:
     """Start a streaming run and return a [`SkillStream`] to iterate. Same
-    arguments as [`run_skill`][skilltest_sdk.runner.run_skill] — including
-    ``mocks``, whose objects bind when the stream runs to completion (an
-    aborted stream leaves them unbound); the run does not begin until
-    iteration starts."""
-    # The temp mocks file must outlive the subprocess, which starts lazily on
-    # iteration — materialize the flags now and keep them alive on the stream.
+    arguments as [`run_skill`][skilltest_sdk.runner.run_skill] — ``case`` may be
+    a code-defined [`TestCase`][skilltest_sdk.case.TestCase] or a path, and
+    ``mocks`` (plus a ``TestCase``'s own mocks) bind when the stream runs to
+    completion (an aborted stream leaves them unbound); the run does not begin
+    until iteration starts."""
+    # The temp case/mocks files must outlive the subprocess, which starts lazily
+    # on iteration — materialize the flags now and keep them alive on the stream.
+    case_mocks = tuple(case.mocks) if isinstance(case, TestCase) else ()
     with contextlib.ExitStack() as stack:
+        case_args = stack.enter_context(case_run_args(case))
         mock_args = stack.enter_context(mock_run_args(mocks))
         argv = build_run_argv(
-            case,
+            case_args,
             bin=bin,
             provider=provider,
             platforms=platforms,
@@ -146,6 +150,6 @@ def stream_skill(
             fmt="json-stream",
             mock_args=mock_args,
         )
-        stream = SkillStream(argv, str(cwd) if cwd is not None else None, mocks)
+        stream = SkillStream(argv, str(cwd) if cwd is not None else None, [*case_mocks, *mocks])
         stream._cleanup = stack.pop_all()
         return stream

@@ -31,10 +31,14 @@ pub use config::{
 };
 pub use conversation::{Message, Role, ToolEvent, Transcript};
 pub use error::{Error, Result};
-pub use eval::{Comparator, Eval, EvalDetail, EvalOutcome, JudgeValue};
+pub use eval::{
+    BooleanEval, CalledEval, Comparator, Eval, EvalDetail, EvalOutcome, JudgeValue, NotCalledEval,
+    NumericEval,
+};
 pub use exit::ExitCode;
 pub use mock::{
-    DenySpec, FieldPredicate, MockCall, MockDecl, MockMatch, MockPlan, MockSet, StubSpec,
+    DenyMessage, DenySpec, FieldPredicate, FieldPredicateSpec, MockCall, MockDecl, MockMatch,
+    MockPlan, MockSet, StubOutput, StubSpec,
 };
 pub use provider::{
     supports_resume, ApiJudgeProvider, AssistantTurn, CommandProvider, JudgeKind, JudgeQuery,

@@ -1,0 +1,458 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "TestCase",
+  "description": "One test case.\n\nThis type is the source of truth for the **input contract**\n(`schemas/case.schema.json`): the shape a `--case-json` payload — and the\nSDKs' generated case models — must have. Serialization skips\nabsent/default fields so the canonical JSON form is minimal; the SDK case\nbuilders emit that same form (pinned by the kitchen-sink golden in\n`tests/fixtures/contract/`).",
+  "type": "object",
+  "properties": {
+    "evals": {
+      "description": "The evals that decide whether this case passes. Must be non-empty.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/Eval"
+      }
+    },
+    "input": {
+      "description": "The initial data/prompt handed to the skill as the first user message.",
+      "type": "string"
+    },
+    "mocks": {
+      "description": "Mock/spy declarations for this case: a declaration with a `stub`/`deny`/\n`rewrite` action intercepts matching tool calls; one without observes\nonly. `called`/`not_called` evals reference these by `name`.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/MockDecl"
+      }
+    },
+    "name": {
+      "description": "Human-readable name (defaults to the file stem when loaded from a file).",
+      "type": "string"
+    },
+    "skill": {
+      "description": "Path to the skill directory under test, relative to the test-case file.",
+      "type": "string"
+    },
+    "spy": {
+      "description": "Record every tool call through the mock/spy channel even with no\n`mocks` declared, so code-level consumers (the SDKs' spies) get records.\nImplied whenever `mocks` is non-empty.",
+      "type": "boolean"
+    },
+    "user": {
+      "description": "Present for multi-turn cases; absent for single-turn.",
+      "anyOf": [
+        {
+          "$ref": "#/definitions/SimulatedUser"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "skill",
+    "input",
+    "evals"
+  ],
+  "definitions": {
+    "Comparator": {
+      "description": "How a numeric score is compared to its threshold.",
+      "oneOf": [
+        {
+          "description": "value >= threshold (the default).",
+          "type": "string",
+          "const": "gte"
+        },
+        {
+          "description": "value > threshold.",
+          "type": "string",
+          "const": "gt"
+        },
+        {
+          "description": "value <= threshold.",
+          "type": "string",
+          "const": "lte"
+        },
+        {
+          "description": "value < threshold.",
+          "type": "string",
+          "const": "lt"
+        }
+      ]
+    },
+    "DenyMessage": {
+      "description": "The explicit form of a [`DenySpec`]: the model-visible message.",
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "message"
+      ]
+    },
+    "DenySpec": {
+      "description": "A `deny` action: block the call with a model-visible message. Written as a\nbare string (the message) or a map with `message`.",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "$ref": "#/definitions/DenyMessage"
+        }
+      ]
+    },
+    "Eval": {
+      "description": "An eval specification, as written in a test case's YAML (or compiled by an\nSDK's case builders).\n\nNewtype variants on purpose: serde cannot `deny_unknown_fields` on an\ninternally tagged enum, but it *does* enforce it on the variant structs, so\na typo'd eval field (`expcted:`) is a loud parse error instead of a\nsilently-applied default. The variant titles name the generated SDK model\nfor each union arm, so keep them stable: they are part of the SDK API\nsurface (the input contract, `schemas/case.schema.json`).",
+      "oneOf": [
+        {
+          "title": "BooleanEval",
+          "description": "Assert a plain-English criterion holds (or, with `expected: false`, that\nit does not).",
+          "type": "object",
+          "properties": {
+            "criterion": {
+              "description": "The criterion the judge evaluates against the transcript.",
+              "type": "string"
+            },
+            "expected": {
+              "description": "What the judge's verdict must equal to pass. Defaults to `true`.",
+              "type": "boolean",
+              "default": true
+            },
+            "name": {
+              "description": "Optional human label for reports.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "boolean"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "criterion"
+          ]
+        },
+        {
+          "title": "NumericEval",
+          "description": "Score a plain-English criterion on a numeric scale and compare it to a\nthreshold.",
+          "type": "object",
+          "properties": {
+            "comparator": {
+              "description": "How the score is compared to `threshold`. Defaults to `>=`.",
+              "allOf": [
+                {
+                  "$ref": "#/definitions/Comparator"
+                }
+              ],
+              "default": "gte"
+            },
+            "criterion": {
+              "description": "The criterion the judge scores.",
+              "type": "string"
+            },
+            "max": {
+              "description": "Inclusive upper bound of the scale.",
+              "type": "number",
+              "format": "double"
+            },
+            "min": {
+              "description": "Inclusive lower bound of the scale.",
+              "type": "number",
+              "format": "double"
+            },
+            "name": {
+              "description": "Optional human label for reports.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "threshold": {
+              "description": "The passing threshold.",
+              "type": "number",
+              "format": "double"
+            },
+            "type": {
+              "type": "string",
+              "const": "numeric"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "criterion",
+            "min",
+            "max",
+            "threshold"
+          ]
+        },
+        {
+          "title": "CalledEval",
+          "description": "Deterministic: assert the referenced mock/spy observed at least one\nmatching call (or exactly `times`). Evaluated against the mock channel's\nrecords, not by a judge.",
+          "type": "object",
+          "properties": {
+            "mock": {
+              "description": "The `mocks:` declaration (mock or spy) this asserts on, by name.",
+              "type": "string"
+            },
+            "name": {
+              "description": "Optional human label for reports.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "times": {
+              "description": "Exact required call count; absent means \"at least once\".",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "called"
+            },
+            "where": {
+              "description": "Optional per-field input predicates narrowing which calls count.",
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "#/definitions/FieldPredicate"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "mock"
+          ]
+        },
+        {
+          "title": "NotCalledEval",
+          "description": "Deterministic: assert the referenced mock/spy observed **no** matching\ncall.",
+          "type": "object",
+          "properties": {
+            "mock": {
+              "description": "The `mocks:` declaration (mock or spy) this asserts on, by name.",
+              "type": "string"
+            },
+            "name": {
+              "description": "Optional human label for reports.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "not_called"
+            },
+            "where": {
+              "description": "Optional per-field input predicates narrowing which calls count.",
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "#/definitions/FieldPredicate"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "mock"
+          ]
+        }
+      ]
+    },
+    "FieldPredicate": {
+      "description": "A predicate on one tool-input field. Written in YAML either as a bare\nstring (exact equality) or as a map with any of `equals` / `contains` /\n`pattern` (all given forms must hold).\n\nNewtype variants around `deny_unknown_fields` structs, so a typo'd key\ninside a predicate is a loud parse error, never silently dropped.",
+      "anyOf": [
+        {
+          "description": "Bare-string shorthand: the field must equal this exactly.",
+          "type": "string"
+        },
+        {
+          "description": "The explicit form; every given key must hold.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/FieldPredicateSpec"
+            }
+          ]
+        }
+      ]
+    },
+    "FieldPredicateSpec": {
+      "description": "The explicit form of a [`FieldPredicate`]; every given key must hold.",
+      "type": "object",
+      "properties": {
+        "contains": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "equals": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pattern": {
+          "description": "Unanchored regex (linear-time; same engine oneharness uses).",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "MockDecl": {
+      "description": "One mock or spy declaration — an entry of a test case's `mocks:` block, of\nthe CLI's `--mocks` file, or synthesized by an SDK. Exactly one of `stub` /\n`deny` / `rewrite` makes it a **mock** (the call is intercepted); none makes\nit a **spy** (observed only, matched locally against the returned records).",
+      "type": "object",
+      "properties": {
+        "deny": {
+          "description": "Block the call; the model reads the message as the tool's feedback.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/DenySpec"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "match": {
+          "$ref": "#/definitions/MockMatch"
+        },
+        "name": {
+          "description": "Name evals (`type: called` / `not_called`) reference this declaration\nby. Optional; unnamed declarations get a positional fallback\n(`mock_<i>` / `spy_<i>`) used in reports and error messages.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rewrite": {
+          "description": "Substitute raw input fields (a JSON object) — the low-level escape\nhatch, and the way to mock file reads (rewrite `file_path` to a\nfixture)."
+        },
+        "stub": {
+          "description": "Fake a shell call's result: the real command never runs and the model\nreceives this output as the tool's genuine result.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/StubSpec"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "match"
+      ]
+    },
+    "MockMatch": {
+      "description": "What a mock/spy declaration matches on. At least one criterion is required;\nevery given criterion must hold (AND).",
+      "type": "object",
+      "properties": {
+        "contains": {
+          "description": "Substring match over the raw hook event JSON (the tool name and its\ninput always serialize into it). Note the haystack is JSON: quotes and\nbackslashes inside tool input appear escaped.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "input": {
+          "description": "Per-field predicates on the tool's input: the key is the argument name\n(`command`, `file_path`, …), and every listed field must match (a field\nabsent from the call fails the matcher). Non-string fields are compared\nagainst their compact JSON form.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/FieldPredicate"
+          }
+        },
+        "pattern": {
+          "description": "Unanchored regex over the same haystack as `contains`, for non-exact\nneedles like `git push( --force)?`. Linear-time engine (no lookarounds).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tool": {
+          "description": "Case-insensitive exact match on the tool name. Tool names are\nper-harness (`Bash` on claude-code, `bash` on opencode/crush), so\ncross-harness matchers usually prefer `contains`/`pattern`/`input`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "SimulatedUser": {
+      "description": "The simulated-user block that turns a single-turn case into a multi-turn one.\nWhen present, after each assistant turn the runner asks the provider to play\nthe user (guided by `persona`) until `done_when` holds or `max_turns` is hit.",
+      "type": "object",
+      "properties": {
+        "done_when": {
+          "description": "A plain-English condition; when the judge decides it holds, the\nconversation ends. Optional — without it the run ends at `max_turns` or\nwhen the skill reports itself done.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "max_turns": {
+          "description": "Per-case override of the global assistant-turn cap.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "persona": {
+          "description": "Instructions describing how the simulated user should behave.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "persona"
+      ]
+    },
+    "StubOutput": {
+      "description": "The explicit form of a [`StubSpec`]: the canned output plus an exit code.",
+      "type": "object",
+      "properties": {
+        "exit_code": {
+          "description": "Non-zero fakes a failing command. Default 0.",
+          "type": "integer",
+          "format": "int32",
+          "default": 0
+        },
+        "output": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "output"
+      ]
+    },
+    "StubSpec": {
+      "description": "A `stub` action: fake a shell call's result by declaring only the output.\nWritten as a bare string (the output) or a map with `output` + `exit_code`.\nA typo'd key inside the map form is a loud parse error (deny on the inner\nstruct), never a silently-applied default exit code.",
+      "anyOf": [
+        {
+          "description": "Bare-string shorthand: the canned stdout, exit code 0.",
+          "type": "string"
+        },
+        {
+          "$ref": "#/definitions/StubOutput"
+        }
+      ]
+    }
+  }
+}

@@ -15,16 +15,25 @@
  */
 import { type Dirent, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
-import { type RunOptions, describeFailures, runSkill } from "@skill-test/sdk";
+import { type RunOptions, type TestCaseInput, describeFailures, runSkill } from "@skill-test/sdk";
 import { expect, test } from "vitest";
 
 /** Filename suffixes a case file must carry to be auto-discovered. */
 export const CASE_SUFFIXES = [".skilltest.yaml", ".skilltest.yml"] as const;
 
-/** Register a vitest test that runs `casePath` and asserts every eval passed. */
-export function skillTest(name: string, casePath: string, options: RunOptions = {}): void {
+/**
+ * Register a vitest test that runs a case and asserts every eval passed. The
+ * case may be a code-defined {@link TestCaseInput} (the recommended form —
+ * build it with `testCase`/`boolean`/`numeric`/… re-exported here) or a path to
+ * a YAML file.
+ */
+export function skillTest(
+  name: string,
+  caseInput: string | TestCaseInput,
+  options: RunOptions = {},
+): void {
   test(name, async () => {
-    const report = await runSkill(casePath, options);
+    const report = await runSkill(caseInput, options);
     expect(report.passed, describeFailures(report)).toBe(true);
   });
 }
