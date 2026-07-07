@@ -146,48 +146,34 @@ const ONEHARNESS_PACKAGES: Record<string, string | undefined> = {
 };
 
 /**
- * Absolute path to the `oneharness` binary the `oneharness-cli` dependency ships,
- * or `undefined` when it is not resolvable (the caller then falls back to
- * `oneharness` on PATH). Prefers the **native** binary inside the host's
- * `@oneharness/cli-<platform>` package so skilltest execs it directly — the
- * `oneharness-cli` `bin/oneharness.js` is a Node shim that would boot a second
- * `node` process on every call. That launcher is used only as a backup when the
- * platform package cannot be located.
+ * Absolute path to the **native** `oneharness` binary inside the host's
+ * `@oneharness/cli-<platform>` package (oneharness-cli's optional dependency),
+ * or `undefined` when it is not resolvable — an unsupported host, or an install
+ * that skipped optional dependencies. The caller then falls back to `oneharness`
+ * on PATH.
+ *
+ * skilltest execs this binary directly. We deliberately do *not* fall back to
+ * oneharness-cli's `bin/oneharness.js` launcher: it is a Node shim that boots a
+ * second `node` process per call, and it resolves the platform package the same
+ * way this does — so it can only ever fail where this fails, never succeed, while
+ * ignoring PATH. Returning `undefined` (→ PATH) is both simpler and more useful.
  */
 export function bundledOneharness(): string | undefined {
-  let cliDir: string;
+  const pkg = ONEHARNESS_PACKAGES[`${process.platform}-${process.arch}`];
+  if (pkg === undefined) return undefined;
   try {
-    cliDir = dirname(require.resolve("oneharness-cli/package.json"));
+    // Resolve the platform package in oneharness-cli's scope: it is a transitive
+    // optional dependency, so it is not resolvable from the SDK directly.
+    const cliDir = dirname(require.resolve("oneharness-cli/package.json"));
+    const manifest = require.resolve(`${pkg}/package.json`, { paths: [cliDir] });
+    const exe = process.platform === "win32" ? "oneharness.exe" : "oneharness";
+    const native = join(dirname(manifest), "bin", exe);
+    if (!existsSync(native)) return undefined;
+    ensureExecutable(native);
+    return native;
   } catch {
     return undefined;
   }
-  const exe = process.platform === "win32" ? "oneharness.exe" : "oneharness";
-
-  // Primary: the native binary in the matching platform package, resolved in
-  // oneharness-cli's scope (it is that package's optional dependency). Exec'd
-  // directly — no Node launcher in the hot path.
-  const pkg = ONEHARNESS_PACKAGES[`${process.platform}-${process.arch}`];
-  if (pkg !== undefined) {
-    try {
-      const manifest = require.resolve(`${pkg}/package.json`, { paths: [cliDir] });
-      const native = join(dirname(manifest), "bin", exe);
-      if (existsSync(native)) {
-        ensureExecutable(native);
-        return native;
-      }
-    } catch {
-      // Platform package not installed (e.g. --omit=optional); try the launcher.
-    }
-  }
-
-  // Backup: the local Node launcher, which resolves the binary itself. Costs a
-  // node startup per call, but keeps a run working where the native lookup fails.
-  const launcher = join(cliDir, "bin", "oneharness.js");
-  if (existsSync(launcher)) {
-    ensureExecutable(launcher);
-    return launcher;
-  }
-  return undefined;
 }
 
 /**
