@@ -68,6 +68,21 @@ fn fake_oneharness(dir: &std::path::Path, failure_kind: &str) -> PathBuf {
     )
 }
 
+/// A fake `oneharness` speaking the `run --stream` NDJSON protocol: a single
+/// terminal `{"type":"result","report":{…}}` line whose result has the given
+/// `status` (no `failure_kind`), so the streaming pipeline's failure path is
+/// exercised end to end.
+fn fake_oneharness_stream(dir: &std::path::Path, status: &str) -> PathBuf {
+    script(
+        dir,
+        "oneharness",
+        &format!(
+            "cat >/dev/null\nprintf '%s\\n' '{{\"type\":\"result\",\"report\":\
+             {{\"results\":[{{\"status\":\"{status}\",\"stderr\":\"simulated {status}\"}}]}}}}'\n"
+        ),
+    )
+}
+
 fn run_passing_case(extra: &[&str]) -> Output {
     let mut cmd = Command::new(skilltest());
     cmd.arg("run")
@@ -89,6 +104,9 @@ fn classified_provider_errors_print_their_hint() {
         ("model_not_found", "does not recognize this model"),
         ("quota", "quota"),
         ("overloaded", "overloaded"),
+        ("timeout", "timed out"),
+        ("spawn", "could not start the provider"),
+        ("protocol", "violated the protocol"),
         ("some_other_kind", "see provider docs"),
     ];
     for (kind, needle) in cases {
@@ -113,6 +131,144 @@ fn classified_provider_errors_print_their_hint() {
             "{kind} hint should mention {needle:?}, got: {stderr}"
         );
     }
+}
+
+#[test]
+fn json_format_provider_error_emits_structured_error() {
+    // On `--format json`, a provider failure emits the structured error on stdout
+    // (carrying the classified `kind`/`context`) while the human hint still goes
+    // to stderr — so an SDK consumer branches on `kind`, not the message string.
+    let dir = temp_dir("json-provider-err");
+    let oh = fake_oneharness(&dir, "auth");
+    let out = Command::new(skilltest())
+        .arg("run")
+        .arg(fixtures().join("cases/greet_pass.yaml"))
+        .args(["--oneharness-bin", oh.to_str().unwrap()])
+        .args(["--platform", "claude-code", "--model", "sonnet"])
+        .args(["--format", "json"])
+        .output()
+        .expect("executes");
+    assert_eq!(out.status.code(), Some(3));
+    let err: Value = serde_json::from_slice(&out.stdout).expect("stdout is the JSON error");
+    assert_eq!(err["code"], "provider");
+    assert_eq!(err["kind"], "auth");
+    assert_eq!(err["context"], "oneharness:claude-code");
+    assert!(
+        err["message"]
+            .as_str()
+            .unwrap()
+            .contains("harness run failed"),
+        "message: {err}"
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("credentials"),
+        "human hint still on stderr"
+    );
+}
+
+#[test]
+fn json_format_classifies_a_timeout_status() {
+    // oneharness reports a deadline as `status: "timeout"` with no `failure_kind`.
+    // skilltest still classifies it, so the JSON error carries `kind: "timeout"`
+    // — the case that motivated structured errors (no message-string parsing).
+    let dir = temp_dir("json-timeout");
+    let oh = script(
+        &dir,
+        "oneharness",
+        "cat >/dev/null\necho '{\"results\":[{\"status\":\"timeout\",\
+         \"stderr\":\"deadline exceeded\"}]}'\n",
+    );
+    let out = Command::new(skilltest())
+        .arg("run")
+        .arg(fixtures().join("cases/greet_pass.yaml"))
+        .args(["--oneharness-bin", oh.to_str().unwrap()])
+        .args(["--platform", "claude-code", "--model", "sonnet"])
+        .args(["--format", "json"])
+        .output()
+        .expect("executes");
+    assert_eq!(out.status.code(), Some(3));
+    let err: Value = serde_json::from_slice(&out.stdout).expect("stdout is the JSON error");
+    assert_eq!(err["kind"], "timeout");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("timed out"),
+        "timeout hint on stderr"
+    );
+}
+
+#[test]
+fn json_format_usage_error_emits_structured_error_without_kind() {
+    // A usage error (exit 2) is emitted in JSON mode too, as `code: "usage"` with
+    // no provider `kind`/`context`.
+    let dir = temp_dir("json-usage-err");
+    let bad = dir.join("bad.yaml");
+    std::fs::write(&bad, "input: [unterminated\n").unwrap();
+    let out = Command::new(skilltest())
+        .arg("run")
+        .arg(&bad)
+        .arg("--provider")
+        .arg(fake_provider())
+        .args(["--platform", "demo", "--model", "fake", "--format", "json"])
+        .output()
+        .expect("executes");
+    assert_eq!(out.status.code(), Some(2));
+    let err: Value = serde_json::from_slice(&out.stdout).expect("stdout is the JSON error");
+    assert_eq!(err["code"], "usage");
+    assert!(err["kind"].is_null(), "usage errors carry no kind: {err}");
+    assert!(err["context"].is_null());
+}
+
+#[test]
+fn json_stream_error_emits_a_terminal_error_line() {
+    // On `--format json-stream`, a failure is the terminal `{"type":"error",…}`
+    // NDJSON line, so the streaming SDK reads the same structured error.
+    let dir = temp_dir("json-stream-err");
+    let bad = dir.join("bad.yaml");
+    std::fs::write(&bad, "input: [unterminated\n").unwrap();
+    let out = Command::new(skilltest())
+        .arg("run")
+        .arg(&bad)
+        .arg("--provider")
+        .arg(fake_provider())
+        .args([
+            "--platform",
+            "demo",
+            "--model",
+            "fake",
+            "--format",
+            "json-stream",
+        ])
+        .output()
+        .expect("executes");
+    assert_eq!(out.status.code(), Some(2));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let line = stdout.lines().last().expect("a terminal NDJSON line");
+    let obj: Value = serde_json::from_str(line).expect("the terminal line is JSON");
+    assert_eq!(obj["type"], "error");
+    assert_eq!(obj["error"]["code"], "usage");
+}
+
+#[test]
+fn json_stream_provider_error_emits_a_classified_terminal_line() {
+    // A provider failure *during* a streamed run (not a pre-stream usage error)
+    // is emitted as the terminal `{"type":"error",…}` line, classified — so the
+    // streaming SDK path surfaces the same typed error as the buffered one.
+    let dir = temp_dir("json-stream-provider");
+    let oh = fake_oneharness_stream(&dir, "timeout");
+    let out = Command::new(skilltest())
+        .arg("run")
+        .arg(fixtures().join("cases/greet_pass.yaml"))
+        .args(["--oneharness-bin", oh.to_str().unwrap()])
+        .args(["--platform", "claude-code", "--model", "sonnet"])
+        .args(["--format", "json-stream"])
+        .output()
+        .expect("executes");
+    assert_eq!(out.status.code(), Some(3));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let line = stdout.lines().last().expect("a terminal NDJSON line");
+    let obj: Value = serde_json::from_str(line).expect("the terminal line is JSON");
+    assert_eq!(obj["type"], "error");
+    assert_eq!(obj["error"]["code"], "provider");
+    assert_eq!(obj["error"]["kind"], "timeout");
 }
 
 #[test]

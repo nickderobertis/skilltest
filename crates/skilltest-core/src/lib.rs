@@ -30,7 +30,7 @@ pub use config::{
     ProviderConfig,
 };
 pub use conversation::{Message, Role, ToolEvent, Transcript};
-pub use error::{Error, Result};
+pub use error::{Error, ProviderErrorKind, Result};
 pub use eval::{
     BooleanEval, CalledEval, Comparator, Eval, EvalDetail, EvalOutcome, JudgeValue, NotCalledEval,
     NumericEval,
@@ -44,7 +44,9 @@ pub use provider::{
     supports_resume, ApiJudgeProvider, AssistantTurn, CommandProvider, JudgeKind, JudgeQuery,
     JudgeVerdict, OneharnessProvider, Provider, SkillRef, SplitProvider, Usage, UserTurn,
 };
-pub use report::{CaseRun, Report, Summary, ValidationFinding, ValidationReport};
+pub use report::{
+    CaseRun, ErrorCode, Report, ReportError, Summary, ValidationFinding, ValidationReport,
+};
 pub use runner::{Runner, StreamEvent};
 pub use skill::{load_skill, validate_path, validate_skill, Finding, SkillDefinition};
 pub use testcase::{discover_cases, SimulatedUser, TestCase};

@@ -19,7 +19,13 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { type TestCaseInput, compileCase, isTestCaseInput } from "./case.js";
-import { SkilltestError, SkilltestProviderError, SkilltestUsageError } from "./errors.js";
+import {
+  SkilltestError,
+  SkilltestProviderError,
+  SkilltestUsageError,
+  providerErrorFor,
+} from "./errors.js";
+import type { ReportError } from "./generated/error.js";
 import type { Report } from "./generated/report.js";
 import type { ValidationReport } from "./generated/validation.js";
 import { type ToolSpy, bindMocks, compileDecls } from "./mock.js";
@@ -207,14 +213,49 @@ export function mockRunArgs(mocks: readonly ToolSpy[] | undefined): {
 }
 
 /**
- * Map a skilltest exit code to a thrown error (shared by the buffered and
- * streaming APIs). Codes 0/1 produce a report and never throw.
+ * The structured error the CLI emits on stdout for a `--format json` failure, or
+ * `undefined` when stdout is not that envelope (an older binary that printed
+ * nothing, or a non-JSON line) — callers fall back to the stderr text. Shared by
+ * the buffered and streaming APIs. Lightweight-guarded rather than validated:
+ * an error envelope has a string `code`/`message` a Report never has.
  */
-export function raiseForCode(code: number | null, detail: string): void {
+export function parseReportError(stdout: string): ReportError | undefined {
+  const text = stdout.trim();
+  if (!text) return undefined;
+  try {
+    const obj = JSON.parse(text);
+    if (
+      obj &&
+      (obj.code === "usage" || obj.code === "provider") &&
+      typeof obj.message === "string"
+    ) {
+      return obj as ReportError;
+    }
+  } catch {
+    // not JSON — fall back to the stderr text
+  }
+  return undefined;
+}
+
+/**
+ * Map a skilltest exit code to a thrown error (shared by the buffered and
+ * streaming APIs). Codes 0/1 produce a report and never throw. `structured`,
+ * when the CLI emitted the JSON error envelope, carries the classified
+ * `kind`/`context` onto a {@link SkilltestProviderError}.
+ */
+export function raiseForCode(code: number | null, detail: string, structured?: ReportError): void {
   if (code === 0 || code === 1 || code === null) return;
-  if (code === 2) throw new SkilltestUsageError(detail);
-  if (code === 3) throw new SkilltestProviderError(detail);
-  throw new SkilltestError(`skilltest exited ${code}: ${detail}`);
+  const message = structured?.message || detail;
+  if (code === 2) throw new SkilltestUsageError(message);
+  if (code === 3) {
+    // The kind-specific subclass (SkilltestTimeoutError, …) so a handler can
+    // `instanceof`-check one category; falls back to the base for other/none.
+    throw providerErrorFor(message, {
+      kind: structured?.kind ?? undefined,
+      context: structured?.context ?? undefined,
+    });
+  }
+  throw new SkilltestError(`skilltest exited ${code}: ${message}`);
 }
 
 function capture(bin: string, args: string[], cwd: string | undefined): Promise<Captured> {
@@ -242,10 +283,9 @@ function capture(bin: string, args: string[], cwd: string | undefined): Promise<
 // Exit codes that still produce a JSON report (0 = all passed, 1 = some failed).
 function raiseForStatus(result: Captured): void {
   if (result.status === 0 || result.status === 1) return;
+  const structured = parseReportError(result.stdout);
   const detail = result.stderr.trim() || result.stdout.trim();
-  if (result.status === 2) throw new SkilltestUsageError(detail);
-  if (result.status === 3) throw new SkilltestProviderError(detail);
-  throw new SkilltestError(`skilltest exited ${result.status}: ${detail}`);
+  raiseForCode(result.status, detail, structured);
 }
 
 // The cast is sound by construction: the SDK's types are generated from the

@@ -22,6 +22,7 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { type TestCaseInput, isTestCaseInput } from "./case.js";
 import { SkilltestProviderError } from "./errors.js";
+import type { ReportError } from "./generated/error.js";
 import type { Report, ToolEvent } from "./generated/report.js";
 import { type ToolSpy, bindMocks } from "./mock.js";
 import {
@@ -75,6 +76,7 @@ class SkillStreamImpl implements SkillStream {
       stderr += chunk.toString();
     });
     const rl = createInterface({ input: child.stdout });
+    let structured: ReportError | undefined;
     try {
       for await (const line of rl) {
         const trimmed = line.trim();
@@ -87,6 +89,10 @@ class SkillStreamImpl implements SkillStream {
           // Mocks bind only on a completed run — an aborted stream leaves
           // them unbound (reading one then throws, never counts as zero).
           if (this.mocks.length > 0) bindMocks(this.mocks, this.report.runs);
+        } else if (obj.type === "error") {
+          // The terminal error line for a failed streamed run — carries the
+          // same structured `kind`/`context` as the buffered output.
+          structured = obj.error as ReportError;
         }
       }
       const code = await new Promise<number | null>((resolve) => {
@@ -99,7 +105,7 @@ class SkillStreamImpl implements SkillStream {
             `Set ${ENV_BIN} or pass bin.`,
         );
       }
-      raiseForCode(code, stderr.trim());
+      raiseForCode(code, stderr.trim(), structured);
     } finally {
       // The consumer stopped early (break): kill the CLI so oneharness's stream
       // closes and the harness is torn down.

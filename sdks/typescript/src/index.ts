@@ -63,10 +63,19 @@ export {
   type WhereCriteria,
 } from "./mock.js";
 export {
+  SkilltestAuthError,
   SkilltestError,
+  SkilltestModelNotFoundError,
+  SkilltestOverloadedError,
+  SkilltestProtocolError,
   SkilltestProviderError,
+  SkilltestQuotaError,
+  SkilltestRateLimitError,
+  SkilltestSpawnError,
+  SkilltestTimeoutError,
   SkilltestUsageError,
 } from "./errors.js";
+export type { ErrorCode, ProviderErrorKind, ReportError } from "./generated/error.js";
 export { assistantText, describeFailures, toolCalls } from "./helpers.js";
 export type {
   BooleanDetail,
