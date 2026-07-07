@@ -1,5 +1,7 @@
 # skilltest
 
+![skilltest running a folder of cases end to end: each case resolves from queued to PASS or FAIL as its evals return, then clears to the summary report](docs/screenshots/demo.gif)
+
 A framework for **testing AI skills**. Give a skill (a `SKILL.md` plus its
 assets) some starting input, optionally drive a simulated user across several
 turns, then score the resulting transcript with built-in **natural-language
@@ -58,7 +60,9 @@ skilltest run cases/example.yaml --provider skilltest-fake-provider   # try it o
 ```
 
 `skilltest init` writes a runnable starter project you can immediately run
-against the bundled deterministic provider, then point at a real one.
+against the bundled deterministic provider, then point at a real one:
+
+![skilltest init: the created skilltest.yaml, example skill, and example case, then the next-step run hints](docs/screenshots/init.svg)
 
 ## Use the CLI
 
@@ -85,6 +89,23 @@ skilltest run cases/greet.yaml                 # human summary (uses oneharness)
 skilltest run cases/ --format json             # whole directory, machine output
 skilltest run cases/greet.yaml -p claude-code -m sonnet
 ```
+
+The default report is one line per run plus a tally; a failing eval is itemized
+with what it expected and why, and the exit code follows (`0` all-pass, `1` a
+failure):
+
+![skilltest run over a folder of cases: two PASS lines, a FAIL with its failing eval itemized, and a "2/3 runs passed" summary](docs/screenshots/run-human.svg)
+
+<details>
+<summary>The same run as <code>--format json</code> — the stable contract the SDKs are generated from</summary>
+
+![skilltest run --format json: the machine-readable report — summary counts, each run's evals with their detail and reason, and the transcript](docs/screenshots/run-json.svg)
+
+</details>
+
+> These are real captures of the CLI, rendered from the actual output by
+> [`just screenshots`](screenshots/AGENTS.md) and gated by
+> [screencomp](https://github.com/nickderobertis/screencomp).
 
 Multi-turn cases add a `user:` block with a persona and a `done_when` condition;
 skilltest drives the simulated user until it holds (or `max_turns`).
@@ -116,7 +137,10 @@ evals:
 
 The report's `mock_calls` records every observed call with its **original**
 input and verdict (the transcript's `events` show what actually ran instead).
-A harness that cannot express a requested verb fails loudly, never silently.
+A harness that cannot express a requested verb fails loudly, never silently — and
+a `not_called` guardrail catches a blocked command instead of passing vacuously:
+
+![skilltest run of a mocked case: a not_called eval reports the denied rm -rf with the observed calls (git push [stub], git status, rm -rf [deny]), and the run fails](docs/screenshots/mocks.svg)
 
 Validate skill definitions:
 
@@ -124,6 +148,8 @@ Validate skill definitions:
 skilltest validate skills/greeter      # a single skill
 skilltest validate skills/             # a folder of skills
 ```
+
+![skilltest validate over a folder: an INVALID finding for a skill missing its description, then a FAIL validation-finding tally](docs/screenshots/validate.svg)
 
 Scaffold a new project: `skilltest init [DIR]` writes a `skilltest.yaml`, an
 example skill, and an example case (refusing to overwrite existing files).

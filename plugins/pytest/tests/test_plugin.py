@@ -138,12 +138,14 @@ def test_full_code_defined_case_surface_is_reexported(fixtures: Path) -> None:
     assert report.passed, describe_failures(report)
     assert report.runs[0].turns == 2
 
-    push = stub(pattern=r"git push( --force)?\b", output="Everything up-to-date", name="push")
+    # The eval references the stub by object — no name to keep in sync — and
+    # the reference resolves through the plugin's re-export and streaming path.
+    push = stub(pattern=r"git push( --force)?\b", output="Everything up-to-date")
     mocked = TestCase(
         skill=fixtures / "skills" / "deployer",
         input="Deploy the app",
         mocks=[push],
-        evals=[called("push", times=1)],
+        evals=[called(push, times=1)],
     )
     stream = stream_skill(mocked)
 
@@ -154,6 +156,32 @@ def test_full_code_defined_case_surface_is_reexported(fixtures: Path) -> None:
     asyncio.run(drain())
     assert stream.report is not None and stream.report.passed
     push.assert_called_once()
+
+
+def test_provider_error_subclass_is_reexported_and_raised(
+    cases: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The kind-specific error surface rides the one-dependency re-export, and a
+    # provider failure through the plugin's run_skill raises it — so a plugin
+    # user can `except SkilltestTimeoutError` without importing the SDK.
+    from skilltest_pytest import SkilltestProviderError, SkilltestTimeoutError
+
+    monkeypatch.delenv("SKILLTEST_PROVIDER", raising=False)
+    oh = tmp_path / "oneharness"
+    oh.write_text(
+        "#!/bin/sh\ncat >/dev/null\n"
+        'printf \'%s\' \'{"results":[{"status":"timeout","stderr":"deadline"}]}\'\n'
+    )
+    oh.chmod(0o755)
+    cfg = tmp_path / "skilltest.yaml"
+    cfg.write_text(
+        f"provider:\n  kind: oneharness\n  bin: {oh}\n  judge_harness: claude-code\n"
+        "  timeout_secs: 5\nplatforms: [claude-code]\nmodels: [sonnet]\n"
+    )
+    with pytest.raises(SkilltestTimeoutError) as exc:
+        run_skill(cases / "greet_pass.yaml", config=cfg)
+    assert isinstance(exc.value, SkilltestProviderError)
+    assert exc.value.kind == "timeout"
 
 
 def test_mock_api_is_reexported_and_binds(cases: Path) -> None:

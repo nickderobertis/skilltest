@@ -1,0 +1,12 @@
+# Single-turn happy path: two boolean evals the fake judge resolves by looking
+# for the backtick-quoted phrases in the skill's reply.
+name: greets_by_name
+skill: ../skills/scheduler
+input: "Greet Dr. Smith, who has an appointment today."
+evals:
+  - type: boolean
+    name: names-the-patient
+    criterion: "the reply greets `Dr. Smith` by name"
+  - type: boolean
+    name: confirms-appointment
+    criterion: "the reply says the appointment is `confirmed`"

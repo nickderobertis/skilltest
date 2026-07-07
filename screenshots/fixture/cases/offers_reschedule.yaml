@@ -1,0 +1,9 @@
+# The failing case: the scheduler skill never offers to reschedule, so this
+# boolean eval fails — the report itemizes it (expected true) and the run exits 1.
+name: offers_reschedule
+skill: ../skills/scheduler
+input: "Dr. Smith wants to move the appointment to next week."
+evals:
+  - type: boolean
+    name: offers-reschedule
+    criterion: "the reply offers to `reschedule` the appointment"

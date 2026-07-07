@@ -29,8 +29,8 @@ def test_greeter():
 ```
 
 Multi-turn cases add `user(...)`; deterministic call-count checks use `called` /
-`not_called` referencing a named `stub`/`spy` (or the mock objects' own
-assertions — see below). `run_skill` also takes `platforms=`/`models=` to fan a
+`not_called` taking the `stub`/`spy` object itself or a name you gave it (or
+use the mock objects' own assertions — see below). `run_skill` also takes `platforms=`/`models=` to fan a
 case across a matrix.
 
 ## Or point at a YAML file

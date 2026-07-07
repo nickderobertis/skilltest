@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.8.0](https://github.com/nickderobertis/skilltest/compare/v0.7.0...v0.8.0) (2026-07-07)
+
+### ⚠ BREAKING CHANGES
+
+* skilltest-core's Error::Provider.kind is now Option<ProviderErrorKind> (was Option<String>) and Error::provider_classified takes a ProviderErrorKind. The JSON output contract is only extended, so SDK/plugin consumers are unaffected.
+
+### Features
+
+* structured provider errors with a classified kind across the CLI and SDKs ([#27](https://github.com/nickderobertis/skilltest/issues/27)) ([6ae7a1f](https://github.com/nickderobertis/skilltest/commit/6ae7a1f69cd92aabb070cc29de0940f48086a730))
+
+## [0.7.0](https://github.com/nickderobertis/skilltest/compare/v0.6.0...v0.7.0) (2026-07-07)
+
+### Features
+
+* reference mocks/spies by object in called/not_called evals ([#26](https://github.com/nickderobertis/skilltest/issues/26)) ([8da0bc1](https://github.com/nickderobertis/skilltest/commit/8da0bc1a0f95ffd07447e342ae8187dac7ccac03))
+
 ## [0.6.0](https://github.com/nickderobertis/skilltest/compare/v0.5.0...v0.6.0) (2026-07-07)
 
 ### Features

@@ -30,8 +30,11 @@ into the runner:
   off each result and aggregated into the [report](schema.md) so cross-model
   cost reporting is portable instead of harness-specific.
 - **Normalized `failure_kind`** — when a run fails with a classified reason
-  (`auth`, `rate_limit`, `model_not_found`, `quota`), the CLI maps it to a
-  pointed hint instead of a generic provider error.
+  (`auth`, `rate_limit`, `model_not_found`, `quota`), skilltest maps it to a
+  structured [`ProviderErrorKind`](schema.md#structured-errors) so consumers
+  branch on the category (and the CLI prints a pointed hint). A terminal
+  `status: "timeout"` (no `failure_kind`) is likewise classified as `timeout`,
+  so a deadline is a typed category, not a substring in the message.
 - **`--mock-rules` / `--spy-file`** — when a case declares `mocks`/`spy`,
   skilltest compiles the declarations into oneharness's mock ruleset, writes it
   to a temp file, and passes both flags on each skill turn (never on judge or
@@ -67,8 +70,9 @@ oneharness run --harness <H> --model <M> --compact --events \
 
 with a constructed prompt on stdin, then reads `results[0]`: it requires
 `status == "ok"` and uses `text`, `session_id`, `usage`, `events`, and
-`history_file`. A non-`ok` status becomes a provider error (classified by
-`failure_kind` when set).
+`history_file`. A non-`ok` status becomes a provider error, classified by
+`failure_kind` when set and otherwise from the `status` (`timeout` →
+`ProviderErrorKind::Timeout`); see [structured errors](schema.md#structured-errors).
 
 **Approval mode.** skilltest passes no `--mode`, so oneharness applies its own
 default approval mode (v0.3.0+ normalized `--mode` across harnesses — a breaking
@@ -184,6 +188,15 @@ The terminal `result` line carries the same `Report` the buffered format
 returns. Under the hood the runner drives each turn through the provider's
 streaming path (`OneharnessProvider` uses `oneharness run --stream`, which emits
 its own NDJSON events); the buffered format is unchanged.
+
+If the run fails before a report can be produced (bad input, a provider
+failure), the terminal line is instead a structured error — the same
+[`ReportError`](schema.md#structured-errors) the buffered format emits, wrapped
+in the stream's `type` envelope:
+
+```
+{"type":"error","error":{"code":"provider","kind":"timeout","context":"…","message":"…"}}
+```
 
 **Short-circuit.** A consumer that stops reading (closing the pipe) makes the
 CLI's next event write fail; the CLI tears the run down — for `OneharnessProvider`

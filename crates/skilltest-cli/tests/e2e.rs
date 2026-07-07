@@ -746,6 +746,11 @@ fn schema_case_matches_checked_in_golden() {
 }
 
 #[test]
+fn schema_error_matches_checked_in_golden() {
+    assert_schema_matches_golden("error", "error.schema.json");
+}
+
+#[test]
 fn help_exits_zero() {
     let out = Command::new(skilltest())
         .arg("--help")

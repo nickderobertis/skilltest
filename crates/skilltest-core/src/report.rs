@@ -7,6 +7,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::conversation::Transcript;
+use crate::error::{Error, ProviderErrorKind};
 use crate::eval::EvalOutcome;
 use crate::mock::MockCall;
 use crate::provider::Usage;
@@ -210,6 +211,84 @@ impl ValidationReport {
     }
 
     /// Serialize to pretty JSON (the `--format json` output).
+    ///
+    /// # Errors
+    /// [`serde_json::Error`] only if a contained value cannot serialize, which
+    /// should not happen for these types.
+    pub fn to_json(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string_pretty(self)
+    }
+}
+
+/// Which class of failure a [`ReportError`] describes. Mirrors the process exit
+/// code so a JSON consumer gets the same coarse classification as a shell script
+/// branching on `$?`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ErrorCode {
+    /// Bad usage or input (exit 2): malformed config/case YAML, a missing file,
+    /// a semantically invalid test definition.
+    Usage,
+    /// A provider/environment failure (exit 3): the harness or judge could not
+    /// be reached or misbehaved.
+    Provider,
+}
+
+/// A structured error, emitted as the `--format json` / `json-stream` output
+/// when a `skilltest run` cannot produce a [`Report`].
+///
+/// This is the machine-readable counterpart to the human hint the CLI prints on
+/// stderr: it rides on stdout so SDK/plugin consumers get the [`ProviderErrorKind`]
+/// (and the `code`/`context`) for targeted handling — retry on
+/// [`ProviderErrorKind::Timeout`], fail fast on [`ProviderErrorKind::Auth`] —
+/// instead of matching substrings in the message. For `json` the object is
+/// emitted bare; for `json-stream` it is the terminal
+/// `{"type":"error","error":{…}}` line.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ReportError {
+    /// The coarse failure class, matching the process exit code.
+    pub code: ErrorCode,
+    /// The structured provider-failure category, when skilltest could classify
+    /// it. Absent for usage errors and for unclassified provider failures.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<ProviderErrorKind>,
+    /// The provider context the failure came from (e.g. `oneharness:claude-code`,
+    /// `api-judge`). Absent for usage errors.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<String>,
+    /// A human-readable description of what went wrong (the same text printed on
+    /// stderr, minus the suggested-action hint).
+    pub message: String,
+}
+
+impl ReportError {
+    /// Build the structured error for a core [`Error`]. The mapping mirrors the
+    /// CLI's error→exit-code mapping (`report_error`): [`Error::Provider`] is a
+    /// provider failure carrying its `kind`/`context`; everything else is a
+    /// usage error.
+    #[must_use]
+    pub fn from_error(err: &Error) -> Self {
+        match err {
+            Error::Provider {
+                context,
+                message,
+                kind,
+            } => ReportError {
+                code: ErrorCode::Provider,
+                kind: *kind,
+                context: Some(context.clone()),
+                message: message.clone(),
+            },
+            other => ReportError {
+                code: ErrorCode::Usage,
+                kind: None,
+                context: None,
+                message: other.to_string(),
+            },
+        }
+    }
+
+    /// Serialize to pretty JSON (the bare `--format json` error output).
     ///
     /// # Errors
     /// [`serde_json::Error`] only if a contained value cannot serialize, which
@@ -430,5 +509,45 @@ mod tests {
         let json = report.to_json().unwrap();
         let parsed: ValidationReport = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, report);
+    }
+
+    #[test]
+    fn report_error_from_classified_provider_error() {
+        let err = Error::provider_classified(
+            "oneharness:claude-code",
+            "harness run failed: deadline",
+            ProviderErrorKind::Timeout,
+        );
+        let structured = ReportError::from_error(&err);
+        assert_eq!(structured.code, ErrorCode::Provider);
+        assert_eq!(structured.kind, Some(ProviderErrorKind::Timeout));
+        assert_eq!(
+            structured.context.as_deref(),
+            Some("oneharness:claude-code")
+        );
+        assert!(structured.message.contains("deadline"));
+        // Round-trips through the JSON contract, kind as a snake_case string.
+        let json = structured.to_json().unwrap();
+        assert!(json.contains("\"kind\": \"timeout\""));
+        let parsed: ReportError = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, structured);
+    }
+
+    #[test]
+    fn report_error_from_unclassified_provider_error() {
+        let err = Error::provider("oneharness", "boom");
+        let structured = ReportError::from_error(&err);
+        assert_eq!(structured.code, ErrorCode::Provider);
+        assert_eq!(structured.kind, None);
+        assert_eq!(structured.context.as_deref(), Some("oneharness"));
+    }
+
+    #[test]
+    fn report_error_from_usage_error() {
+        let structured = ReportError::from_error(&Error::Invalid("bad case".into()));
+        assert_eq!(structured.code, ErrorCode::Usage);
+        assert_eq!(structured.kind, None);
+        assert!(structured.context.is_none());
+        assert!(structured.message.contains("bad case"));
     }
 }

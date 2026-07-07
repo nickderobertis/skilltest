@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "shots": [
+    {
+      "name": "init",
+      "toggles": {},
+      "hash": "ebf30c2aca4082ca5e1f09793c10eb9dacf56a6e7a1be3cff66badcb73cbc620"
+    },
+    {
+      "name": "mocks",
+      "toggles": {},
+      "hash": "7c505026257613a05dad39f222ca2221f6b4776a49d1fbb68dcaa8a759e24676"
+    },
+    {
+      "name": "run",
+      "toggles": {
+        "format": "human"
+      },
+      "hash": "8c20f855d158842ea5bd5dcdb992d2293088a8974124b27d43e26451104bcb8a"
+    },
+    {
+      "name": "run",
+      "toggles": {
+        "format": "json"
+      },
+      "hash": "08b190f16d4347b34754c1dbf273f75157a9d7ca064fd685a312ab7dae183a3b"
+    },
+    {
+      "name": "validate",
+      "toggles": {},
+      "hash": "db8b00153c02773df3aecdf7f18bad7e79ea43efa6ff6f27c3afe69942f05ca6"
+    }
+  ]
+}

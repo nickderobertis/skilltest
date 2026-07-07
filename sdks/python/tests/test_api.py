@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any, get_args
 
 import pytest
 
 from skilltest_sdk import (
     NumericDetail,
+    ProviderErrorKind,
+    SkilltestAuthError,
     SkilltestProviderError,
+    SkilltestTimeoutError,
     SkilltestUsageError,
     assistant_text,
     describe_failures,
@@ -82,3 +86,96 @@ def test_malformed_case_raises_usage_error(tmp_path: Path) -> None:
 def test_missing_binary_raises_provider_error(cases: Path) -> None:
     with pytest.raises(SkilltestProviderError):
         run_skill(cases / "greet_pass.yaml", bin="/nonexistent/skilltest-bin")
+
+
+def _fake_oneharness_config(tmp_path: Path, results_json: str) -> Path:
+    """A config pointing the oneharness provider at a scripted fake that emits
+    ``results_json`` — so a classified failure can be exercised offline."""
+    oh = tmp_path / "oneharness"
+    oh.write_text(f"#!/bin/sh\ncat >/dev/null\nprintf '%s' '{results_json}'\n")
+    oh.chmod(0o755)
+    cfg = tmp_path / "skilltest.yaml"
+    cfg.write_text(
+        "provider:\n"
+        "  kind: oneharness\n"
+        f"  bin: {oh}\n"
+        "  judge_harness: claude-code\n"
+        "  timeout_secs: 5\n"
+        "platforms: [claude-code]\n"
+        "models: [sonnet]\n"
+    )
+    return cfg
+
+
+def test_provider_error_raises_the_kind_specific_subclass(
+    cases: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # oneharness reports a deadline as `status: "timeout"`; the SDK raises the
+    # kind-specific SkilltestTimeoutError so a handler can catch it directly —
+    # and it is still a SkilltestProviderError.
+    monkeypatch.delenv("SKILLTEST_PROVIDER", raising=False)
+    cfg = _fake_oneharness_config(
+        tmp_path, '{"results":[{"status":"timeout","stderr":"deadline exceeded"}]}'
+    )
+    with pytest.raises(SkilltestTimeoutError) as exc:
+        run_skill(cases / "greet_pass.yaml", config=cfg)
+    assert isinstance(exc.value, SkilltestProviderError)
+    assert exc.value.kind == "timeout"
+    assert exc.value.context == "oneharness:claude-code"
+
+
+def test_classified_auth_failure_raises_auth_subclass(
+    cases: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("SKILLTEST_PROVIDER", raising=False)
+    cfg = _fake_oneharness_config(
+        tmp_path,
+        '{"results":[{"status":"error","failure_kind":"auth","error":"no creds"}]}',
+    )
+    with pytest.raises(SkilltestAuthError) as exc:
+        run_skill(cases / "greet_pass.yaml", config=cfg)
+    assert exc.value.kind == "auth"
+
+
+def test_provider_error_subclasses_cover_every_kind() -> None:
+    # Drift guard: every generated `ProviderErrorKind` (bar the `other`
+    # catch-all, which maps to the base) has a registered subclass, and none is
+    # extra — so a kind added to the Rust enum fails here until its subclass
+    # exists.
+    registered = set(SkilltestProviderError._registry)
+    expected = set(get_args(ProviderErrorKind)) - {"other"}
+    assert registered == expected
+    # `other` and unclassified failures resolve to the base type.
+    assert type(SkilltestProviderError.for_kind("x", kind="other")) is SkilltestProviderError
+    assert type(SkilltestProviderError.for_kind("x")) is SkilltestProviderError
+
+
+def test_usage_error_has_no_kind(tmp_path: Path) -> None:
+    bad = tmp_path / "bad.yaml"
+    bad.write_text("skill: ./x\ninput: hi\nbogus: 1\nevals: []\n")
+    with pytest.raises(SkilltestUsageError) as exc:
+        run_skill(bad)
+    # A usage error is not a provider failure — it carries no classification.
+    assert not hasattr(exc.value, "kind")
+
+
+def _literal_strings(annotation: Any) -> set[str]:
+    """Every string literal reachable in a typing annotation (recursing through
+    ``Optional``/unions into the ``Literal`` members)."""
+    found: set[str] = set()
+    for arg in get_args(annotation):
+        if isinstance(arg, str):
+            found.add(arg)
+        else:
+            found |= _literal_strings(arg)
+    return found
+
+
+def test_provider_error_kind_matches_generated_contract() -> None:
+    # Drift guard: the hand-written `ProviderErrorKind` literal must match the
+    # generated `ReportError.kind` vocabulary (the contract gate regenerates the
+    # latter from the Rust enum, but not this alias).
+    from skilltest_sdk._error import ReportError
+
+    generated = _literal_strings(ReportError.model_fields["kind"].annotation)
+    assert generated == set(get_args(ProviderErrorKind))

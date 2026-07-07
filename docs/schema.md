@@ -133,15 +133,16 @@ builders map one-to-one onto the fields above:
 # Python (skilltest-sdk / skilltest-pytest)
 from skilltest_sdk import TestCase, run_skill, boolean, numeric, called, stub, user
 
+push = stub(pattern=r"git push\b", output="Everything up-to-date")
 case = TestCase(
     skill="skills/greeter",          # relative to the working directory, not a file
     input="Greet Dr. Smith, who has an appointment today.",
     user=user("a terse patient", done_when="the appointment is confirmed"),  # optional
-    mocks=[stub(pattern=r"git push\b", output="Everything up-to-date", name="push")],
+    mocks=[push],
     evals=[
         boolean("the reply greets Dr. Smith by name"),
         numeric("how warm is the tone", min=0, max=10, threshold=7),
-        called("push", times=1),     # references the named mock above
+        called(push, times=1),       # the mock object itself; a name= string also works
     ],
 )
 report = run_skill(case)
@@ -151,15 +152,16 @@ report = run_skill(case)
 // TypeScript (@skill-test/sdk / @skill-test/vitest)
 import { runSkill, testCase, boolean, numeric, called, stub, user } from "@skill-test/sdk";
 
+const push = stub({ pattern: /git push\b/, output: "Everything up-to-date" });
 const report = await runSkill(testCase({
   skill: "skills/greeter",
   input: "Greet Dr. Smith, who has an appointment today.",
   user: user("a terse patient", { doneWhen: "the appointment is confirmed" }),
-  mocks: [stub({ pattern: /git push\b/, output: "Everything up-to-date", name: "push" })],
+  mocks: [push],
   evals: [
     boolean("the reply greets Dr. Smith by name"),
     numeric("how warm is the tone", { min: 0, max: 10, threshold: 7 }),
-    called("push", { times: 1 }),
+    called(push, { times: 1 }), // the mock object itself; a name string also works
   ],
 }));
 ```
@@ -268,6 +270,51 @@ can be reviewed after the fact. It is `null` for providers/configs that record
 no history. See [the protocol reference](protocol.md) for the centralized
 history directory and how the session name is derived.
 
+## Structured errors (`--format json` failures)
+
+Exit codes 0 and 1 produce a `Report` (all passed / some failed). A run that
+cannot produce a report at all — **bad input** (exit 2) or a **provider
+failure** (exit 3) — instead emits a structured **`ReportError`** on stdout, so
+a machine consumer gets the failure category without parsing stderr:
+
+```json
+{
+  "code": "provider",
+  "kind": "timeout",
+  "context": "oneharness:claude-code",
+  "message": "harness run failed: deadline exceeded"
+}
+```
+
+- **`code`** — `usage` (exit 2) or `provider` (exit 3), mirroring the process
+  exit code.
+- **`kind`** — a `ProviderErrorKind` for a classified provider failure, else
+  absent. The closed vocabulary is `auth`, `rate_limit`, `model_not_found`,
+  `quota`, `overloaded`, `timeout`, `spawn`, `protocol`, `other` — the last is
+  the forward-compatible catch-all for a failure this version can't map to a
+  specific category. This is the field to branch on (retry a `timeout`, fail
+  fast on `auth`) instead of matching substrings in `message`.
+- **`context`** — the provider the failure came from (e.g.
+  `oneharness:claude-code`, `api-judge`); absent for usage errors.
+- **`message`** — the human description (the same text on stderr, minus the
+  suggested-action hint the CLI also prints there).
+
+The human hint still goes to stderr for the terminal; the structured object is
+additive on a stdout channel that was previously empty on failure. Under
+`--format json-stream` the same object is the terminal
+`{"type":"error","error":{…}}` NDJSON line.
+
+The SDKs surface it as a **kind-specific exception** carrying `.kind`/`.context`
+— one subclass per concrete kind (`SkilltestTimeoutError`, `SkilltestAuthError`,
+…), all extending `SkilltestProviderError`, so a handler catches one category
+directly (`except SkilltestTimeoutError` / `catch (e) { if (e instanceof
+SkilltestTimeoutError) }`) while a catch on the base still catches every provider
+failure. The `other` catch-all and unclassified failures surface as the base
+`SkilltestProviderError`. The subclass set can't drift from the Rust enum: in
+TypeScript the kind→class registry is a `Record<ProviderErrorKind, …>` (a missing
+kind fails `tsc`), and in Python a test ties the registry to the generated
+`ProviderErrorKind` vocabulary.
+
 ## The contracts: how the CLI and the SDKs stay in sync
 
 Two JSON contracts bind the CLI to the SDKs, both generated from the Rust
@@ -275,7 +322,10 @@ types by `scripts/gen-contract.sh` (`just gen-contract`) and both enforced by
 the same drift gate:
 
 - the **output contract** — the `--format json` report the SDKs parse
-  (`schemas/report.schema.json`, `schemas/validation.schema.json`), and
+  (`schemas/report.schema.json`, `schemas/validation.schema.json`) plus the
+  structured error emitted on a failure exit (`schemas/error.schema.json`,
+  from which each SDK's error model — and the typed `SkilltestProviderError` —
+  is generated), and
 - the **input contract** — the test-case shape (`schemas/case.schema.json`,
   from `crates/skilltest-core/src/testcase.rs` + `eval.rs` + `mock.rs`), from
   which each SDK's *case* models are generated so the code-first case builders
@@ -285,8 +335,8 @@ the same drift gate:
 The chain:
 
 1. The types derive `schemars::JsonSchema`, and `skilltest schema
-   <report|validation|case>` emits their JSON Schema (draft-07 on purpose — the
-   dialect the generators below digest reliably).
+   <report|validation|case|error>` emits their JSON Schema (draft-07 on purpose
+   — the dialect the generators below digest reliably).
 2. The script writes those schemas to `schemas/` (the **goldens**), then
    generates each SDK's models from them:
    - Python: [`datamodel-code-generator`](https://github.com/koxudaxi/datamodel-code-generator)

@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use skilltest_core::{
     discover_cases, validate_path, ApiJudgeProvider, CommandProvider, Config, Error, ExitCode,
-    JudgeConfig, OneharnessProvider, Overrides, Provider, ProviderConfig, Report, Result, Runner,
-    SplitProvider, StreamEvent, TestCase, ValidationReport,
+    JudgeConfig, OneharnessProvider, Overrides, Provider, ProviderConfig, ProviderErrorKind,
+    Report, ReportError, Result, Runner, SplitProvider, StreamEvent, TestCase, ValidationReport,
 };
 
 /// Test AI skills across harness/model platforms with natural-language evals.
@@ -143,6 +143,9 @@ enum SchemaTarget {
     /// The test-case **input** (one `--case-json` object / YAML case file):
     /// the shape the SDKs' generated case models are built from.
     Case,
+    /// The structured error emitted on `--format json` when a run cannot
+    /// produce a report (the shape the SDKs parse for a failure's `kind`).
+    Error,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -181,6 +184,15 @@ where
         }
     };
 
+    // The output format of the command, so a failure can be reported on the same
+    // channel a report would have used (structured JSON on stdout for `json` /
+    // `json-stream`, a human hint on stderr otherwise).
+    let format = match &cli.command {
+        Command::Run(args) => Some(args.format),
+        Command::Validate(args) => Some(args.format),
+        Command::Init(_) | Command::Schema(_) => None,
+    };
+
     let result = match &cli.command {
         Command::Run(args) => cmd_run(cli.config.as_deref(), args),
         Command::Validate(args) => cmd_validate(args),
@@ -190,7 +202,7 @@ where
 
     match result {
         Ok(code) => code,
-        Err(err) => report_error(&err),
+        Err(err) => report_error(&err, format),
     }
 }
 
@@ -422,6 +434,7 @@ fn cmd_schema(args: &SchemaArgs) -> Result<ExitCode> {
         SchemaTarget::Report => generator.into_root_schema_for::<Report>(),
         SchemaTarget::Validation => generator.into_root_schema_for::<ValidationReport>(),
         SchemaTarget::Case => generator.into_root_schema_for::<TestCase>(),
+        SchemaTarget::Error => generator.into_root_schema_for::<ReportError>(),
     };
     let json = serde_json::to_string_pretty(&schema)
         .map_err(|e| Error::Invalid(format!("could not serialize schema: {e}")))?;
@@ -429,22 +442,32 @@ fn cmd_schema(args: &SchemaArgs) -> Result<ExitCode> {
     Ok(ExitCode::Success)
 }
 
-fn report_error(err: &Error) -> ExitCode {
+fn report_error(err: &Error, format: Option<Format>) -> ExitCode {
+    // On a machine-readable format, the structured error rides on stdout (where a
+    // report would have gone) so SDK/plugin consumers get the `kind` for targeted
+    // handling; the human `error:`/`hint:` lines still go to stderr for the
+    // terminal. On the human format, only the stderr lines are printed.
+    match format {
+        Some(Format::Json) => emit_json_error(&ReportError::from_error(err)),
+        Some(Format::JsonStream) => emit_json_stream_error(&ReportError::from_error(err)),
+        Some(Format::Human) | None => {}
+    }
+
     eprintln!("error: {err}");
     match err {
         Error::Provider { kind, .. } => {
-            let hint = match kind.as_deref() {
-                Some("auth") => "hint: authentication failed — check your provider credentials (e.g. `claude` login)",
-                Some("rate_limit") => "hint: the harness rate-limited the call — retry after a backoff",
-                Some("model_not_found") => {
+            let hint = match kind {
+                Some(ProviderErrorKind::Auth) => "hint: authentication failed — check your provider credentials (e.g. `claude` login)",
+                Some(ProviderErrorKind::RateLimit) => "hint: the harness rate-limited the call — retry after a backoff",
+                Some(ProviderErrorKind::ModelNotFound) => {
                     "hint: the harness does not recognize this model — check `--model` and `oneharness list`"
                 }
-                Some("quota") => "hint: provider quota exhausted — check your account limits",
-                Some("overloaded") => "hint: the API is temporarily overloaded — retried already; try again shortly",
-                Some(other) => {
-                    eprintln!("classified as: {other}");
-                    "hint: see provider docs for this failure class"
-                }
+                Some(ProviderErrorKind::Quota) => "hint: provider quota exhausted — check your account limits",
+                Some(ProviderErrorKind::Overloaded) => "hint: the API is temporarily overloaded — retried already; try again shortly",
+                Some(ProviderErrorKind::Timeout) => "hint: the provider timed out — raise --timeout, or check the harness/network",
+                Some(ProviderErrorKind::Spawn) => "hint: could not start the provider — ensure it is installed and on PATH, or pass --provider",
+                Some(ProviderErrorKind::Protocol) => "hint: the provider returned output that violated the protocol — check the provider/oneharness version",
+                Some(ProviderErrorKind::Other) => "hint: see provider docs for this failure class",
                 None => {
                     "hint: ensure the provider command is installed and on PATH, or pass --provider"
                 }
@@ -454,4 +477,21 @@ fn report_error(err: &Error) -> ExitCode {
         }
         _ => ExitCode::UsageError,
     }
+}
+
+/// Emit the bare structured error as the `--format json` stdout (where the
+/// report would have gone). Best-effort: a write failure here does not change
+/// the exit code the caller derives from the error class.
+fn emit_json_error(error: &ReportError) {
+    if let Ok(json) = error.to_json() {
+        println!("{json}");
+    }
+}
+
+/// Emit the terminal `{"type":"error","error":{…}}` NDJSON line for the
+/// `--format json-stream` output (matching the stream's `type`-tagged envelope).
+fn emit_json_stream_error(error: &ReportError) {
+    let line = serde_json::json!({ "type": "error", "error": error });
+    let stdout = std::io::stdout();
+    let _ = write_ndjson(&stdout, &line);
 }

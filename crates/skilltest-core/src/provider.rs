@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::{ApiJudgeConfig, ApiVendor, OneharnessConfig};
 use crate::conversation::{Message, Role, ToolEvent};
-use crate::error::{Error, Result};
+use crate::error::{Error, ProviderErrorKind, Result};
 use crate::eval::JudgeValue;
 use crate::mock::{parse_spy_log, MockCall, MockPlan};
 
@@ -812,6 +812,31 @@ fn select_reply_text(text: Option<String>, stdout: &str) -> Option<String> {
         .or_else(|| (!stdout.trim().is_empty()).then(|| stdout.to_string()))
 }
 
+/// Build the provider error for a non-`ok` oneharness result, classifying it
+/// structurally. oneharness's `failure_kind` (`auth`/`rate_limit`/… , set on
+/// classified failures) wins; absent that, a terminal `status` skilltest
+/// recognizes — today `timeout` — still yields a category, so a deadline is
+/// [`ProviderErrorKind::Timeout`] rather than an unclassified error whose only
+/// signal is the word "timeout" in the message.
+fn oh_failure(context: String, message: String, failure_kind: Option<&str>, status: &str) -> Error {
+    match oh_failure_kind(failure_kind, status) {
+        Some(kind) => Error::provider_classified(context, message, kind),
+        None => Error::provider(context, message),
+    }
+}
+
+/// Classify a non-`ok` oneharness result: its `failure_kind` when set, else a
+/// category inferred from the terminal `status`.
+fn oh_failure_kind(failure_kind: Option<&str>, status: &str) -> Option<ProviderErrorKind> {
+    if let Some(raw) = failure_kind.filter(|k| !k.is_empty()) {
+        return Some(ProviderErrorKind::classify(raw));
+    }
+    match status {
+        "timeout" => Some(ProviderErrorKind::Timeout),
+        _ => None,
+    }
+}
+
 impl OneharnessProvider {
     /// Build a provider from its configuration. The history directory is
     /// resolved once here: the configured `history_dir` if set, otherwise the
@@ -966,12 +991,12 @@ impl OneharnessProvider {
                 .unwrap_or_else(|| format!("status `{}`", result.status));
             let context = format!("oneharness:{}", args.harness);
             let message = format!("harness run failed: {detail}");
-            return Err(match result.failure_kind {
-                Some(kind) if !kind.is_empty() => {
-                    Error::provider_classified(context, message, kind)
-                }
-                _ => Error::provider(context, message),
-            });
+            return Err(oh_failure(
+                context,
+                message,
+                result.failure_kind.as_deref(),
+                &result.status,
+            ));
         }
 
         // Prefer oneharness's extracted `text`; fall back to raw stdout when a
@@ -1155,12 +1180,12 @@ impl OneharnessProvider {
                 .unwrap_or_else(|| format!("status `{}`", result.status));
             let context = format!("oneharness:{}", args.harness);
             let message = format!("harness run failed: {detail}");
-            return Err(match result.failure_kind {
-                Some(kind) if !kind.is_empty() => {
-                    Error::provider_classified(context, message, kind)
-                }
-                _ => Error::provider(context, message),
-            });
+            return Err(oh_failure(
+                context,
+                message,
+                result.failure_kind.as_deref(),
+                &result.status,
+            ));
         }
         let text = select_reply_text(result.text, &result.stdout).ok_or_else(|| {
             Error::provider(
@@ -1578,7 +1603,7 @@ impl ApiJudgeProvider {
             Error::provider_classified(
                 "api-judge",
                 format!("API key env var `{}` is not set", self.api_key_env),
-                "auth",
+                ProviderErrorKind::Auth,
             )
         })?;
         let body = build_chat_body(self.vendor, model, system, user, schema);
@@ -1664,10 +1689,15 @@ impl ApiJudgeProvider {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(Error::provider(
-                "api-judge",
-                format!("curl failed ({}): {}", output.status, stderr.trim()),
-            ));
+            let message = format!("curl failed ({}): {}", output.status, stderr.trim());
+            // curl exit 28 is "operation timed out" (`--max-time` elapsed) — the
+            // one curl status skilltest can classify structurally.
+            return Err(match output.status.code() {
+                Some(28) => {
+                    Error::provider_classified("api-judge", message, ProviderErrorKind::Timeout)
+                }
+                _ => Error::provider("api-judge", message),
+            });
         }
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
@@ -1911,7 +1941,10 @@ fn build_chat_body(
 fn is_retryable(err: &Error) -> bool {
     matches!(
         err,
-        Error::Provider { kind: Some(k), .. } if k == "rate_limit" || k == "overloaded"
+        Error::Provider {
+            kind: Some(ProviderErrorKind::RateLimit | ProviderErrorKind::Overloaded),
+            ..
+        }
     )
 }
 
@@ -1985,17 +2018,20 @@ struct OpenAiResponse {
 }
 
 /// Map a vendor error `type` onto skilltest's classified provider-error kinds so
-/// the CLI can give the same pointed hints it gives for harness failures.
-fn classify_api_error(kind: Option<&str>) -> Option<String> {
+/// consumers get the same categories (and the CLI the same pointed hints) it
+/// gives for harness failures.
+fn classify_api_error(kind: Option<&str>) -> Option<ProviderErrorKind> {
     match kind? {
-        "authentication_error" | "invalid_api_key" | "permission_error" => Some("auth".to_string()),
-        "rate_limit_error" | "rate_limit_exceeded" => Some("rate_limit".to_string()),
-        "insufficient_quota" | "billing_error" => Some("quota".to_string()),
-        "not_found_error" => Some("model_not_found".to_string()),
+        "authentication_error" | "invalid_api_key" | "permission_error" => {
+            Some(ProviderErrorKind::Auth)
+        }
+        "rate_limit_error" | "rate_limit_exceeded" => Some(ProviderErrorKind::RateLimit),
+        "insufficient_quota" | "billing_error" => Some(ProviderErrorKind::Quota),
+        "not_found_error" => Some(ProviderErrorKind::ModelNotFound),
         // Transient server-side conditions — surfaced as `overloaded` so the
         // runner retries them (see `is_retryable`).
         "overloaded_error" | "api_error" | "server_error" | "service_unavailable" => {
-            Some("overloaded".to_string())
+            Some(ProviderErrorKind::Overloaded)
         }
         _ => None,
     }
@@ -2592,11 +2628,23 @@ mod tests {
     fn parses_and_classifies_api_errors() {
         let auth = r#"{"error":{"type":"authentication_error","message":"bad key"}}"#;
         let err = parse_chat_response(ApiVendor::Anthropic, auth).unwrap_err();
-        assert!(matches!(err, Error::Provider { kind: Some(k), .. } if k == "auth"));
+        assert!(matches!(
+            err,
+            Error::Provider {
+                kind: Some(ProviderErrorKind::Auth),
+                ..
+            }
+        ));
 
         let rate = r#"{"error":{"type":"rate_limit_exceeded","message":"slow down"}}"#;
         let err = parse_chat_response(ApiVendor::Openai, rate).unwrap_err();
-        assert!(matches!(err, Error::Provider { kind: Some(k), .. } if k == "rate_limit"));
+        assert!(matches!(
+            err,
+            Error::Provider {
+                kind: Some(ProviderErrorKind::RateLimit),
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -2608,20 +2656,20 @@ mod tests {
     #[test]
     fn classify_api_error_maps_known_kinds() {
         assert_eq!(
-            classify_api_error(Some("invalid_api_key")).as_deref(),
-            Some("auth")
+            classify_api_error(Some("invalid_api_key")),
+            Some(ProviderErrorKind::Auth)
         );
         assert_eq!(
-            classify_api_error(Some("insufficient_quota")).as_deref(),
-            Some("quota")
+            classify_api_error(Some("insufficient_quota")),
+            Some(ProviderErrorKind::Quota)
         );
         assert_eq!(
-            classify_api_error(Some("not_found_error")).as_deref(),
-            Some("model_not_found")
+            classify_api_error(Some("not_found_error")),
+            Some(ProviderErrorKind::ModelNotFound)
         );
         assert_eq!(
-            classify_api_error(Some("overloaded_error")).as_deref(),
-            Some("overloaded")
+            classify_api_error(Some("overloaded_error")),
+            Some(ProviderErrorKind::Overloaded)
         );
         assert_eq!(classify_api_error(Some("something_else")), None);
         assert_eq!(classify_api_error(None), None);
@@ -3488,11 +3536,21 @@ mod tests {
             let err = oh_provider(bin)
                 .respond("claude-code", "m", &skill_ref(), &[], None)
                 .unwrap_err();
-            assert!(matches!(err, Error::Provider { kind: Some(k), .. } if k == "auth"));
+            assert!(matches!(
+                err,
+                Error::Provider {
+                    kind: Some(ProviderErrorKind::Auth),
+                    ..
+                }
+            ));
         }
 
         #[test]
-        fn oneharness_reports_status_without_failure_kind() {
+        fn oneharness_classifies_timeout_status_without_failure_kind() {
+            // oneharness reports a deadline as `status: "timeout"` with no
+            // `failure_kind`. skilltest still classifies it structurally, so the
+            // consuming SDK sees a Timeout kind rather than only the word
+            // "timeout" in the message.
             let bin = script(
                 "oh-err",
                 "cat >/dev/null\necho '{\"results\":[{\"status\":\"timeout\",\
@@ -3502,6 +3560,30 @@ mod tests {
             let msg = err.to_string();
             assert!(msg.contains("harness run failed"), "got: {msg}");
             assert!(msg.contains("deadline"));
+            assert!(matches!(
+                err,
+                Error::Provider {
+                    kind: Some(ProviderErrorKind::Timeout),
+                    ..
+                }
+            ));
+        }
+
+        #[test]
+        fn oneharness_failure_without_classifiable_signal_is_unclassified() {
+            // A non-`ok` status skilltest can't map (no `failure_kind`, an
+            // unrecognized status) stays an unclassified provider error — kind
+            // `None`, distinct from the `Other` catch-all.
+            let bin = script(
+                "oh-plain",
+                "cat >/dev/null\necho '{\"results\":[{\"status\":\"error\",\
+                 \"error\":\"something broke\"}]}'\n",
+            );
+            let err = oh_provider(bin)
+                .respond("claude-code", "m", &skill_ref(), &[], None)
+                .unwrap_err();
+            assert!(matches!(err, Error::Provider { kind: None, .. }));
+            assert!(err.to_string().contains("something broke"));
         }
 
         #[test]
@@ -3774,7 +3856,13 @@ echo '{{"results":[{{"status":"ok","text":"done"}}]}}'
                     &[],
                 )
                 .unwrap_err();
-            assert!(matches!(err, Error::Provider { kind: Some(k), .. } if k == "auth"));
+            assert!(matches!(
+                err,
+                Error::Provider {
+                    kind: Some(ProviderErrorKind::Auth),
+                    ..
+                }
+            ));
         }
 
         #[test]
@@ -3876,7 +3964,44 @@ echo '{{"results":[{{"status":"ok","text":"done"}}]}}'
                     &[],
                 )
                 .unwrap_err();
-            assert!(matches!(err, Error::Provider { kind: Some(k), .. } if k == "overloaded"));
+            assert!(matches!(
+                err,
+                Error::Provider {
+                    kind: Some(ProviderErrorKind::Overloaded),
+                    ..
+                }
+            ));
+            std::env::remove_var("SKILLTEST_TEST_API_KEY");
+        }
+
+        #[test]
+        fn api_judge_classifies_curl_timeout() {
+            // curl exit 28 is a `--max-time` timeout; skilltest classifies it so
+            // a slow judge surfaces as a Timeout kind, not an opaque curl failure.
+            let curl = script(
+                "curl-timeout",
+                "cat >/dev/null\necho 'curl: (28) Operation timed out' 1>&2\nexit 28\n",
+            );
+            std::env::set_var("SKILLTEST_TEST_API_KEY", "sk-test");
+            let provider = api_provider_with_curl(curl, ApiVendor::Anthropic);
+            let err = provider
+                .judge(
+                    "m",
+                    &JudgeQuery {
+                        kind: JudgeKind::Boolean,
+                        criterion: "x",
+                        scale: None,
+                    },
+                    &[],
+                )
+                .unwrap_err();
+            assert!(matches!(
+                err,
+                Error::Provider {
+                    kind: Some(ProviderErrorKind::Timeout),
+                    ..
+                }
+            ));
             std::env::remove_var("SKILLTEST_TEST_API_KEY");
         }
 

@@ -61,7 +61,9 @@ describe("input contract", () => {
           comparator: ">",
           name: "finished",
         }),
-        called("push", {
+        // One eval references its mock by *object*, one by string name —
+        // the two forms must compile to the identical golden JSON.
+        called(push, {
           times: 1,
           where: { command: contains("origin") },
           name: "pushed-once",

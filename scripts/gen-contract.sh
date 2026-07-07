@@ -23,12 +23,15 @@ artifacts=(
   "schemas/report.schema.json"
   "schemas/validation.schema.json"
   "schemas/case.schema.json"
+  "schemas/error.schema.json"
   "sdks/python/skilltest_sdk/_report.py"
   "sdks/python/skilltest_sdk/_validation.py"
   "sdks/python/skilltest_sdk/_case.py"
+  "sdks/python/skilltest_sdk/_error.py"
   "sdks/typescript/src/generated/report.ts"
   "sdks/typescript/src/generated/validation.ts"
   "sdks/typescript/src/generated/case.ts"
+  "sdks/typescript/src/generated/error.ts"
 )
 
 stage="$(mktemp -d)"
@@ -48,6 +51,10 @@ cargo build -p skilltest-cli --quiet
 # from which each SDK's *case* models are generated — so the code-first case
 # builders construct generated types and cannot drift from the Rust parse.
 ./target/debug/skilltest schema case > "$stage/schemas/case.schema.json"
+# The structured error contract: the `--format json` output when a run cannot
+# produce a report, from which each SDK's error model is generated so consumers
+# branch on a typed `kind` instead of parsing the message string.
+./target/debug/skilltest schema error > "$stage/schemas/error.schema.json"
 
 # Python: pydantic models via datamodel-code-generator (pinned in uv.lock).
 # Run from sdks/python so the ruff formatter it invokes picks up that project's
@@ -73,6 +80,7 @@ gen_python() {
 gen_python report
 gen_python validation
 gen_python case
+gen_python error
 
 # TypeScript: type declarations via json-schema-to-typescript (pinned in
 # pnpm-lock.yaml). Types only by design — the drift gate is what guarantees
@@ -94,6 +102,7 @@ gen_typescript() {
 gen_typescript report
 gen_typescript validation
 gen_typescript case
+gen_typescript error
 
 status=0
 for artifact in "${artifacts[@]}"; do

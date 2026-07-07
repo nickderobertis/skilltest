@@ -23,8 +23,18 @@ resolves relative to the working directory, `input` is the first user message,
 [`spy`][skilltest_sdk.mock.spy] / [`stub`][skilltest_sdk.mock.stub] /
 [`deny`][skilltest_sdk.mock.deny] / [`rewrite`][skilltest_sdk.mock.rewrite]
 objects you would pass to ``run_skill(mocks=...)`` (bound for assertions after
-the run, and referenceable by name from a `called`/`not_called` eval), and
-`evals` decide pass/fail.
+the run, and referenceable from a `called`/`not_called` eval — pass the object
+itself, or its ``name=``), and `evals` decide pass/fail.
+
+```python
+push = stub(pattern=r"git push\\b", output="Everything up-to-date")
+case = TestCase(
+    skill="skills/deployer",
+    input="Deploy the app",
+    mocks=[push],
+    evals=[called(push, times=1)],  # the object, no string name to keep in sync
+)
+```
 
 The builders construct models **generated from the CLI's own input schema**
 (`schemas/case.schema.json` → ``_case.py``, via ``just gen-contract``), so the
@@ -66,6 +76,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "Eval",
+    "MockRefEval",
     "SimulatedUser",
     "TestCase",
     "boolean",
@@ -79,8 +90,10 @@ __all__ = [
 #: build with [`boolean`][skilltest_sdk.case.boolean] /
 #: [`numeric`][skilltest_sdk.case.numeric] / [`called`][skilltest_sdk.case.called]
 #: / [`not_called`][skilltest_sdk.case.not_called]. The union arms are models
-#: generated from the input contract.
-type Eval = BooleanEval | NumericEval | CalledEval | NotCalledEval
+#: generated from the input contract, plus [`MockRefEval`][skilltest_sdk.case.MockRefEval]
+#: (a `called`/`not_called` holding the spy/mock object itself, resolved at
+#: compile time).
+type Eval = BooleanEval | NumericEval | CalledEval | NotCalledEval | MockRefEval
 
 
 # ---------------------------------------------------------------------------
@@ -158,30 +171,72 @@ def _compile_where(
     return compiled
 
 
+@dataclass(frozen=True)
+class MockRefEval:
+    """A `called`/`not_called` eval holding the referenced
+    [`ToolSpy`][skilltest_sdk.mock.ToolSpy]/[`ToolMock`][skilltest_sdk.mock.ToolMock]
+    *object* instead of a string name. Built by passing the object to
+    [`called`][skilltest_sdk.case.called]/[`not_called`][skilltest_sdk.case.not_called];
+    resolved to the object's compiled declaration name by
+    [`TestCase`][skilltest_sdk.case.TestCase] — the object must be in that
+    case's ``mocks``."""
+
+    type: Literal["called", "not_called"]
+    mock: ToolSpy
+    times: int | None
+    where: dict[str, str | FieldPredicateSpec] | None
+    name: str | None
+
+    def _resolve(self, names: dict[int, str]) -> CalledEval | NotCalledEval:
+        """(Internal) The generated eval model, with the object reference
+        swapped for its compiled declaration name."""
+        resolved = names.get(id(self.mock))
+        if resolved is None:
+            raise SkilltestUsageError(
+                f"a {self.type} eval references a spy/mock object that is not in this "
+                "case's `mocks` — pass the same object in TestCase(mocks=[...])"
+            )
+        if self.type == "called":
+            return CalledEval(
+                type="called", mock=resolved, times=self.times, where=self.where, name=self.name
+            )
+        return NotCalledEval(type="not_called", mock=resolved, where=self.where, name=self.name)
+
+
 def called(
-    mock: str,
+    mock: str | ToolSpy,
     *,
     times: int | None = None,
     where: dict[str, Criterion] | None = None,
     name: str | None = None,
-) -> CalledEval:
-    """Deterministic (no judge): assert the named ``mock``/spy observed at least
-    one matching call, or exactly ``times``. Reference a
-    [`spy`][skilltest_sdk.mock.spy]/[`stub`][skilltest_sdk.mock.stub]/… by the
-    ``name=`` you gave it in the case's ``mocks``. ``where`` narrows by input
-    field (exact string or [`contains`][skilltest_sdk.mock.contains]/
+) -> CalledEval | MockRefEval:
+    """Deterministic (no judge): assert the ``mock``/spy observed at least
+    one matching call, or exactly ``times``. Pass the
+    [`spy`][skilltest_sdk.mock.spy]/[`stub`][skilltest_sdk.mock.stub]/… object
+    from the case's ``mocks`` directly, or reference it by the ``name=`` you
+    gave it. ``where`` narrows by input field (exact string or
+    [`contains`][skilltest_sdk.mock.contains]/
     [`matching`][skilltest_sdk.mock.matching])."""
+    if isinstance(mock, ToolSpy):
+        return MockRefEval(
+            type="called", mock=mock, times=times, where=_compile_where(where), name=name
+        )
     return CalledEval(type="called", mock=mock, times=times, where=_compile_where(where), name=name)
 
 
 def not_called(
-    mock: str,
+    mock: str | ToolSpy,
     *,
     where: dict[str, Criterion] | None = None,
     name: str | None = None,
-) -> NotCalledEval:
-    """Deterministic: assert the named ``mock``/spy observed **no** matching
-    call (optionally narrowed by ``where``)."""
+) -> NotCalledEval | MockRefEval:
+    """Deterministic: assert the ``mock``/spy (the object from the case's
+    ``mocks``, or its ``name=``) observed **no** matching call (optionally
+    narrowed by ``where``)."""
+    if isinstance(mock, ToolSpy):
+        return MockRefEval(
+            type="not_called", mock=mock, times=None, where=_compile_where(where), name=name
+        )
     return NotCalledEval(type="not_called", mock=mock, where=_compile_where(where), name=name)
 
 
@@ -230,8 +285,9 @@ class TestCase:
     #: Present => multi-turn (see [`user`][skilltest_sdk.case.user]).
     user: SimulatedUser | None = None
     #: Mock/spy objects for this case — the same builders ``run_skill(mocks=)``
-    #: takes. Bound for assertions after the run; a named one is referenceable
-    #: from a `called`/`not_called` eval.
+    #: takes. Bound for assertions after the run; referenceable from a
+    #: `called`/`not_called` eval (pass the object itself, or give it a
+    #: ``name=`` and reference that).
     mocks: Sequence[ToolSpy] = field(default_factory=tuple)
     #: Force the observation channel even without mocks (implied when ``mocks``
     #: is non-empty), so the report carries ``mock_calls``.
@@ -241,9 +297,12 @@ class TestCase:
         """The JSON the CLI ingests via ``--case-json``, built through the
         generated [`_case.TestCase`] model so the payload shape is pinned to
         the input contract. Assigns names to the case's mocks (so binding and
-        `called`/`not_called` references resolve) and turns the spy channel on
-        when any mock/spy is present."""
-        decls = [MockDecl.model_validate(d) for d in _compile_case_mocks(self.mocks)]
+        `called`/`not_called` references resolve — including evals holding the
+        mock/spy *object*) and turns the spy channel on when any mock/spy is
+        present."""
+        referenced = {id(e.mock) for e in self.evals if isinstance(e, MockRefEval)}
+        raw_decls, names = _compile_case_mocks(self.mocks, referenced)
+        decls = [MockDecl.model_validate(d) for d in raw_decls]
         model = _CaseModel(
             name=self.name,
             skill=str(self.skill),
@@ -251,7 +310,7 @@ class TestCase:
             user=self.user,
             mocks=decls or None,
             spy=True if (self.spy or self.mocks) else None,
-            evals=list(self.evals),
+            evals=[e._resolve(names) if isinstance(e, MockRefEval) else e for e in self.evals],
         )
         # exclude_none mirrors the Rust types' skip-absent serialization, so
         # the emitted JSON is the canonical minimal form the kitchen-sink
@@ -259,16 +318,29 @@ class TestCase:
         return model.model_dump(exclude_none=True)
 
 
-def _compile_case_mocks(mocks: Sequence[ToolSpy]) -> list[dict[str, Any]]:
-    """Compile a case's ``mocks`` into declarations: every intercepting mock
-    (stub/deny/rewrite) becomes an action declaration; a **named** spy becomes a
-    no-action declaration so a `called`/`not_called` eval can reference it.
-    Unnamed spies contribute nothing here — they filter locally after the run —
-    but still turn the channel on via the case's ``spy`` flag."""
+def _compile_case_mocks(
+    mocks: Sequence[ToolSpy], referenced: set[int]
+) -> tuple[list[dict[str, Any]], dict[int, str]]:
+    """Compile a case's ``mocks`` into declarations plus the id→assigned-name
+    map eval object references resolve through: every intercepting mock
+    (stub/deny/rewrite) becomes an action declaration; a **named** spy — or an
+    unnamed one whose id is in ``referenced`` (held by a `called`/`not_called`
+    eval) — becomes a no-action declaration. Other unnamed spies contribute
+    nothing here — they filter locally after the run — but still turn the
+    channel on via the case's ``spy`` flag."""
     decls: list[dict[str, Any]] = []
+    names: dict[int, str] = {}
     for index, mock in enumerate(mocks):
         if isinstance(mock, ToolMock):
-            decls.append(mock._decl(mock._user_name or f"__case_mock_{index}"))
+            assigned = mock._user_name or f"__case_mock_{index}"
+            decls.append(mock._decl(assigned))
         elif mock._user_name is not None:
-            decls.append(mock._case_decl(mock._user_name))
-    return decls
+            assigned = mock._user_name
+            decls.append(mock._case_decl(assigned))
+        elif id(mock) in referenced:
+            assigned = f"__case_mock_{index}"
+            decls.append(mock._case_decl(assigned))
+        else:
+            continue
+        names[id(mock)] = assigned
+    return decls, names
