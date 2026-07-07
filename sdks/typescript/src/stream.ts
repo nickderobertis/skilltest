@@ -30,6 +30,7 @@ import {
   type RunOptions,
   buildRunArgs,
   caseRunArgs,
+  childEnv,
   mockRunArgs,
   raiseForCode,
   resolveBin,
@@ -66,7 +67,7 @@ class SkillStreamImpl implements SkillStream {
   ) {}
 
   async *[Symbol.asyncIterator](): AsyncIterator<StreamEvent> {
-    const child = spawn(this.bin, this.args, { cwd: this.cwd });
+    const child = spawn(this.bin, this.args, { cwd: this.cwd, env: childEnv() });
     let spawnError: Error | undefined;
     child.on("error", (err) => {
       spawnError = err;

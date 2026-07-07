@@ -4,8 +4,9 @@ and executes the ephemerally installed mock hook, so `run_skill(mocks=[...])`
 is proven against the real seam — rules compile, `--mocks` delivery, the real
 `oneharness mock` responder, the spy JSONL, and binding.
 
-Skipped (not failed) when `oneharness` is not on PATH; install it with
-`just install-oneharness` to run these locally.
+oneharness now ships as the SDK's `oneharness-cli` dependency, so under a synced
+venv these run against the real binary. Still skipped (not failed) when
+`oneharness` is not on PATH, e.g. a bare checkout without `uv sync`.
 """
 
 from __future__ import annotations

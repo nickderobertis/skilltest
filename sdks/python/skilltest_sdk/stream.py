@@ -33,7 +33,14 @@ from .case import TestCase
 from .errors import SkilltestProviderError
 from .mock import ToolSpy, bind_mocks
 from .models import Report
-from .runner import ENV_BIN, build_run_argv, case_run_args, mock_run_args, raise_for_code
+from .runner import (
+    ENV_BIN,
+    build_run_argv,
+    case_run_args,
+    child_env,
+    mock_run_args,
+    raise_for_code,
+)
 
 
 class StreamEvent(BaseModel):
@@ -76,6 +83,7 @@ class SkillStream:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=self._cwd,
+                env=child_env(),
             )
         except FileNotFoundError as exc:
             self._close_cleanup()

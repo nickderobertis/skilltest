@@ -7,11 +7,19 @@
  * `bundledBin()` is undefined and the runner falls back — exactly how the e2e
  * suite reaches the locally built CLI via `$SKILLTEST_BIN`.
  */
-import { chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { ENV_BIN, bundledBin, platformPackage, resolveBin } from "../src/runner.js";
+import {
+  ENV_BIN,
+  ENV_ONEHARNESS_BIN,
+  bundledBin,
+  bundledOneharness,
+  childEnv,
+  platformPackage,
+  resolveBin,
+} from "../src/runner.js";
 
 const require = createRequire(import.meta.url);
 
@@ -71,5 +79,32 @@ describe("bundledBin", () => {
     expect(bundledBin()).toBe(binPath);
     delete process.env[ENV_BIN];
     expect(resolveBin(undefined)).toBe(binPath);
+  });
+});
+
+describe("oneharness resolution", () => {
+  const saved = process.env[ENV_ONEHARNESS_BIN];
+  afterEach(() => {
+    if (saved === undefined) delete process.env[ENV_ONEHARNESS_BIN];
+    else process.env[ENV_ONEHARNESS_BIN] = saved;
+  });
+
+  it("resolves the launcher shipped by the oneharness-cli dependency", () => {
+    // Unlike the skilltest platform package, oneharness-cli ships a real launcher
+    // in a dev checkout, so this resolves to a present file.
+    const launcher = bundledOneharness();
+    expect(launcher).toBeDefined();
+    expect(launcher?.endsWith(join("bin", "oneharness.js"))).toBe(true);
+    expect(existsSync(launcher as string)).toBe(true);
+  });
+
+  it("points SKILLTEST_ONEHARNESS_BIN at the bundled launcher when unset", () => {
+    delete process.env[ENV_ONEHARNESS_BIN];
+    expect(childEnv()[ENV_ONEHARNESS_BIN]).toBe(bundledOneharness());
+  });
+
+  it("leaves a caller-set SKILLTEST_ONEHARNESS_BIN untouched", () => {
+    process.env[ENV_ONEHARNESS_BIN] = "/my/oneharness";
+    expect(childEnv()[ENV_ONEHARNESS_BIN]).toBe("/my/oneharness");
   });
 });

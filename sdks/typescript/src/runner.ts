@@ -33,6 +33,13 @@ import { type ToolSpy, bindMocks, compileDecls } from "./mock.js";
 /** Environment variables supplying defaults for the binary and provider. */
 export const ENV_BIN = "SKILLTEST_BIN";
 export const ENV_PROVIDER = "SKILLTEST_PROVIDER";
+/**
+ * Env var the CLI reads as the default `oneharness` binary (only when a config
+ * does not set `provider.bin`). The runner points it at the `oneharness-cli`
+ * dependency so the default provider works with no separate install and without
+ * `node_modules/.bin` on PATH.
+ */
+export const ENV_ONEHARNESS_BIN = "SKILLTEST_ONEHARNESS_BIN";
 
 export interface RunOptions {
   /** Path to the `skilltest` binary (default: `$SKILLTEST_BIN` or `skilltest`). */
@@ -123,6 +130,38 @@ function ensureExecutable(bin: string): void {
  */
 export function resolveBin(bin: string | undefined): string {
   return bin ?? process.env[ENV_BIN] ?? bundledBin() ?? "skilltest";
+}
+
+/**
+ * Absolute path to the `oneharness` launcher the `oneharness-cli` dependency
+ * installs (`oneharness-cli/bin/oneharness.js`, a `#!/usr/bin/env node` script),
+ * or `undefined` when it is not resolvable. skilltest execs it directly via its
+ * shebang. Bundling oneharness this way is why installing the SDK is all the
+ * setup a live run needs.
+ */
+export function bundledOneharness(): string | undefined {
+  try {
+    const pkgJson = require.resolve("oneharness-cli/package.json");
+    const launcher = join(dirname(pkgJson), "bin", "oneharness.js");
+    if (!existsSync(launcher)) return undefined;
+    ensureExecutable(launcher);
+    return launcher;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The environment for the `skilltest` subprocess: the parent's, plus
+ * {@link ENV_ONEHARNESS_BIN} pointed at the bundled oneharness. Returns
+ * `process.env` unchanged when the caller already set the variable (honoring
+ * their choice) or when no bundled oneharness is resolvable.
+ */
+export function childEnv(): NodeJS.ProcessEnv {
+  if (process.env[ENV_ONEHARNESS_BIN]) return process.env;
+  const bundled = bundledOneharness();
+  if (bundled === undefined) return process.env;
+  return { ...process.env, [ENV_ONEHARNESS_BIN]: bundled };
 }
 
 export function resolveProvider(provider: string | string[] | undefined): string | undefined {
@@ -260,7 +299,7 @@ export function raiseForCode(code: number | null, detail: string, structured?: R
 
 function capture(bin: string, args: string[], cwd: string | undefined): Promise<Captured> {
   return new Promise((resolve, reject) => {
-    const child = spawn(bin, args, { cwd });
+    const child = spawn(bin, args, { cwd, env: childEnv() });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (chunk: Buffer) => {

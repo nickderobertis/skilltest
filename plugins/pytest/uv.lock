@@ -30,6 +30,18 @@ wheels = [
 ]
 
 [[package]]
+name = "oneharness-cli"
+version = "0.3.11"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/48/ef/1788dff0369ca44a343180534e59ba719b02ce0219664c725b1b37205e56/oneharness_cli-0.3.11-py3-none-macosx_10_12_x86_64.whl", hash = "sha256:516ccfd69b1cd4598a42db592d5293d229d7a07a2326d580ac16a291811f48c0", size = 2445975, upload-time = "2026-07-07T17:26:41.332Z" },
+    { url = "https://files.pythonhosted.org/packages/a3/04/61dd34bcfb91f58994dce6768687b57634b6061e8967081e365a8c973861/oneharness_cli-0.3.11-py3-none-macosx_11_0_arm64.whl", hash = "sha256:5e503024cff18055562904de89ae58fdc49f66ac795a75074a1bb10e8824839c", size = 2326070, upload-time = "2026-07-07T17:26:44.04Z" },
+    { url = "https://files.pythonhosted.org/packages/0f/07/54db4168117bb4992ba52ac3ea92598722250bd7fbf54f50b2b7e02c995a/oneharness_cli-0.3.11-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:4ff8554e2323a9b795891bdf3edd8b8eb1c47834d0329a1c8a8c9dfbc7bc2f8c", size = 2380067, upload-time = "2026-07-07T17:26:45.834Z" },
+    { url = "https://files.pythonhosted.org/packages/88/0d/5b76a8f64af29688b0d044391d387c6685a440c91ed3bb9c92f4e50e9f80/oneharness_cli-0.3.11-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:cea20982c581ebcc67b788922840742542ff5e1b65d83795a5accf93db014f05", size = 2513609, upload-time = "2026-07-07T17:26:47.653Z" },
+    { url = "https://files.pythonhosted.org/packages/9a/30/0dd1e5c38f2b13977d0da534f80a66689e2659d29c0fa392762a89b3ef8d/oneharness_cli-0.3.11-py3-none-win_amd64.whl", hash = "sha256:cc49229b2eeed722176d97869b2417aa89dec8a94670a2b7202af4e69a61c5e9", size = 2516209, upload-time = "2026-07-07T17:26:49.793Z" },
+]
+
+[[package]]
 name = "packaging"
 version = "26.2"
 source = { registry = "https://pypi.org/simple" }
@@ -219,11 +231,15 @@ name = "skilltest-sdk"
 version = "0.8.0"
 source = { editable = "../../sdks/python" }
 dependencies = [
+    { name = "oneharness-cli" },
     { name = "pydantic" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "pydantic", specifier = ">=2.7" }]
+requires-dist = [
+    { name = "oneharness-cli", specifier = ">=0.3.7,<0.4" },
+    { name = "pydantic", specifier = ">=2.7" },
+]
 
 [package.metadata.requires-dev]
 dev = [
