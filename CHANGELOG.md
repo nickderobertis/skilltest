@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.6.0](https://github.com/nickderobertis/skilltest/compare/v0.5.0...v0.6.0) (2026-07-07)
+
+### Features
+
+* define full test cases in code via the SDKs and plugins ([#25](https://github.com/nickderobertis/skilltest/issues/25)) ([67208ca](https://github.com/nickderobertis/skilltest/commit/67208cad386a3ae87a1c8a194678514d40ba5fe7))
+
 ## [0.5.0](https://github.com/nickderobertis/skilltest/compare/v0.4.0...v0.5.0) (2026-07-06)
 
 ### Features
