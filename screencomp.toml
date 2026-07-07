@@ -1,0 +1,39 @@
+# screencomp configuration. See https://github.com/nickderobertis/screencomp.
+
+[capture]
+# Captures run in a Linux container, but skilltest's shots are deterministic SVGs
+# (a vendored, pinned font embedded into each file), so the bytes are identical
+# on every arch and runner. One arch lane is therefore enough; its committed
+# baseline is shots/baseline/x86_64.json.
+arches = ["x86_64"]
+
+[comment]
+title = "Terminal screenshots"
+marker = "screencomp"        # [A-Za-z0-9_-]; one sticky comment per marker
+embed_limit = 10             # embed images inline when <= N shots differ (0 disables)
+
+# One card per command (`run`, `mocks`, `validate`, `init`), all scripted in
+# scripts/screenshots.sh. The `run` card carries a `format` toggle the gallery
+# flips between the two output formats: the default `human` report and the
+# `--format json` machine report (the stable SDK contract). The other cards have
+# no toggles.
+[[toggle]]
+key = "format"
+label = "Format"
+values = ["human", "json"]
+
+[guard]
+# Local pre-push guard (.githooks/pre-push): re-capture only when something that
+# can change the rendered output changes — the report/eval formatters, the CLI
+# surface, the scaffold text, the fake provider, the capture machinery, or the
+# fixtures/font.
+paths = [
+  "crates/skilltest-core/src/report.rs",
+  "crates/skilltest-core/src/eval.rs",
+  "crates/skilltest-cli/src/cli.rs",
+  "crates/skilltest-cli/src/scaffold.rs",
+  "crates/skilltest-cli/src/bin/fake_provider.rs",
+  "scripts/screenshots.sh",
+  "screenshots/**",
+]
+gallery = "shots/review"

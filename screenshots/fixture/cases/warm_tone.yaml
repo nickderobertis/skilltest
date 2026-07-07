@@ -1,0 +1,12 @@
+# Numeric eval: score the greeting on a 0–10 scale and require it clears 7.
+name: warm_tone
+skill: ../skills/scheduler
+input: "Greet Dr. Smith about today's appointment."
+evals:
+  - type: numeric
+    name: warmth
+    criterion: "how warm and professional the greeting is — it should name the `appointment`"
+    min: 0
+    max: 10
+    threshold: 7
+    comparator: ">="

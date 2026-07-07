@@ -13,6 +13,13 @@
 
 nx := "pnpm exec nx"
 
+# Renderer for the terminal screenshots (`just screenshots`). NOT part of the
+# gate or `just bootstrap`: screenshots are informational. CI's Visual-docs
+# workflow installs the same pinned version; `just screenshots-tools` installs it
+# locally on demand. screencomp (the classify/gallery/PR-comment tool) is
+# installed separately — see https://github.com/nickderobertis/screencomp.
+freeze-version := "0.2.2"
+
 # List available recipes.
 default:
     @just --list
@@ -113,6 +120,44 @@ upgrade:
     cd sdks/python && uv lock --upgrade && uv sync
     cd plugins/pytest && uv lock --upgrade && uv sync
     @just check-all
+
+# --- Terminal screenshots (informational; never part of `check` or CI's gate) -
+# Deterministic SVGs of the real CLI output, rendered by `freeze` from a vendored
+# pinned font, gated/galleried/PR-commented by screencomp (see
+# screenshots/AGENTS.md). Regenerating is out of the gate; CI's Visual-docs
+# workflow owns the comparison, and the pre-push guard regenerates the baseline
+# locally on drift.
+
+# Install the pinned screenshot renderer (`freeze`) on demand. Needs Go.
+screenshots-tools:
+    @command -v go >/dev/null || { echo "go not found: needed to install freeze; see https://go.dev/dl" >&2; exit 1; }
+    go install github.com/charmbracelet/freeze@v{{freeze-version}}
+    @echo "installed freeze to $(go env GOPATH)/bin (ensure it is on PATH)"
+
+# Capture the screenshots: drive the real binary against the bundled fake
+# provider + the screenshots/fixture/ cases, render each scene to
+# shots/current/<arch>/ + docs/screenshots/. Needs `freeze` on PATH.
+screenshots:
+    @bash scripts/screenshots.sh
+
+# Regenerate the animated demo GIF (docs/screenshots/demo.gif — the README hero
+# showing a typical `run` resolving case by case, then the report). Like the
+# screenshots it drives the REAL release binary against the fake provider, then
+# renders faithful frames with the vendored JetBrains Mono font (Pillow only — no
+# ttyd/ffmpeg). It is informational, NOT hash-gated (a GIF isn't byte-reproducible),
+# so regenerate on demand and commit the result. Needs Python 3 + Pillow.
+screenshots-gif:
+    @command -v python3 >/dev/null || { echo "python3 not found: needed to render the demo GIF" >&2; exit 1; }
+    @python3 -c "import PIL" 2>/dev/null || { echo "Pillow not installed: pip install Pillow" >&2; exit 1; }
+    cargo build --release --locked --features fake-provider -p skilltest-cli --bin skilltest --bin skilltest-fake-provider
+    python3 scripts/demo-gif.py
+
+# Refresh the committed baseline manifest from a fresh capture (after an intended
+# output change). Commit shots/baseline/*.json + docs/screenshots/ alongside.
+screenshots-bless: screenshots
+    @command -v screencomp >/dev/null || { echo "screencomp not installed: https://github.com/nickderobertis/screencomp#install" >&2; exit 1; }
+    screencomp manifest --input shots/current --output shots/baseline/$(uname -m | sed 's/amd64/x86_64/;s/aarch64/arm64/').json
+    @echo "baseline refreshed; commit shots/baseline/ + docs/screenshots/"
 
 # --- Live e2e against real harnesses (opt-in; never part of `just check`) ------
 # These make real model calls (money, network, non-determinism), so they are

@@ -20,6 +20,13 @@ node_modules/
 /sdks/typescript/platforms/*/bin/
 /sdks/python/skilltest_sdk/_bin/
 
+# screencomp: commit the digest baseline (shots/baseline/*.json) and the README
+# images (docs/screenshots/*.svg + demo.gif), but not the regenerated capture
+# trees (see screenshots/AGENTS.md).
+/shots/current/
+/shots/verify/
+/shots/review/
+
 # Nx
 .nx/cache
 .nx/workspace-data
