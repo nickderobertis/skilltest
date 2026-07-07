@@ -50,6 +50,19 @@ pub struct OneharnessConfig {
     /// Per-call timeout passed through to `oneharness run --timeout`.
     #[serde(default = "default_timeout_secs")]
     pub timeout_secs: u64,
+    /// Record each skill run to oneharness's run history (`oneharness run
+    /// --history`), so a past run can be reviewed later with `oneharness
+    /// history`. On by default. The judge and simulated-user calls are never
+    /// recorded — only the skill under test.
+    #[serde(default = "default_true")]
+    pub history: bool,
+    /// Directory the shared run history is written to (passed as `oneharness run
+    /// --history-dir`). Defaults to a single centralized location reused across
+    /// every skilltest invocation (see
+    /// [`crate::provider::default_history_dir`]), so past runs accumulate in one
+    /// reviewable place instead of scattering per project.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history_dir: Option<String>,
 }
 
 impl Default for OneharnessConfig {
@@ -58,6 +71,8 @@ impl Default for OneharnessConfig {
             bin: default_oneharness_bin(),
             judge_harness: default_judge_harness(),
             timeout_secs: default_timeout_secs(),
+            history: true,
+            history_dir: None,
         }
     }
 }
@@ -433,6 +448,22 @@ mod tests {
         assert_eq!(oh.judge_harness, "codex");
         // Unspecified fields fall back to defaults.
         assert_eq!(oh.timeout_secs, 120);
+        // History recording is on by default, with the centralized default dir.
+        assert!(oh.history);
+        assert!(oh.history_dir.is_none());
+    }
+
+    #[test]
+    fn parses_oneharness_history_overrides() {
+        let yaml =
+            "provider:\n  kind: oneharness\n  history: false\n  history_dir: /shared/history\n";
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        let ProviderConfig::Oneharness(oh) = &config.provider else {
+            panic!("expected oneharness provider");
+        };
+        assert!(!oh.history);
+        assert_eq!(oh.history_dir.as_deref(), Some("/shared/history"));
+        config.validate().unwrap();
     }
 
     #[test]

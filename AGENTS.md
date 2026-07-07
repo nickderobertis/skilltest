@@ -193,8 +193,8 @@ projects per PR. Locally, install the toolchains once (see `docs/development.md`
 (`provider.rs`) has two real backends; see [`docs/protocol.md`](docs/protocol.md).
 
 - **`OneharnessProvider` (default).** Targets
-  [`oneharness`](https://github.com/nickderobertis/oneharness) **v0.3.6+** and
-  uses five of its normalized features directly so skilltest can stop string-
+  [`oneharness`](https://github.com/nickderobertis/oneharness) **v0.3.8+** and
+  uses six of its normalized features directly so skilltest can stop string-
   munging: `--system <skill instructions>` carries the skill as a real system
   prompt; `--resume <session_id>` continues a real harness session for the
   multi-turn loop on harnesses where `supports_resume` is true (claude-code,
@@ -203,9 +203,18 @@ projects per PR. Locally, install the toolchains once (see `docs/development.md`
   index}`) skilltest lifts onto each assistant turn (`Message.events`) so
   consumers can assert on *what the skill did*, not just its text;
   `results[*].usage` is aggregated into the report (`{input_tokens,
-  output_tokens, cost_usd}`); and `results[*].failure_kind` (`auth` /
+  output_tokens, cost_usd}`); `results[*].failure_kind` (`auth` /
   `rate_limit` / `model_not_found` / `quota`) is surfaced through `Error::Provider
-  { kind }` so the CLI gives a pointed hint. skilltest passes **no `--mode`**, so
+  { kind }` so the CLI gives a pointed hint; and `--history --history-dir <dir>
+  --history-name <name>` records each **skill** run to a centralized history
+  directory shared across every skilltest invocation (default
+  `<state dir>/skilltest/oneharness-history`, overridable via
+  `provider.history_dir` config or `SKILLTEST_HISTORY_DIR`; disable with
+  `provider.history: false`). The run's echoed `history_file` becomes a
+  ready-to-run `oneharness history show <name> --history-dir <dir>` on
+  `CaseRun.history_command`, so a past run is reviewable from the report. The
+  judge and simulated-user calls are deliberately never recorded. skilltest
+  passes **no `--mode`**, so
   oneharness's own default approval mode applies (v0.3.0+ normalized `--mode`, a
   breaking change from pre-0.3 allow-everything); users set `bypass` etc. via
   oneharness config (`ONEHARNESS_MODE`), keeping approval policy in one place.

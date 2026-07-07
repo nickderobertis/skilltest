@@ -12,6 +12,7 @@
 
 use std::io::{BufRead as _, BufReader, Write as _};
 use std::ops::ControlFlow;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use serde::{Deserialize, Serialize};
@@ -113,6 +114,13 @@ pub struct AssistantTurn {
     /// and the turn made no tool calls. The distinction matters: a spy on a
     /// channel-less run must err loudly, not read as "zero calls".
     pub mock_calls: Option<Vec<MockCall>>,
+    /// A ready-to-run command that replays this run's recorded history (e.g.
+    /// `oneharness history show <name> --history-dir <dir>`), set when the
+    /// provider recorded run history for the turn. `None` for providers/configs
+    /// that record none. Only the skill-running provider (oneharness, with
+    /// history enabled) sets it; the runner lifts it onto the
+    /// [`crate::report::CaseRun`] so a past run can be reviewed.
+    pub history_command: Option<String>,
 }
 
 /// A simulated-user turn produced by the provider.
@@ -482,6 +490,9 @@ impl CommandProvider {
             session_id: payload.session_id,
             events: payload.events.unwrap_or_default(),
             mock_calls: payload.mock_calls,
+            // The JSON-lines protocol has no history channel; a custom provider
+            // that wants review-ability records it out of band.
+            history_command: None,
         })
     }
 }
@@ -581,10 +592,11 @@ impl Provider for CommandProvider {
 // ---------------------------------------------------------------------------
 
 /// The default [`Provider`]: runs each prompt on a harness through the
-/// `oneharness` CLI (targets **v0.3.7+** — the release carrying the mock/spy
-/// seam: `run --mock-rules`/`--spy-file` and the `oneharness mock` responder).
+/// `oneharness` CLI (targets **v0.3.8+** — the release carrying opt-in run
+/// history: `run --history`/`--history-dir`/`--history-name`, a `history_file`
+/// in the report, and the `oneharness history` verb).
 ///
-/// Wires five real oneharness features:
+/// Wires six real oneharness features:
 ///
 /// * `--system <skill instructions>` — the skill becomes a *real* system prompt
 ///   on the underlying harness (e.g. `--append-system-prompt` for claude-code),
@@ -603,6 +615,12 @@ impl Provider for CommandProvider {
 /// * Normalized `failure_kind` (`auth`, `rate_limit`, `model_not_found`, …) —
 ///   classified provider errors so the CLI can distinguish a broken environment
 ///   from a broken skill.
+/// * `--history --history-dir <dir> --history-name <name>` — each *skill* run is
+///   recorded to a centralized history directory shared across every skilltest
+///   invocation, so past runs can be reviewed with `oneharness history`. The
+///   run's `history_file` is echoed back; the provider turns it into a
+///   ready-to-run `oneharness history show …` command on the assistant turn. The
+///   judge and simulated-user calls are deliberately never recorded.
 ///
 /// Note on approval mode: skilltest deliberately passes **no `--mode`** flag, so
 /// oneharness applies its own default (v0.3.0+ normalized approval modes). Users
@@ -617,6 +635,10 @@ pub struct OneharnessProvider {
     bin: String,
     judge_harness: String,
     timeout_secs: u64,
+    /// Record skill runs to oneharness history when true.
+    history: bool,
+    /// The centralized directory history is written to (`--history-dir`).
+    history_dir: PathBuf,
 }
 
 /// The subset of the `oneharness run` JSON envelope we consume.
@@ -646,6 +668,13 @@ struct OhResult {
     session_id: Option<String>,
     #[serde(default)]
     usage: Option<Usage>,
+    /// Absolute path of the JSONL session file oneharness recorded this run to
+    /// (its `--history` output); `null`/absent when history was off or the
+    /// oneharness build predates the feature. Its presence is how the provider
+    /// knows a reviewable session exists before offering a `history show`
+    /// command.
+    #[serde(default)]
+    history_file: Option<String>,
     /// Normalized tool events oneharness lifted from the harness transcript (its
     /// `--events` output); `null`/absent when the harness exposes none.
     #[serde(default)]
@@ -669,10 +698,23 @@ struct RunArgs<'a> {
     /// `--spy-file <file>` (always, so every tool call is recorded); only set
     /// on `respond` — the judge and simulated user are never mocked.
     mocks: Option<&'a MockPlan<'a>>,
+    /// Becomes `--history --history-dir <dir> --history-name <name>`; only set
+    /// on `respond` so the skill run is recorded to the centralized history — the
+    /// judge and simulated user are deliberately never recorded.
+    history: Option<HistoryArgs<'a>>,
+}
+
+/// The history-recording flags for one skill `oneharness run`.
+struct HistoryArgs<'a> {
+    /// The centralized directory history is written to (`--history-dir`).
+    dir: &'a Path,
+    /// A stable, review-friendly session name (`--history-name`) the provider
+    /// also embeds in the `history show` command it surfaces.
+    name: &'a str,
 }
 
 impl<'a> RunArgs<'a> {
-    /// The common mock-less shape (judge / simulated-user calls).
+    /// The common mock-less, history-less shape (judge / simulated-user calls).
     fn plain(harness: &'a str, model: &'a str, prompt: &'a str) -> Self {
         RunArgs {
             harness,
@@ -681,6 +723,7 @@ impl<'a> RunArgs<'a> {
             system: None,
             resume: None,
             mocks: None,
+            history: None,
         }
     }
 }
@@ -694,6 +737,9 @@ struct RunOutcome {
     /// The spy-log records (present iff the run had a mock plan; empty when
     /// the hook observed no tool calls).
     mock_calls: Option<Vec<MockCall>>,
+    /// The absolute path oneharness recorded this run's history to, when history
+    /// was on and the run was recorded; `None` otherwise.
+    history_file: Option<String>,
 }
 
 /// The per-run temp files a mock plan needs: the rules JSON `--mock-rules`
@@ -767,13 +813,40 @@ fn select_reply_text(text: Option<String>, stdout: &str) -> Option<String> {
 }
 
 impl OneharnessProvider {
-    /// Build a provider from its configuration.
+    /// Build a provider from its configuration. The history directory is
+    /// resolved once here: the configured `history_dir` if set, otherwise the
+    /// centralized [`default_history_dir`] shared across skilltest invocations.
     #[must_use]
     pub fn new(config: &OneharnessConfig) -> Self {
         Self {
             bin: config.bin.clone(),
             judge_harness: config.judge_harness.clone(),
             timeout_secs: config.timeout_secs,
+            history: config.history,
+            history_dir: config
+                .history_dir
+                .as_ref()
+                .map_or_else(default_history_dir, PathBuf::from),
+        }
+    }
+
+    /// The history session name for a skill run, or `None` when recording is
+    /// disabled. Stable across a case's turns (it seeds off the opening user
+    /// prompt plus the platform/model), so every turn of one run lands in the
+    /// same reviewable session and one `history show` command covers the run.
+    fn history_name(&self, platform: &str, model: &str, messages: &[Message]) -> Option<String> {
+        self.history
+            .then(|| history_session_name(platform, model, messages))
+    }
+
+    /// Turn a finished run into a reviewable command, given the history name it
+    /// was recorded under. Returns `None` unless recording was on *and*
+    /// oneharness confirmed it wrote the session (`history_file`), so we never
+    /// surface a command that would resolve to nothing.
+    fn history_command(&self, name: Option<&str>, outcome: &RunOutcome) -> Option<String> {
+        match (name, &outcome.history_file) {
+            (Some(name), Some(_)) => Some(history_view_command(&self.bin, &self.history_dir, name)),
+            _ => None,
         }
     }
 
@@ -826,6 +899,9 @@ impl OneharnessProvider {
         if let Some(resume) = args.resume {
             cmd.args(["--resume", resume]);
         }
+        // Skill runs are recorded to the centralized history so past runs are
+        // reviewable; the judge/simulated-user calls carry no history args.
+        push_history_args(&mut cmd, args.history.as_ref());
         // A mock plan rides oneharness's ephemeral per-run delivery: the
         // compiled ruleset via `--mock-rules`, and always a `--spy-file` so
         // every observed call (mocked or allowed) is recorded.
@@ -915,6 +991,7 @@ impl OneharnessProvider {
             usage: result.usage,
             events: result.events.unwrap_or_default(),
             mock_calls,
+            history_file: result.history_file,
         })
     }
 
@@ -955,6 +1032,7 @@ impl OneharnessProvider {
         if let Some(resume) = args.resume {
             cmd.args(["--resume", resume]);
         }
+        push_history_args(&mut cmd, args.history.as_ref());
         let mock_files = args.mocks.map(MockFiles::prepare).transpose()?;
         if let Some(files) = &mock_files {
             if let Some(rules) = &files.rules {
@@ -1050,6 +1128,8 @@ impl OneharnessProvider {
                 usage: None,
                 events,
                 mock_calls: None,
+                // An aborted run is never scored or reviewed.
+                history_file: None,
             });
         }
 
@@ -1102,6 +1182,7 @@ impl OneharnessProvider {
             usage: result.usage,
             events,
             mock_calls,
+            history_file: result.history_file,
         })
     }
 }
@@ -1136,6 +1217,7 @@ impl Provider for OneharnessProvider {
         } else {
             render_transcript_for_respond(messages)
         };
+        let history_name = self.history_name(platform, model, messages);
         let outcome = self.run(&RunArgs {
             harness: platform,
             model,
@@ -1143,7 +1225,12 @@ impl Provider for OneharnessProvider {
             system: Some(skill.instructions),
             resume: session,
             mocks,
+            history: history_name.as_deref().map(|name| HistoryArgs {
+                dir: &self.history_dir,
+                name,
+            }),
         })?;
+        let history_command = self.history_command(history_name.as_deref(), &outcome);
         Ok(AssistantTurn {
             message: outcome.text.trim().to_string(),
             done: false,
@@ -1151,6 +1238,7 @@ impl Provider for OneharnessProvider {
             session_id: outcome.session_id,
             events: outcome.events,
             mock_calls: outcome.mock_calls,
+            history_command,
         })
     }
 
@@ -1184,6 +1272,7 @@ impl Provider for OneharnessProvider {
         } else {
             render_transcript_for_respond(messages)
         };
+        let history_name = self.history_name(platform, model, messages);
         let outcome = self.run_streaming(
             &RunArgs {
                 harness: platform,
@@ -1192,9 +1281,14 @@ impl Provider for OneharnessProvider {
                 system: Some(skill.instructions),
                 resume: session,
                 mocks,
+                history: history_name.as_deref().map(|name| HistoryArgs {
+                    dir: &self.history_dir,
+                    name,
+                }),
             },
             on_event,
         )?;
+        let history_command = self.history_command(history_name.as_deref(), &outcome);
         Ok(AssistantTurn {
             message: outcome.text.trim().to_string(),
             done: false,
@@ -1202,6 +1296,7 @@ impl Provider for OneharnessProvider {
             session_id: outcome.session_id,
             events: outcome.events,
             mock_calls: outcome.mock_calls,
+            history_command,
         })
     }
 
@@ -1240,6 +1335,157 @@ impl Provider for OneharnessProvider {
 #[must_use]
 pub fn supports_resume(harness: &str) -> bool {
     matches!(harness, "claude-code" | "opencode" | "cursor")
+}
+
+// ---------------------------------------------------------------------------
+// Run history helpers
+// ---------------------------------------------------------------------------
+
+/// The centralized directory oneharness run history is written to, shared across
+/// every skilltest invocation so past runs accumulate in one reviewable place
+/// (rather than scattering per project the way oneharness's own default would).
+///
+/// Resolution: `SKILLTEST_HISTORY_DIR` if set (the escape hatch tests use);
+/// otherwise `<state dir>/skilltest/oneharness-history`, where the state dir is
+/// `$XDG_STATE_HOME` or, failing that, `$HOME/.local/state` — the same
+/// convention oneharness follows across the Linux/macOS matrix. A last-resort
+/// fallback uses the temp dir so the path is always absolute.
+#[must_use]
+pub fn default_history_dir() -> PathBuf {
+    resolve_history_dir(
+        std::env::var_os("SKILLTEST_HISTORY_DIR"),
+        std::env::var_os("XDG_STATE_HOME"),
+        std::env::var_os("HOME"),
+    )
+}
+
+/// The pure core of [`default_history_dir`], parameterized on the three env
+/// values so it can be tested without mutating the process environment.
+fn resolve_history_dir(
+    override_dir: Option<std::ffi::OsString>,
+    xdg_state: Option<std::ffi::OsString>,
+    home: Option<std::ffi::OsString>,
+) -> PathBuf {
+    if let Some(dir) = override_dir.filter(|d| !d.is_empty()) {
+        return PathBuf::from(dir);
+    }
+    let state = xdg_state
+        .filter(|d| !d.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            home.filter(|h| !h.is_empty())
+                .map(|home| PathBuf::from(home).join(".local").join("state"))
+        })
+        .unwrap_or_else(std::env::temp_dir);
+    state.join("skilltest").join("oneharness-history")
+}
+
+/// Append the history-recording flags for a skill run, when set.
+fn push_history_args(cmd: &mut Command, history: Option<&HistoryArgs<'_>>) {
+    if let Some(h) = history {
+        cmd.arg("--history");
+        cmd.arg("--history-dir");
+        cmd.arg(h.dir);
+        cmd.arg("--history-name");
+        cmd.arg(h.name);
+    }
+}
+
+/// A stable, review-friendly `oneharness --history-name` for a skill run.
+///
+/// It combines the platform, model, and a slug + short hash of the case's
+/// opening user prompt so that: distinct cases (different prompts) get distinct
+/// sessions; every turn of one case reuses the same name (the opening prompt is
+/// constant across a run's turns), so a resumed multi-turn run stays one
+/// reviewable session; and re-running a case reuses the name, so `history show`
+/// (newest match wins) lands on the latest run. The result is filesystem- and
+/// shell-safe by construction (lowercase ascii, digits, and `-`).
+fn history_session_name(platform: &str, model: &str, messages: &[Message]) -> String {
+    let seed = messages
+        .iter()
+        .find(|m| m.role == Role::User)
+        .map_or("", |m| m.content.as_str());
+    let model = if model.is_empty() { "default" } else { model };
+    format!(
+        "skilltest-{}-{}-{}-{:08x}",
+        slug(platform),
+        slug(model),
+        slug(seed),
+        (fnv1a(seed.as_bytes()) & 0xFFFF_FFFF) as u32,
+    )
+}
+
+/// The command that replays a recorded run: `<bin> history show <name>
+/// --history-dir <dir>`. `bin` and `dir` are shell-quoted in case of spaces;
+/// `name` is safe by construction (see [`history_session_name`]).
+fn history_view_command(bin: &str, dir: &Path, name: &str) -> String {
+    format!(
+        "{} history show {name} --history-dir {}",
+        shell_quote(bin),
+        shell_quote(&dir.to_string_lossy()),
+    )
+}
+
+/// Lowercase-ascii/digit/`-` slug of `s`, hyphen-collapsed and capped to 32
+/// chars, for use as a history-name segment. Empty input yields `x` so a name
+/// never has an empty segment.
+fn slug(s: &str) -> String {
+    let mut out = String::with_capacity(s.len().min(32));
+    let mut dash = false;
+    for c in s.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c.to_ascii_lowercase());
+            dash = false;
+        } else if !out.is_empty() && !dash {
+            out.push('-');
+            dash = true;
+        }
+        if out.len() >= 32 {
+            break;
+        }
+    }
+    out.truncate(32);
+    let trimmed = out.trim_matches('-');
+    if trimmed.is_empty() {
+        "x".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+/// FNV-1a (64-bit). Deterministic and dependency-free — used only to give a
+/// history name a short, collision-resistant suffix per opening prompt.
+fn fnv1a(bytes: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for &b in bytes {
+        hash ^= u64::from(b);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+
+/// POSIX single-quote a value for display in a runnable command. Leaves an
+/// already-safe token (letters, digits, and a few path chars) unquoted for
+/// readability.
+fn shell_quote(s: &str) -> String {
+    let safe = !s.is_empty()
+        && s.chars().all(|c| {
+            c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '/' | '.' | ':' | '@' | '+' | '=')
+        });
+    if safe {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    for c in s.chars() {
+        if c == '\'' {
+            out.push_str("'\\''");
+        } else {
+            out.push(c);
+        }
+    }
+    out.push('\'');
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -2108,6 +2354,116 @@ mod tests {
         assert!(!supports_resume("goose"));
     }
 
+    #[test]
+    fn slug_is_lowercase_hyphenated_and_bounded() {
+        assert_eq!(slug("Greet Dr. Smith!"), "greet-dr-smith");
+        assert_eq!(slug("  --weird__name-- "), "weird-name");
+        // Empty / punctuation-only input never yields an empty segment.
+        assert_eq!(slug(""), "x");
+        assert_eq!(slug("!!!"), "x");
+        // Capped at 32 chars, with no trailing hyphen.
+        let long = slug(&"a b ".repeat(40));
+        assert!(long.len() <= 32, "len {}", long.len());
+        assert!(!long.ends_with('-'));
+    }
+
+    #[test]
+    fn history_session_name_is_stable_and_case_distinguishing() {
+        let a = [Message::user("Greet Dr. Smith")];
+        let b = [Message::user("Book an appointment")];
+        // Same inputs → same name (so re-runs and later turns reuse the session).
+        assert_eq!(
+            history_session_name("claude-code", "sonnet", &a),
+            history_session_name("claude-code", "sonnet", &a),
+        );
+        // Different opening prompts → different names (each case is reviewable
+        // on its own).
+        assert_ne!(
+            history_session_name("claude-code", "sonnet", &a),
+            history_session_name("claude-code", "sonnet", &b),
+        );
+        let name = history_session_name("claude-code", "sonnet", &a);
+        assert!(name.starts_with("skilltest-claude-code-sonnet-greet-dr-smith-"));
+        // Shell/filesystem-safe by construction.
+        assert!(name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'));
+        // An empty model becomes a concrete segment, never a blank.
+        assert!(history_session_name("cursor", "", &a).contains("-default-"));
+    }
+
+    #[test]
+    fn shell_quote_leaves_safe_tokens_and_wraps_the_rest() {
+        assert_eq!(shell_quote("oneharness"), "oneharness");
+        assert_eq!(shell_quote("/a/b-c.d"), "/a/b-c.d");
+        assert_eq!(shell_quote("has space"), "'has space'");
+        // Embedded single quotes are escaped with the POSIX '\'' idiom.
+        assert_eq!(shell_quote("a'b"), "'a'\\''b'");
+        assert_eq!(shell_quote(""), "''");
+    }
+
+    #[test]
+    fn history_view_command_is_runnable() {
+        let cmd = history_view_command(
+            "oneharness",
+            Path::new("/home/u/.local/state/skilltest/oneharness-history"),
+            "skilltest-claude-code-sonnet-greet-1a2b3c4d",
+        );
+        assert_eq!(
+            cmd,
+            "oneharness history show skilltest-claude-code-sonnet-greet-1a2b3c4d \
+             --history-dir /home/u/.local/state/skilltest/oneharness-history",
+        );
+        // A directory with spaces is quoted so the command stays runnable.
+        let spaced = history_view_command("oneharness", Path::new("/tmp/my runs"), "n");
+        assert!(spaced.contains("--history-dir '/tmp/my runs'"), "{spaced}");
+    }
+
+    #[test]
+    fn new_resolves_default_history_dir_when_config_unset() {
+        // A default config leaves `history_dir` unset, so the provider resolves
+        // the centralized default (a non-empty path) with history on.
+        let provider = OneharnessProvider::new(&OneharnessConfig::default());
+        assert!(provider.history);
+        assert!(!provider.history_dir.as_os_str().is_empty());
+
+        // An explicit dir is used verbatim.
+        let provider = OneharnessProvider::new(&OneharnessConfig {
+            history_dir: Some("/shared/hist".to_string()),
+            ..OneharnessConfig::default()
+        });
+        assert_eq!(provider.history_dir, PathBuf::from("/shared/hist"));
+    }
+
+    #[test]
+    fn resolve_history_dir_prefers_override_then_xdg_then_home() {
+        use std::ffi::OsString;
+        let os = |s: &str| Some(OsString::from(s));
+
+        // The explicit override wins over everything.
+        assert_eq!(
+            resolve_history_dir(os("/shared/history"), os("/xdg"), os("/home/u")),
+            PathBuf::from("/shared/history"),
+        );
+        // Otherwise XDG_STATE_HOME, under a skilltest namespace.
+        assert_eq!(
+            resolve_history_dir(None, os("/xdg/state"), os("/home/u")),
+            PathBuf::from("/xdg/state/skilltest/oneharness-history"),
+        );
+        // Otherwise ~/.local/state.
+        assert_eq!(
+            resolve_history_dir(None, None, os("/home/u")),
+            PathBuf::from("/home/u/.local/state/skilltest/oneharness-history"),
+        );
+        // Empty values are ignored (treated as unset).
+        assert_eq!(
+            resolve_history_dir(os(""), Some(OsString::new()), os("/home/u")),
+            PathBuf::from("/home/u/.local/state/skilltest/oneharness-history"),
+        );
+        // With nothing set it still yields an absolute path under the temp dir.
+        assert!(resolve_history_dir(None, None, None).ends_with("skilltest/oneharness-history"));
+    }
+
     fn api_config(vendor: ApiVendor) -> ApiJudgeConfig {
         ApiJudgeConfig {
             vendor,
@@ -2667,11 +3023,22 @@ mod tests {
 
         // ---- OneharnessProvider over a fake oneharness ----
 
+        /// A fixed, easily-asserted history directory for the fake-oneharness
+        /// tests. Nothing is actually written there — the fake echoes JSON — so a
+        /// constant string keeps the argv assertions simple.
+        const TEST_HISTORY_DIR: &str = "/tmp/skilltest-test-history";
+
         fn oh_provider(bin: PathBuf) -> OneharnessProvider {
+            oh_provider_cfg(bin, true)
+        }
+
+        fn oh_provider_cfg(bin: PathBuf, history: bool) -> OneharnessProvider {
             OneharnessProvider::new(&OneharnessConfig {
                 bin: bin.to_string_lossy().into_owned(),
                 judge_harness: "claude-code".to_string(),
                 timeout_secs: 30,
+                history,
+                history_dir: Some(TEST_HISTORY_DIR.to_string()),
             })
         }
 
@@ -2903,6 +3270,184 @@ mod tests {
             assert!(args.iter().any(|a| a == "--events"), "got: {args:?}");
             assert!(!args.iter().any(|a| a == "--mode"), "got: {args:?}");
             assert!(!args.iter().any(|a| a == "--compact"), "got: {args:?}");
+        }
+
+        /// Split a whitespace-free argv dump (one arg per line) into a vector.
+        fn argv_lines(path: &std::path::Path) -> Vec<String> {
+            std::fs::read_to_string(path)
+                .unwrap()
+                .lines()
+                .map(str::to_string)
+                .collect()
+        }
+
+        #[test]
+        fn oneharness_respond_records_history_and_surfaces_command() {
+            // The fake oneharness dumps its argv and echoes a `history_file`,
+            // standing in for a recorded session. The provider must pass
+            // --history/--history-dir/--history-name and turn the confirmed
+            // history_file into a runnable `history show` command.
+            let bin = script(
+                "oh-history",
+                "d=$(dirname \"$0\"); printf '%s\\n' \"$@\" > \"$d/args\"\n\
+                 cat >/dev/null\n\
+                 echo '{\"results\":[{\"status\":\"ok\",\"text\":\"hi\",\
+                 \"history_file\":\"/tmp/skilltest-test-history/p/s.jsonl\"}]}'\n",
+            );
+            let dir = bin.parent().unwrap().to_path_buf();
+            let turn = oh_provider(bin)
+                .respond(
+                    "claude-code",
+                    "sonnet",
+                    &skill_ref(),
+                    &[Message::user("Greet Dr. Smith")],
+                    None,
+                )
+                .unwrap();
+            let args = argv_lines(&dir.join("args"));
+            assert!(args.iter().any(|a| a == "--history"), "got: {args:?}");
+            // --history-dir and --history-name are passed as flag/value pairs.
+            let hd = args
+                .iter()
+                .position(|a| a == "--history-dir")
+                .expect("--history-dir");
+            assert_eq!(args[hd + 1], TEST_HISTORY_DIR);
+            let hn = args
+                .iter()
+                .position(|a| a == "--history-name")
+                .expect("--history-name");
+            assert!(
+                args[hn + 1].starts_with("skilltest-claude-code-sonnet-greet-dr-smith-"),
+                "name: {}",
+                args[hn + 1]
+            );
+            // The surfaced command replays exactly that session — same name, same
+            // dir — so it is directly runnable.
+            let cmd = turn.history_command.expect("history recorded");
+            assert!(
+                cmd.contains(&format!("history show {}", args[hn + 1])),
+                "cmd: {cmd}"
+            );
+            assert!(
+                cmd.contains(&format!("--history-dir {TEST_HISTORY_DIR}")),
+                "cmd: {cmd}"
+            );
+        }
+
+        #[test]
+        fn oneharness_history_command_absent_when_not_recorded() {
+            // History is requested (the flags go out), but oneharness reports no
+            // `history_file` (e.g. an older build) — so no command is surfaced,
+            // rather than one that would resolve to nothing.
+            let bin = script(
+                "oh-history-none",
+                "d=$(dirname \"$0\"); printf '%s\\n' \"$@\" > \"$d/args\"\n\
+                 cat >/dev/null\necho '{\"results\":[{\"status\":\"ok\",\"text\":\"hi\"}]}'\n",
+            );
+            let dir = bin.parent().unwrap().to_path_buf();
+            let turn = oh_provider(bin)
+                .respond(
+                    "claude-code",
+                    "sonnet",
+                    &skill_ref(),
+                    &[Message::user("hi")],
+                    None,
+                )
+                .unwrap();
+            assert!(
+                std::fs::read_to_string(dir.join("args"))
+                    .unwrap()
+                    .contains("--history"),
+                "flags were still requested"
+            );
+            assert!(
+                turn.history_command.is_none(),
+                "no confirmed session → no command"
+            );
+        }
+
+        #[test]
+        fn oneharness_history_disabled_omits_flags_and_command() {
+            // With recording off, no history flags are passed and no command is
+            // surfaced — even if the ambient oneharness emitted a history_file.
+            let bin = script(
+                "oh-history-off",
+                "d=$(dirname \"$0\"); printf '%s\\n' \"$@\" > \"$d/args\"\n\
+                 cat >/dev/null\n\
+                 echo '{\"results\":[{\"status\":\"ok\",\"text\":\"hi\",\
+                 \"history_file\":\"/x/s.jsonl\"}]}'\n",
+            );
+            let dir = bin.parent().unwrap().to_path_buf();
+            let turn = oh_provider_cfg(bin, false)
+                .respond(
+                    "claude-code",
+                    "sonnet",
+                    &skill_ref(),
+                    &[Message::user("hi")],
+                    None,
+                )
+                .unwrap();
+            assert!(
+                !std::fs::read_to_string(dir.join("args"))
+                    .unwrap()
+                    .contains("--history"),
+                "history was disabled"
+            );
+            assert!(turn.history_command.is_none());
+        }
+
+        #[test]
+        fn oneharness_judge_and_user_runs_are_never_recorded() {
+            // Only the skill under test is recorded; the judge / simulated-user
+            // calls must carry no history flags.
+            let bin = script(
+                "oh-history-judge",
+                "d=$(dirname \"$0\"); printf '%s\\n' \"$@\" > \"$d/args\"\n\
+                 cat >/dev/null\necho '{\"results\":[{\"status\":\"ok\",\
+                 \"text\":\"{\\\"value\\\": true, \\\"reason\\\": \\\"ok\\\"}\"}]}'\n",
+            );
+            let dir = bin.parent().unwrap().to_path_buf();
+            let query = JudgeQuery {
+                kind: JudgeKind::Boolean,
+                criterion: "polite",
+                scale: None,
+            };
+            oh_provider(bin).judge("m", &query, &[]).unwrap();
+            assert!(
+                !std::fs::read_to_string(dir.join("args"))
+                    .unwrap()
+                    .contains("--history"),
+                "the judge run must not be recorded"
+            );
+        }
+
+        #[test]
+        fn oneharness_stream_records_history() {
+            let bin = script(
+                "oh-history-stream",
+                "d=$(dirname \"$0\"); printf '%s\\n' \"$@\" > \"$d/args\"\n\
+                 cat >/dev/null\n\
+                 printf '%s\\n' '{\"type\":\"result\",\"report\":{\"results\":[{\"status\":\"ok\",\
+                 \"text\":\"hi\",\"history_file\":\"/tmp/skilltest-test-history/p/s.jsonl\"}]}}'\n",
+            );
+            let dir = bin.parent().unwrap().to_path_buf();
+            let turn = oh_provider(bin)
+                .respond_streaming(
+                    "claude-code",
+                    "sonnet",
+                    &skill_ref(),
+                    &[Message::user("hi")],
+                    None,
+                    &mut |_| ControlFlow::Continue(()),
+                )
+                .unwrap();
+            assert!(
+                std::fs::read_to_string(dir.join("args"))
+                    .unwrap()
+                    .contains("--history"),
+                "the streaming skill run is recorded"
+            );
+            assert!(turn.history_command.is_some());
         }
 
         #[test]

@@ -45,6 +45,13 @@ pub struct CaseRun {
     /// as "zero calls".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mock_calls: Option<Vec<MockCall>>,
+    /// A ready-to-run command that replays this run's recorded transcript — e.g.
+    /// `oneharness history show <name> --history-dir <dir>` — so a past run can
+    /// be reviewed after the fact. Present only when the run was recorded (the
+    /// oneharness provider with history enabled); `null` for providers/configs
+    /// that record no history.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history_command: Option<String>,
 }
 
 /// Aggregate pass/fail counts for a report.
@@ -133,6 +140,11 @@ impl Report {
                         eval.reason
                     ));
                 }
+            }
+            // Surface the review command so a past run can be replayed straight
+            // from the terminal (oneharness provider with history enabled).
+            if let Some(cmd) = &run.history_command {
+                out.push_str(&format!("      history: {cmd}\n"));
             }
         }
         out.push_str(&format!(
@@ -225,6 +237,7 @@ mod tests {
             transcript: Transcript::from_input("hi"),
             usage,
             mock_calls: None,
+            history_command: None,
         }
     }
 

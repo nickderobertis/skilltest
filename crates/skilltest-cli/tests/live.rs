@@ -307,3 +307,46 @@ fn live_spy_observes_without_intercepting() {
         "a spy never intercepts: {records:?}"
     );
 }
+
+#[test]
+#[ignore = "live: needs oneharness + a real harness; run with --ignored"]
+fn live_records_reviewable_history() {
+    // The real end-to-end history path: a skill run must be recorded to the
+    // centralized history dir, and the `history_command` the report surfaces
+    // must be a runnable `oneharness history show …` that finds the session.
+    let dir = std::env::temp_dir().join(format!("skilltest-live-history-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let out = live_command("pong.yaml", "json")
+        // No skilltest.yaml here, so the provider uses the default (centralized)
+        // history dir — which `default_history_dir` reads from this env var, so
+        // the test stays hermetic instead of writing to the real state dir.
+        .env("SKILLTEST_HISTORY_DIR", &dir)
+        .output()
+        .expect("skilltest run executes");
+    let report = report(&out);
+    let cmd = report["runs"][0]["history_command"]
+        .as_str()
+        .expect("a history review command on the run");
+    assert!(cmd.contains("history show"), "cmd: {cmd}");
+    assert!(
+        cmd.contains(&*dir.to_string_lossy()),
+        "the command points at the centralized dir: {cmd}"
+    );
+
+    // The surfaced command is directly runnable and replays the recorded run.
+    let shown = Command::new("sh")
+        .arg("-c")
+        .arg(format!("{cmd} --format text"))
+        .output()
+        .expect("history show executes");
+    assert!(
+        shown.status.success(),
+        "history show failed ({:?}); stderr: {}",
+        shown.status.code(),
+        String::from_utf8_lossy(&shown.stderr)
+    );
+    assert!(
+        !shown.stdout.is_empty(),
+        "history show produced no records for the run"
+    );
+}

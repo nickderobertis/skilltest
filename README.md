@@ -291,13 +291,15 @@ while a mock/spy's `.calls` keep the skill's original attempt.
   language's SDK.
 
 The boundary to a model is the `Provider` trait ([`docs/protocol.md`](docs/protocol.md))
-with two backends: the default **oneharness** provider (v0.3.6+) runs each skill
+with two backends: the default **oneharness** provider (v0.3.8+) runs each skill
 on a harness (Claude Code, Codex, …) by passing the skill via `--system`,
 threading `session_id` through `--resume` for faithful multi-turn on supporting
 harnesses, lifting normalized tool events onto each turn via `--events` (and
-`--stream` for the live streaming API), and surfacing each result's normalized
+`--stream` for the live streaming API), surfacing each result's normalized
 `usage` (token + cost totals) and `failure_kind` (auth / rate-limit / …
-classification). It passes no `--mode`, so oneharness's default approval mode
+classification), and recording each run to a centralized history dir via
+`--history` so a past run can be replayed from the report's `history_command`
+(`oneharness history show …`). It passes no `--mode`, so oneharness's default approval mode
 applies — set `ONEHARNESS_MODE=bypass` (via oneharness config) to let the skill
 take every action without prompting. A **custom command** provider speaks a small
 JSON-lines protocol (this is how the deterministic `skilltest-fake-provider`

@@ -51,6 +51,14 @@ export interface CaseRun {
    */
   evals: EvalOutcome[];
   /**
+   * A ready-to-run command that replays this run's recorded transcript — e.g.
+   * `oneharness history show <name> --history-dir <dir>` — so a past run can
+   * be reviewed after the fact. Present only when the run was recorded (the
+   * oneharness provider with history enabled); `null` for providers/configs
+   * that record no history.
+   */
+  history_command?: string | null;
+  /**
    * Every tool call the mock/spy channel observed, in order, with the
    * original (pre-rewrite) input and the verdict applied. `null` when the
    * channel was off for this run (no `mocks`, no `spy`); an empty array

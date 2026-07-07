@@ -188,6 +188,10 @@ class CaseRun(BaseModel):
 
     case: str = Field(..., description="The test case name.")
     evals: list[EvalOutcome] = Field(..., description="Per-eval outcomes, in declaration order.")
+    history_command: str | None = Field(
+        None,
+        description="A ready-to-run command that replays this run's recorded transcript — e.g.\n`oneharness history show <name> --history-dir <dir>` — so a past run can\nbe reviewed after the fact. Present only when the run was recorded (the\noneharness provider with history enabled); `null` for providers/configs\nthat record no history.",
+    )
     mock_calls: list[MockCall] | None = Field(
         None,
         description='Every tool call the mock/spy channel observed, in order, with the\noriginal (pre-rewrite) input and the verdict applied. `null` when the\nchannel was off for this run (no `mocks`, no `spy`); an empty array\nmeans the channel was on and the skill made no tool calls — SDKs use\nthat distinction so a spy on a channel-less run errs instead of reading\nas "zero calls".',

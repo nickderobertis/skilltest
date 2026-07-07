@@ -260,6 +260,14 @@ was on with no tool calls — the SDKs rely on that distinction so an unbound
 spy errs instead of reading as "zero calls". Deterministic eval outcomes use
 the `calls` detail kind: `{kind: "calls", count, times, negated}`.
 
+When the run was recorded to oneharness's history (the default oneharness
+provider, `provider.history` on), each run also carries
+**`history_command`**: a ready-to-run string such as `oneharness history show
+<name> --history-dir <dir>` that replays the recorded transcript, so a past run
+can be reviewed after the fact. It is `null` for providers/configs that record
+no history. See [the protocol reference](protocol.md) for the centralized
+history directory and how the session name is derived.
+
 ## The contracts: how the CLI and the SDKs stay in sync
 
 Two JSON contracts bind the CLI to the SDKs, both generated from the Rust

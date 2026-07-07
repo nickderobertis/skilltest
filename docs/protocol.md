@@ -7,9 +7,9 @@ provider backends.
 
 ## 1. The oneharness provider (default)
 
-[`oneharness`](https://github.com/nickderobertis/oneharness) (v0.3.7+) is a
+[`oneharness`](https://github.com/nickderobertis/oneharness) (v0.3.8+) is a
 prompt→text runner over many agentic harnesses (Claude Code, Codex, OpenCode,
-Cursor, …). skilltest's `OneharnessProvider` wires five real oneharness features
+Cursor, …). skilltest's `OneharnessProvider` wires six real oneharness features
 into the runner:
 
 - **`--system <text>`** — the skill's instructions are passed as a real system
@@ -42,17 +42,33 @@ into the runner:
   express a requested verb (e.g. rewrite on goose) is a loud oneharness usage
   error surfaced as a provider error. Requires oneharness v0.3.7+ (the release
   carrying the `mock` responder and `run --mock-rules`/`--spy-file`).
+- **`--history` / `--history-dir` / `--history-name`** — each **skill** run is
+  recorded to a centralized run-history directory shared across every skilltest
+  invocation, so past runs can be reviewed with `oneharness history`. The
+  directory defaults to `<state dir>/skilltest/oneharness-history` (the
+  platform state dir — `$XDG_STATE_HOME`, else `~/.local/state`), overridable
+  via the `provider.history_dir` config key or the `SKILLTEST_HISTORY_DIR`
+  environment variable; set `provider.history: false` to turn recording off.
+  skilltest names each session deterministically (`skilltest-<platform>-<model>-
+  <prompt-slug>-<hash>`) so every turn of one run lands in the same reviewable
+  session and re-runs reuse the name. The run's echoed `history_file` (absolute)
+  is turned into a ready-to-run `oneharness history show <name> --history-dir
+  <dir>` on the report's `CaseRun.history_command`. The judge and simulated-user
+  calls are deliberately **never** recorded. Requires oneharness v0.3.8+ (the
+  release carrying `run --history*` and the `oneharness history` verb).
 
 For each operation skilltest invokes:
 
 ```
 oneharness run --harness <H> --model <M> --compact --events \
-  --timeout <secs> --prompt-file - [--system <skill>] [--resume <session_id>]
+  --timeout <secs> --prompt-file - [--system <skill>] [--resume <session_id>] \
+  [--history --history-dir <dir> --history-name <name>]
 ```
 
 with a constructed prompt on stdin, then reads `results[0]`: it requires
-`status == "ok"` and uses `text`, `session_id`, `usage`, and `events`. A
-non-`ok` status becomes a provider error (classified by `failure_kind` when set).
+`status == "ok"` and uses `text`, `session_id`, `usage`, `events`, and
+`history_file`. A non-`ok` status becomes a provider error (classified by
+`failure_kind` when set).
 
 **Approval mode.** skilltest passes no `--mode`, so oneharness applies its own
 default approval mode (v0.3.0+ normalized `--mode` across harnesses — a breaking
@@ -68,7 +84,7 @@ harnesses.
 
 | op | harness / model | what skilltest passes |
 | --- | --- | --- |
-| `respond` | the platform + model under test | `--system <skill instructions>` + either the latest user message (when resuming) or the whole transcript (no-resume harnesses) |
+| `respond` | the platform + model under test | `--system <skill instructions>` + either the latest user message (when resuming) or the whole transcript (no-resume harnesses); plus the history flags when recording is on |
 | `user` | `judge_harness` + `judge_model` | the persona, the conversation, and "write only the user's next message" |
 | `judge` | `judge_harness` + `judge_model` | the criterion + transcript, then "respond with ONLY `{\"value\": …, \"reason\": …}`" |
 
