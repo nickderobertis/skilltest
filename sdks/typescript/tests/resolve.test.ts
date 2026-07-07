@@ -89,13 +89,17 @@ describe("oneharness resolution", () => {
     else process.env[ENV_ONEHARNESS_BIN] = saved;
   });
 
-  it("resolves the launcher shipped by the oneharness-cli dependency", () => {
-    // Unlike the skilltest platform package, oneharness-cli ships a real launcher
-    // in a dev checkout, so this resolves to a present file.
-    const launcher = bundledOneharness();
-    expect(launcher).toBeDefined();
-    expect(launcher?.endsWith(join("bin", "oneharness.js"))).toBe(true);
-    expect(existsSync(launcher as string)).toBe(true);
+  it("resolves the native oneharness binary, not the node launcher", () => {
+    // oneharness-cli's platform package ships the real binary in a dev checkout,
+    // so this resolves it directly — exec'd without a Node shim in the hot path.
+    const bin = bundledOneharness();
+    expect(bin).toBeDefined();
+    expect(existsSync(bin as string)).toBe(true);
+    const exe = process.platform === "win32" ? "oneharness.exe" : "oneharness";
+    expect(bin?.endsWith(join("bin", exe))).toBe(true);
+    // The native binary, not the `bin/oneharness.js` launcher.
+    expect(bin?.endsWith(".js")).toBe(false);
+    expect(bin).toContain("@oneharness");
   });
 
   it("points SKILLTEST_ONEHARNESS_BIN at the bundled launcher when unset", () => {

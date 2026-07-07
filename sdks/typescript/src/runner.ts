@@ -133,22 +133,61 @@ export function resolveBin(bin: string | undefined): string {
 }
 
 /**
- * Absolute path to the `oneharness` launcher the `oneharness-cli` dependency
- * installs (`oneharness-cli/bin/oneharness.js`, a `#!/usr/bin/env node` script),
- * or `undefined` when it is not resolvable. skilltest execs it directly via its
- * shebang. Bundling oneharness this way is why installing the SDK is all the
- * setup a live run needs.
+ * `process.platform`-`process.arch` -> the `@oneharness/cli-*` package that
+ * carries the prebuilt native binary (a transitive optional dependency of
+ * `oneharness-cli`). Mirrors the map in the oneharness-cli launcher.
+ */
+const ONEHARNESS_PACKAGES: Record<string, string | undefined> = {
+  "linux-x64": "@oneharness/cli-linux-x64",
+  "linux-arm64": "@oneharness/cli-linux-arm64",
+  "darwin-x64": "@oneharness/cli-darwin-x64",
+  "darwin-arm64": "@oneharness/cli-darwin-arm64",
+  "win32-x64": "@oneharness/cli-win32-x64",
+};
+
+/**
+ * Absolute path to the `oneharness` binary the `oneharness-cli` dependency ships,
+ * or `undefined` when it is not resolvable (the caller then falls back to
+ * `oneharness` on PATH). Prefers the **native** binary inside the host's
+ * `@oneharness/cli-<platform>` package so skilltest execs it directly — the
+ * `oneharness-cli` `bin/oneharness.js` is a Node shim that would boot a second
+ * `node` process on every call. That launcher is used only as a backup when the
+ * platform package cannot be located.
  */
 export function bundledOneharness(): string | undefined {
+  let cliDir: string;
   try {
-    const pkgJson = require.resolve("oneharness-cli/package.json");
-    const launcher = join(dirname(pkgJson), "bin", "oneharness.js");
-    if (!existsSync(launcher)) return undefined;
-    ensureExecutable(launcher);
-    return launcher;
+    cliDir = dirname(require.resolve("oneharness-cli/package.json"));
   } catch {
     return undefined;
   }
+  const exe = process.platform === "win32" ? "oneharness.exe" : "oneharness";
+
+  // Primary: the native binary in the matching platform package, resolved in
+  // oneharness-cli's scope (it is that package's optional dependency). Exec'd
+  // directly — no Node launcher in the hot path.
+  const pkg = ONEHARNESS_PACKAGES[`${process.platform}-${process.arch}`];
+  if (pkg !== undefined) {
+    try {
+      const manifest = require.resolve(`${pkg}/package.json`, { paths: [cliDir] });
+      const native = join(dirname(manifest), "bin", exe);
+      if (existsSync(native)) {
+        ensureExecutable(native);
+        return native;
+      }
+    } catch {
+      // Platform package not installed (e.g. --omit=optional); try the launcher.
+    }
+  }
+
+  // Backup: the local Node launcher, which resolves the binary itself. Costs a
+  // node startup per call, but keeps a run working where the native lookup fails.
+  const launcher = join(cliDir, "bin", "oneharness.js");
+  if (existsSync(launcher)) {
+    ensureExecutable(launcher);
+    return launcher;
+  }
+  return undefined;
 }
 
 /**
