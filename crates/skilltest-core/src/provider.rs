@@ -645,6 +645,14 @@ pub struct OneharnessProvider {
 #[derive(Deserialize)]
 struct OhEnvelope {
     results: Vec<OhResult>,
+    /// Absolute path of the JSONL session file oneharness recorded this run to
+    /// (its `--history` output). It lives on the run **report**, alongside
+    /// `results` — not per result; `null`/absent when history was off or the
+    /// oneharness build predates the feature. Its presence is how the provider
+    /// knows a reviewable session exists before offering a `history show`
+    /// command.
+    #[serde(default)]
+    history_file: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -668,13 +676,6 @@ struct OhResult {
     session_id: Option<String>,
     #[serde(default)]
     usage: Option<Usage>,
-    /// Absolute path of the JSONL session file oneharness recorded this run to
-    /// (its `--history` output); `null`/absent when history was off or the
-    /// oneharness build predates the feature. Its presence is how the provider
-    /// knows a reviewable session exists before offering a `history show`
-    /// command.
-    #[serde(default)]
-    history_file: Option<String>,
     /// Normalized tool events oneharness lifted from the harness transcript (its
     /// `--events` output); `null`/absent when the harness exposes none.
     #[serde(default)]
@@ -977,6 +978,9 @@ impl OneharnessProvider {
             )
         })?;
 
+        // `history_file` is on the run report, not per result — capture it
+        // before consuming `results`.
+        let history_file = envelope.history_file;
         let result = envelope
             .results
             .into_iter()
@@ -1016,7 +1020,7 @@ impl OneharnessProvider {
             usage: result.usage,
             events: result.events.unwrap_or_default(),
             mock_calls,
-            history_file: result.history_file,
+            history_file,
         })
     }
 
@@ -1167,6 +1171,9 @@ impl OneharnessProvider {
                 ),
             )
         })?;
+        // `history_file` is on the run report, not per result — capture it
+        // before consuming `results`.
+        let history_file = envelope.history_file;
         let result = envelope
             .results
             .into_iter()
@@ -1207,7 +1214,7 @@ impl OneharnessProvider {
             usage: result.usage,
             events,
             mock_calls,
-            history_file: result.history_file,
+            history_file,
         })
     }
 }
@@ -3339,8 +3346,8 @@ mod tests {
                 "oh-history",
                 "d=$(dirname \"$0\"); printf '%s\\n' \"$@\" > \"$d/args\"\n\
                  cat >/dev/null\n\
-                 echo '{\"results\":[{\"status\":\"ok\",\"text\":\"hi\",\
-                 \"history_file\":\"/tmp/skilltest-test-history/p/s.jsonl\"}]}'\n",
+                 echo '{\"results\":[{\"status\":\"ok\",\"text\":\"hi\"}],\
+                 \"history_file\":\"/tmp/skilltest-test-history/p/s.jsonl\"}'\n",
             );
             let dir = bin.parent().unwrap().to_path_buf();
             let turn = oh_provider(bin)
@@ -3422,8 +3429,8 @@ mod tests {
                 "oh-history-off",
                 "d=$(dirname \"$0\"); printf '%s\\n' \"$@\" > \"$d/args\"\n\
                  cat >/dev/null\n\
-                 echo '{\"results\":[{\"status\":\"ok\",\"text\":\"hi\",\
-                 \"history_file\":\"/x/s.jsonl\"}]}'\n",
+                 echo '{\"results\":[{\"status\":\"ok\",\"text\":\"hi\"}],\
+                 \"history_file\":\"/x/s.jsonl\"}'\n",
             );
             let dir = bin.parent().unwrap().to_path_buf();
             let turn = oh_provider_cfg(bin, false)
@@ -3476,7 +3483,7 @@ mod tests {
                 "d=$(dirname \"$0\"); printf '%s\\n' \"$@\" > \"$d/args\"\n\
                  cat >/dev/null\n\
                  printf '%s\\n' '{\"type\":\"result\",\"report\":{\"results\":[{\"status\":\"ok\",\
-                 \"text\":\"hi\",\"history_file\":\"/tmp/skilltest-test-history/p/s.jsonl\"}]}}'\n",
+                 \"text\":\"hi\"}],\"history_file\":\"/tmp/skilltest-test-history/p/s.jsonl\"}}'\n",
             );
             let dir = bin.parent().unwrap().to_path_buf();
             let turn = oh_provider(bin)

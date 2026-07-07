@@ -1013,7 +1013,7 @@ fn fake_oneharness(tag: &str) -> (PathBuf, PathBuf) {
         args=\"$*\"\n\
         cat >/dev/null\n\
         case \"$args\" in\n\
-          *--history*) printf '%s\\n' '{\"results\":[{\"status\":\"ok\",\"text\":\"Hello, Dr. Smith!\",\"history_file\":\"/x/s.jsonl\"}]}' ;;\n\
+          *--history*) printf '%s\\n' '{\"results\":[{\"status\":\"ok\",\"text\":\"Hello, Dr. Smith!\"}],\"history_file\":\"/x/s.jsonl\"}' ;;\n\
           *) printf '%s\\n' '{\"results\":[{\"status\":\"ok\",\"text\":\"{\\\"value\\\": true, \\\"reason\\\": \\\"names her\\\"}\"}]}' ;;\n\
         esac\n";
     let mut f = std::fs::File::create(&path).unwrap();
