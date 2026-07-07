@@ -976,3 +976,136 @@ fn spy_flag_records_calls_without_any_mocks() {
     let without = run_case(case("tool_events.yaml"), &["--format", "json"]);
     assert!(json(&without)["runs"][0]["mock_calls"].is_null());
 }
+
+// ---------------------------------------------------------------------------
+// Run history: the OneharnessProvider path can't be reached through the fake
+// *provider* (a CommandProvider records no history), so these drive the built
+// CLI against a fake *oneharness* binary via `--oneharness-bin` — the same
+// process-boundary fake the provider unit tests use — to prove the whole
+// built-binary path: default oneharness provider → --history flags → the
+// report's `history_command` and the human `history:` line. Unix-only, like the
+// provider subprocess suite (the crate ships to a Linux/macOS matrix).
+// ---------------------------------------------------------------------------
+
+/// A fake `oneharness` that echoes a recorded `history_file` on skill runs (the
+/// ones carrying `--history`) and a JSON verdict on judge/user runs (which do
+/// not). Written to a fresh temp dir; returns (binary path, history dir).
+#[cfg(unix)]
+fn fake_oneharness(tag: &str) -> (PathBuf, PathBuf) {
+    use std::io::Write as _;
+    use std::os::unix::fs::PermissionsExt as _;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static N: AtomicU64 = AtomicU64::new(0);
+    let dir = std::env::temp_dir().join(format!(
+        "skilltest-e2e-oh-{}-{tag}-{}",
+        std::process::id(),
+        N.fetch_add(1, Ordering::Relaxed)
+    ));
+    let history = dir.join("history");
+    std::fs::create_dir_all(&history).unwrap();
+    let path = dir.join("oneharness.sh");
+    let body = "#!/bin/sh\n\
+        args=\"$*\"\n\
+        cat >/dev/null\n\
+        case \"$args\" in\n\
+          *--history*) printf '%s\\n' '{\"results\":[{\"status\":\"ok\",\"text\":\"Hello, Dr. Smith!\",\"history_file\":\"/x/s.jsonl\"}]}' ;;\n\
+          *) printf '%s\\n' '{\"results\":[{\"status\":\"ok\",\"text\":\"{\\\"value\\\": true, \\\"reason\\\": \\\"names her\\\"}\"}]}' ;;\n\
+        esac\n";
+    let mut f = std::fs::File::create(&path).unwrap();
+    f.write_all(body.as_bytes()).unwrap();
+    let mut perms = std::fs::metadata(&path).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&path, perms).unwrap();
+    (path, history)
+}
+
+/// Run `skilltest run <case>` against a fake oneharness, with the centralized
+/// history dir pinned to `history_dir` so the run is hermetic and assertable.
+#[cfg(unix)]
+fn run_via_fake_oneharness(
+    oh: &std::path::Path,
+    history_dir: &std::path::Path,
+    extra: &[&str],
+) -> Output {
+    let mut cmd = Command::new(skilltest());
+    cmd.arg("run")
+        .arg(case("greet_pass.yaml"))
+        .args(["--oneharness-bin", &oh.to_string_lossy()])
+        .args(["--platform", "claude-code", "--model", "sonnet"])
+        .env("SKILLTEST_HISTORY_DIR", history_dir)
+        .args(extra);
+    cmd.output().expect("skilltest run executes")
+}
+
+#[cfg(unix)]
+#[test]
+fn oneharness_history_command_in_report_and_human_output() {
+    let (oh, history) = fake_oneharness("on");
+
+    // JSON: the run carries a runnable `history show` command pointed at the
+    // centralized dir this invocation used.
+    let out = run_via_fake_oneharness(&oh, &history, &["--format", "json"]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report = json(&out);
+    let cmd = report["runs"][0]["history_command"]
+        .as_str()
+        .expect("history_command present");
+    assert!(
+        cmd.contains("history show skilltest-claude-code-sonnet-"),
+        "cmd: {cmd}"
+    );
+    assert!(
+        cmd.contains(&format!("--history-dir {}", history.display())),
+        "cmd: {cmd}"
+    );
+
+    // Human: the same command surfaces as a `history:` line.
+    let human = run_via_fake_oneharness(&oh, &history, &[]);
+    assert!(human.status.success());
+    let text = String::from_utf8_lossy(&human.stdout);
+    assert!(text.contains("history: "), "human output:\n{text}");
+    assert!(
+        text.contains("history show skilltest-claude-code-sonnet-"),
+        "human output:\n{text}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn oneharness_history_can_be_disabled_via_config() {
+    let (oh, history) = fake_oneharness("off");
+    // A config that turns recording off: no history flags go out (so the fake
+    // returns no history_file) and no command is surfaced.
+    let cfg = oh.parent().unwrap().join("skilltest.yaml");
+    std::fs::write(&cfg, "provider:\n  kind: oneharness\n  history: false\n").unwrap();
+    let mut cmd = Command::new(skilltest());
+    let out = cmd
+        .args(["--config", &cfg.to_string_lossy()])
+        .arg("run")
+        .arg(case("greet_pass.yaml"))
+        .args(["--oneharness-bin", &oh.to_string_lossy()])
+        .args([
+            "--platform",
+            "claude-code",
+            "--model",
+            "sonnet",
+            "--format",
+            "json",
+        ])
+        .env("SKILLTEST_HISTORY_DIR", &history)
+        .output()
+        .expect("skilltest run executes");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        json(&out)["runs"][0]["history_command"].is_null(),
+        "history was disabled, so no command should be surfaced"
+    );
+}

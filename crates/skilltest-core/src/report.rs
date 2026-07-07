@@ -392,6 +392,21 @@ mod tests {
     }
 
     #[test]
+    fn to_human_shows_history_command_when_present() {
+        let mut with = run("a", true, vec![bool_eval("x", true)], None);
+        with.history_command = Some("oneharness history show sess --history-dir /h".into());
+        let report = Report::new(vec![with]);
+        let human = report.to_human();
+        assert!(
+            human.contains("history: oneharness history show sess --history-dir /h"),
+            "got:\n{human}"
+        );
+        // Runs that recorded nothing show no history line.
+        let without = Report::new(vec![run("b", true, vec![bool_eval("x", true)], None)]);
+        assert!(!without.to_human().contains("history:"));
+    }
+
+    #[test]
     fn validation_report_new_and_json() {
         use crate::skill::Finding;
         let empty = ValidationReport::new(&[]);

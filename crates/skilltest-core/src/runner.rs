@@ -590,6 +590,49 @@ mod tests {
     }
 
     #[test]
+    fn multi_turn_run_surfaces_one_history_command() {
+        // Across turns the provider reports the same (stable-name) command; the
+        // run surfaces exactly one, covering the whole multi-turn conversation.
+        let mut case = boolean_case(temp_skill("history-multi"));
+        case.user = Some(crate::testcase::SimulatedUser {
+            persona: "a patient".into(),
+            done_when: None,
+            max_turns: Some(2),
+        });
+        let cmd = "oneharness history show skilltest-p-m-x-1a2b --history-dir /h";
+        let provider = ScriptedProvider {
+            assistant: vec![
+                AssistantTurn {
+                    message: "turn 1".into(),
+                    history_command: Some(cmd.into()),
+                    ..Default::default()
+                },
+                AssistantTurn {
+                    message: "turn 2".into(),
+                    history_command: Some(cmd.into()),
+                    ..Default::default()
+                },
+            ],
+            user: vec![UserTurn {
+                message: "go on".into(),
+                stop: false,
+                ..Default::default()
+            }],
+            judge: vec![JudgeVerdict {
+                value: JudgeValue::Bool(true),
+                reason: String::new(),
+                usage: None,
+            }],
+            calls: RefCell::new(Calls::default()),
+        };
+        let config = Config::default();
+        let runner = Runner::new(&provider, &config);
+        let runs = runner.run_case(&case).unwrap();
+        assert_eq!(runs[0].turns, 2);
+        assert_eq!(runs[0].history_command.as_deref(), Some(cmd));
+    }
+
+    #[test]
     fn multi_turn_stops_when_done_when_holds() {
         let mut case = boolean_case(temp_skill("multi"));
         case.user = Some(crate::testcase::SimulatedUser {
