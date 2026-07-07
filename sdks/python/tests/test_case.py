@@ -119,6 +119,72 @@ def test_inline_case_run_level_mocks_still_compose(fixtures: Path) -> None:
     git.assert_called_times(2)
 
 
+def test_case_and_run_level_mocks_compose_with_run_level_winning(fixtures: Path) -> None:
+    # Both channels at once: the case carries its own stub, and the run passes
+    # another stub matching the same call. Run-level declarations are prepended
+    # (first match wins), so the test-local rule shadows the case's own — and
+    # both objects bind so the shadowing is assertable.
+    case_push = stub(pattern=r"git push( --force)?\b", output="from-case", name="push")
+    run_push = stub(pattern=r"git push( --force)?\b", output="from-run-level")
+    case = TestCase(
+        skill=skills(fixtures) / "deployer",
+        input="Deploy the app",
+        mocks=[case_push],
+        evals=[boolean("the reply reports `from-run-level`")],
+    )
+    report = run_skill(case, mocks=[run_push])
+    assert report.passed, describe_failures(report)
+    run_push.assert_called_once()
+    case_push.assert_not_called()
+
+
+def test_case_spy_flag_turns_on_the_observation_channel(fixtures: Path) -> None:
+    # `spy=True` alone (no mocks) must surface `mock_calls` on the report, so
+    # "channel on with zero interceptions" is distinguishable from "channel
+    # off" — and everything is recorded as allowed.
+    case = TestCase(
+        skill=skills(fixtures) / "deployer",
+        input="Deploy the app",
+        spy=True,
+        evals=[boolean("the reply says `Deployment finished.`")],
+    )
+    report = run_skill(case)
+    assert report.passed, describe_failures(report)
+    records = report.runs[0].mock_calls
+    assert records is not None and len(records) == 3
+    assert all(r.action == "allow" for r in records)
+
+    # Without the flag (and no mocks) the channel stays off.
+    plain = TestCase(
+        skill=skills(fixtures) / "deployer",
+        input="Deploy the app",
+        evals=[boolean("the reply says `Deployment finished.`")],
+    )
+    assert run_skill(plain).runs[0].mock_calls is None
+
+
+def test_streaming_binds_case_level_mocks_on_completion(fixtures: Path) -> None:
+    push = stub(pattern=r"git push( --force)?\b", output="Everything up-to-date", name="push")
+    case = TestCase(
+        skill=skills(fixtures) / "deployer",
+        input="Deploy the app",
+        mocks=[push],
+        evals=[boolean("the reply reports `Everything up-to-date`")],
+    )
+    stream = stream_skill(case)
+
+    async def drain() -> None:
+        async for _ in stream:
+            pass
+
+    import asyncio
+
+    asyncio.run(drain())
+    assert stream.report is not None and stream.report.passed
+    push.assert_called_once()
+    assert push.calls[0].command == "git push origin main"
+
+
 def test_inline_case_streams(fixtures: Path) -> None:
     case = TestCase(
         skill=skills(fixtures) / "tooluser",

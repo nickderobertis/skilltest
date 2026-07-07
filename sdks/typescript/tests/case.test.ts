@@ -108,6 +108,73 @@ describe("code-defined cases", () => {
     expect(git.callCount).toBe(2);
   });
 
+  it("composes case-level and run-level mocks, run-level winning", async () => {
+    // Run-level declarations are prepended (first match wins), so the
+    // test-local rule shadows the case's own — and both objects bind so the
+    // shadowing is assertable.
+    const casePush = stub({
+      pattern: /git push( --force)?\b/,
+      output: "from-case",
+      name: "push",
+    });
+    const runPush = stub({ pattern: /git push( --force)?\b/, output: "from-run-level" });
+    const report = await runSkill(
+      {
+        skill: skillDir("deployer"),
+        input: "Deploy the app",
+        mocks: [casePush],
+        evals: [boolean("the reply reports `from-run-level`")],
+      },
+      { mocks: [runPush] },
+    );
+    expect(report.passed).toBe(true);
+    expect(runPush.callCount).toBe(1);
+    expect(casePush.called).toBe(false);
+  });
+
+  it("turns on the observation channel with the bare spy flag", async () => {
+    // `spy: true` alone (no mocks) surfaces `mock_calls`, so "channel on with
+    // zero interceptions" is distinguishable from "channel off".
+    const report = await runSkill({
+      skill: skillDir("deployer"),
+      input: "Deploy the app",
+      spy: true,
+      evals: [boolean("the reply says `Deployment finished.`")],
+    });
+    expect(report.passed).toBe(true);
+    const records = report.runs[0]?.mock_calls;
+    expect(records).toHaveLength(3);
+    expect(records?.every((r) => r.action === "allow")).toBe(true);
+
+    const plain = await runSkill({
+      skill: skillDir("deployer"),
+      input: "Deploy the app",
+      evals: [boolean("the reply says `Deployment finished.`")],
+    });
+    // The channel-off encoding is "absent or null", never an empty array.
+    expect(plain.runs[0]?.mock_calls ?? null).toBeNull();
+  });
+
+  it("binds case-level mocks when a stream completes", async () => {
+    const push = stub({
+      pattern: /git push( --force)?\b/,
+      output: "Everything up-to-date",
+      name: "push",
+    });
+    const stream = streamSkill({
+      skill: skillDir("deployer"),
+      input: "Deploy the app",
+      mocks: [push],
+      evals: [boolean("the reply reports `Everything up-to-date`")],
+    });
+    for await (const _ of stream) {
+      // drain
+    }
+    expect(stream.report?.passed).toBe(true);
+    expect(push.callCount).toBe(1);
+    expect(push.calls[0]?.command).toBe("git push origin main");
+  });
+
   it("streams an inline case", async () => {
     const stream = streamSkill({
       skill: skillDir("tooluser"),

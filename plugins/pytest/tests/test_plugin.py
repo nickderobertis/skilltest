@@ -106,6 +106,56 @@ def test_code_defined_case_is_reexported_and_runs(fixtures: Path) -> None:
     assert report.passed, describe_failures(report)
 
 
+def test_full_code_defined_case_surface_is_reexported(fixtures: Path) -> None:
+    # Every case builder rides the one-dependency re-export: a multi-turn case
+    # with judge evals, and a mocked case with a deterministic call eval —
+    # streamed and buffered — defined entirely in code through the plugin.
+    from skilltest_pytest import (
+        TestCase,
+        boolean,
+        called,
+        numeric,
+        run_skill,
+        stream_skill,
+        stub,
+        user,
+    )
+
+    multi = TestCase(
+        skill=fixtures / "skills" / "greeter",
+        input="I'd like to confirm my appointment, please.",
+        user=user(
+            "You are a terse patient.\nsay: Yes, please go ahead.",
+            done_when="the conversation has reached turns>=2",
+            max_turns=4,
+        ),
+        evals=[
+            boolean("the assistant confirmed the appointment (`confirmed`)"),
+            numeric("mentions `confirmed`", min=0, max=10, threshold=5, comparator=">"),
+        ],
+    )
+    report = run_skill(multi)
+    assert report.passed, describe_failures(report)
+    assert report.runs[0].turns == 2
+
+    push = stub(pattern=r"git push( --force)?\b", output="Everything up-to-date", name="push")
+    mocked = TestCase(
+        skill=fixtures / "skills" / "deployer",
+        input="Deploy the app",
+        mocks=[push],
+        evals=[called("push", times=1)],
+    )
+    stream = stream_skill(mocked)
+
+    async def drain() -> None:
+        async for _ in stream:
+            pass
+
+    asyncio.run(drain())
+    assert stream.report is not None and stream.report.passed
+    push.assert_called_once()
+
+
 def test_mock_api_is_reexported_and_binds(cases: Path) -> None:
     # The mock/spy API rides the one-dependency re-export; code-level mocks
     # intercept and bind through the plugin's SDK exactly as through the SDK.

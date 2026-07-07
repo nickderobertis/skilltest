@@ -331,12 +331,105 @@ fn case_json_failing_eval_exits_one() {
     assert_eq!(json(&out)["passed"], Value::Bool(false));
 }
 
+/// A minimal one-eval case JSON against the greeter fixture, named `name`.
+fn greeter_case_json(name: &str) -> String {
+    let skill = fixtures().join("skills/greeter");
+    format!(
+        r#"{{"name":{name:?},"skill":{s:?},"input":"Greet Dr. Smith",
+            "evals":[{{"type":"boolean","criterion":"greets `Dr. Smith`"}}]}}"#,
+        s = skill.to_str().unwrap()
+    )
+}
+
+#[test]
+fn case_json_combines_with_positional_yaml_paths() {
+    // The two ingestion channels compose in one run: a positional YAML PATH
+    // and a --case-json file both contribute cases to the same report.
+    let dir = unique_dir("case-json-combined");
+    let file = dir.join("inline.json");
+    std::fs::write(&file, greeter_case_json("from_json")).unwrap();
+    let out = Command::new(skilltest())
+        .arg("run")
+        .arg(case("greet_pass.yaml"))
+        .arg("--case-json")
+        .arg(&file)
+        .arg("--provider")
+        .arg(fake_provider())
+        .args(["--platform", "demo", "--model", "fake", "--format", "json"])
+        .output()
+        .expect("executes");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report = json(&out);
+    assert_eq!(report["summary"]["runs"], 2);
+    let names: Vec<&str> = report["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["case"].as_str().unwrap())
+        .collect();
+    assert!(
+        names.contains(&"greet_pass") && names.contains(&"from_json"),
+        "{names:?}"
+    );
+}
+
+#[test]
+fn case_json_flag_is_repeatable() {
+    let dir = unique_dir("case-json-repeat");
+    let first = dir.join("a.json");
+    let second = dir.join("b.json");
+    std::fs::write(&first, greeter_case_json("first")).unwrap();
+    std::fs::write(&second, greeter_case_json("second")).unwrap();
+    let out = Command::new(skilltest())
+        .arg("run")
+        .args(["--case-json".as_ref(), first.as_os_str()])
+        .args(["--case-json".as_ref(), second.as_os_str()])
+        .arg("--provider")
+        .arg(fake_provider())
+        .args(["--platform", "demo", "--model", "fake", "--format", "json"])
+        .output()
+        .expect("executes");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(json(&out)["summary"]["runs"], 2);
+}
+
 #[test]
 fn case_json_malformed_exits_two() {
     let out = run_case_json("{ not valid json", &["--format", "json"]);
     assert_eq!(out.status.code(), Some(2), "bad input exits 2");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("case-json"), "stderr explains: {stderr}");
+}
+
+#[test]
+fn yaml_case_with_typoed_eval_field_exits_two_naming_the_field() {
+    // The same strictness through the YAML ingestion path: a typo'd key inside
+    // an eval aborts the run with the field named.
+    let dir = unique_dir("yaml-eval-typo");
+    let case_path = dir.join("typo.yaml");
+    std::fs::write(
+        &case_path,
+        format!(
+            "skill: {}\ninput: hi\nevals:\n  - type: boolean\n    criterion: greets\n    expcted: false\n",
+            fixtures().join("skills/greeter").display()
+        ),
+    )
+    .unwrap();
+    let out = run_case(case_path, &["--format", "json"]);
+    assert_eq!(out.status.code(), Some(2), "typo'd eval field exits 2");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("expcted"),
+        "stderr names the field: {stderr}"
+    );
 }
 
 #[test]
