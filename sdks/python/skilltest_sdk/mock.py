@@ -447,9 +447,10 @@ def spy(
     per-input-field criteria. Spies filter locally, so ``pattern`` is native
     Python `re` and ``where`` values may be arbitrary predicates.
 
-    Give a ``name`` to reference this spy from a case's
-    [`called`][skilltest_sdk.case.called] / [`not_called`][skilltest_sdk.case.not_called]
-    eval; a named spy's criteria must be hook-expressible (no
+    A case's [`called`][skilltest_sdk.case.called] /
+    [`not_called`][skilltest_sdk.case.not_called] eval can reference this spy —
+    pass the object itself, or give a ``name`` and reference that. Either way
+    the referenced spy's criteria must be hook-expressible (no
     [`anything`][skilltest_sdk.mock.anything] or Python predicates).
     """
     return ToolSpy(tool=tool, contains=contains, pattern=pattern, where=where, name=name)
@@ -469,7 +470,8 @@ def stub(
     the model receives ``output`` as the tool's genuine result. The positional
     argument is the ``contains`` matcher (the common case). ``pattern`` is
     Rust-regex (linear-time; no lookarounds) — it runs inside the harness.
-    A ``name`` lets a case's `called`/`not_called` eval reference this mock."""
+    A case's `called`/`not_called` eval can reference this mock — pass the
+    object itself, or give a ``name`` and reference that."""
     return ToolMock(
         {"stub": {"output": output, "exit_code": exit_code}},
         tool=tool,
@@ -491,7 +493,8 @@ def deny(
 ) -> ToolMock:
     """Block a matching call; the model reads ``message`` as the tool's
     feedback. Works on every hook-capable harness (the most portable verb).
-    A ``name`` lets a case's `called`/`not_called` eval reference this mock."""
+    A case's `called`/`not_called` eval can reference this mock — pass the
+    object itself, or give a ``name`` and reference that."""
     return ToolMock(
         {"deny": message},
         tool=tool,
@@ -514,7 +517,8 @@ def rewrite(
     """Substitute a matching call's raw input fields — the low-level escape
     hatch, and the way to mock file reads (rewrite ``file_path`` to a
     fixture). ``input`` is the substituted arguments object.
-    A ``name`` lets a case's `called`/`not_called` eval reference this mock."""
+    A case's `called`/`not_called` eval can reference this mock — pass the
+    object itself, or give a ``name`` and reference that."""
     return ToolMock(
         {"rewrite": input},
         tool=tool,

@@ -28,8 +28,8 @@ assert "Dr. Smith" in assistant_text(report.runs[0].transcript)
 ```
 
 Add `user(persona=..., done_when=...)` for a multi-turn case, and `mocks=[...]`
-of `stub`/`spy`/`deny`/`rewrite` (name them to reference from a `called` /
-`not_called` eval). Validate a skill definition with
+of `stub`/`spy`/`deny`/`rewrite` (a `called` / `not_called` eval takes the
+mock object itself, or a `name=` you gave it). Validate a skill definition with
 `validate_skill("skills/greeter")`.
 
 ### Or point at existing YAML cases
