@@ -56,69 +56,97 @@ fn default_true() -> bool {
     true
 }
 
-/// An eval specification, as written in a test case's YAML.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// Assert a plain-English criterion holds (or, with `expected: false`, that
+/// it does not).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BooleanEval {
+    /// The criterion the judge evaluates against the transcript.
+    pub criterion: String,
+    /// What the judge's verdict must equal to pass. Defaults to `true`.
+    #[serde(default = "default_true")]
+    pub expected: bool,
+    /// Optional human label for reports.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+/// Score a plain-English criterion on a numeric scale and compare it to a
+/// threshold.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NumericEval {
+    /// The criterion the judge scores.
+    pub criterion: String,
+    /// Inclusive lower bound of the scale.
+    pub min: f64,
+    /// Inclusive upper bound of the scale.
+    pub max: f64,
+    /// The passing threshold.
+    pub threshold: f64,
+    /// How the score is compared to `threshold`. Defaults to `>=`.
+    #[serde(default)]
+    pub comparator: Comparator,
+    /// Optional human label for reports.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+/// Deterministic: assert the referenced mock/spy observed at least one
+/// matching call (or exactly `times`). Evaluated against the mock channel's
+/// records, not by a judge.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CalledEval {
+    /// The `mocks:` declaration (mock or spy) this asserts on, by name.
+    pub mock: String,
+    /// Exact required call count; absent means "at least once".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub times: Option<u64>,
+    /// Optional per-field input predicates narrowing which calls count.
+    #[serde(default, rename = "where", skip_serializing_if = "BTreeMap::is_empty")]
+    pub r#where: BTreeMap<String, FieldPredicate>,
+    /// Optional human label for reports.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+/// Deterministic: assert the referenced mock/spy observed **no** matching
+/// call.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NotCalledEval {
+    /// The `mocks:` declaration (mock or spy) this asserts on, by name.
+    pub mock: String,
+    /// Optional per-field input predicates narrowing which calls count.
+    #[serde(default, rename = "where", skip_serializing_if = "BTreeMap::is_empty")]
+    pub r#where: BTreeMap<String, FieldPredicate>,
+    /// Optional human label for reports.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+/// An eval specification, as written in a test case's YAML (or compiled by an
+/// SDK's case builders).
+///
+/// Newtype variants on purpose: serde cannot `deny_unknown_fields` on an
+/// internally tagged enum, but it *does* enforce it on the variant structs, so
+/// a typo'd eval field (`expcted:`) is a loud parse error instead of a
+/// silently-applied default. The variant titles name the generated SDK model
+/// for each union arm, so keep them stable: they are part of the SDK API
+/// surface (the input contract, `schemas/case.schema.json`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Eval {
-    /// Assert a plain-English criterion holds (or, with `expected: false`, that
-    /// it does not).
-    Boolean {
-        /// The criterion the judge evaluates against the transcript.
-        criterion: String,
-        /// What the judge's verdict must equal to pass. Defaults to `true`.
-        #[serde(default = "default_true")]
-        expected: bool,
-        /// Optional human label for reports.
-        #[serde(default)]
-        name: Option<String>,
-    },
-    /// Score a plain-English criterion on a numeric scale and compare it to a
-    /// threshold.
-    Numeric {
-        /// The criterion the judge scores.
-        criterion: String,
-        /// Inclusive lower bound of the scale.
-        min: f64,
-        /// Inclusive upper bound of the scale.
-        max: f64,
-        /// The passing threshold.
-        threshold: f64,
-        /// How the score is compared to `threshold`. Defaults to `>=`.
-        #[serde(default)]
-        comparator: Comparator,
-        /// Optional human label for reports.
-        #[serde(default)]
-        name: Option<String>,
-    },
-    /// Deterministic: assert the referenced mock/spy observed at least one
-    /// matching call (or exactly `times`). Evaluated against the mock channel's
-    /// records, not by a judge.
-    Called {
-        /// The `mocks:` declaration (mock or spy) this asserts on, by name.
-        mock: String,
-        /// Exact required call count; absent means "at least once".
-        #[serde(default)]
-        times: Option<u64>,
-        /// Optional per-field input predicates narrowing which calls count.
-        #[serde(default, rename = "where", skip_serializing_if = "BTreeMap::is_empty")]
-        r#where: BTreeMap<String, FieldPredicate>,
-        /// Optional human label for reports.
-        #[serde(default)]
-        name: Option<String>,
-    },
-    /// Deterministic: assert the referenced mock/spy observed **no** matching
-    /// call.
+    #[schemars(title = "BooleanEval")]
+    Boolean(BooleanEval),
+    #[schemars(title = "NumericEval")]
+    Numeric(NumericEval),
+    #[schemars(title = "CalledEval")]
+    Called(CalledEval),
     #[serde(rename = "not_called")]
-    NotCalled {
-        /// The `mocks:` declaration (mock or spy) this asserts on, by name.
-        mock: String,
-        /// Optional per-field input predicates narrowing which calls count.
-        #[serde(default, rename = "where", skip_serializing_if = "BTreeMap::is_empty")]
-        r#where: BTreeMap<String, FieldPredicate>,
-        /// Optional human label for reports.
-        #[serde(default)]
-        name: Option<String>,
-    },
+    #[schemars(title = "NotCalledEval")]
+    NotCalled(NotCalledEval),
 }
 
 impl Eval {
@@ -127,8 +155,9 @@ impl Eval {
     #[must_use]
     pub fn criterion(&self) -> Option<&str> {
         match self {
-            Eval::Boolean { criterion, .. } | Eval::Numeric { criterion, .. } => Some(criterion),
-            Eval::Called { .. } | Eval::NotCalled { .. } => None,
+            Eval::Boolean(BooleanEval { criterion, .. })
+            | Eval::Numeric(NumericEval { criterion, .. }) => Some(criterion),
+            Eval::Called(_) | Eval::NotCalled(_) => None,
         }
     }
 
@@ -137,16 +166,16 @@ impl Eval {
     #[must_use]
     pub fn label(&self) -> String {
         match self {
-            Eval::Boolean {
+            Eval::Boolean(BooleanEval {
                 name, criterion, ..
-            }
-            | Eval::Numeric {
+            })
+            | Eval::Numeric(NumericEval {
                 name, criterion, ..
-            } => name.as_deref().unwrap_or(criterion).to_string(),
-            Eval::Called { name, mock, .. } => {
+            }) => name.as_deref().unwrap_or(criterion).to_string(),
+            Eval::Called(CalledEval { name, mock, .. }) => {
                 name.clone().unwrap_or_else(|| format!("called: {mock}"))
             }
-            Eval::NotCalled { name, mock, .. } => name
+            Eval::NotCalled(NotCalledEval { name, mock, .. }) => name
                 .clone()
                 .unwrap_or_else(|| format!("not_called: {mock}")),
         }
@@ -166,12 +195,12 @@ impl Eval {
             }
         }
         match self {
-            Eval::Numeric {
+            Eval::Numeric(NumericEval {
                 min,
                 max,
                 threshold,
                 ..
-            } => {
+            }) => {
                 if min >= max {
                     return Err(Error::Invalid(format!(
                         "numeric eval scale is degenerate: min ({min}) must be < max ({max})"
@@ -183,12 +212,12 @@ impl Eval {
                     )));
                 }
             }
-            Eval::Called {
+            Eval::Called(CalledEval {
                 mock,
                 times,
                 r#where,
                 ..
-            } => {
+            }) => {
                 if mock.trim().is_empty() {
                     return Err(Error::Invalid(
                         "a `called` eval has an empty `mock` reference".into(),
@@ -201,7 +230,7 @@ impl Eval {
                 }
                 validate_where(r#where, &format!("eval `{}`", self.label()))?;
             }
-            Eval::NotCalled { mock, r#where, .. } => {
+            Eval::NotCalled(NotCalledEval { mock, r#where, .. }) => {
                 if mock.trim().is_empty() {
                     return Err(Error::Invalid(
                         "a `not_called` eval has an empty `mock` reference".into(),
@@ -209,7 +238,7 @@ impl Eval {
                 }
                 validate_where(r#where, &format!("eval `{}`", self.label()))?;
             }
-            Eval::Boolean { .. } => {}
+            Eval::Boolean(_) => {}
         }
         Ok(())
     }
@@ -224,8 +253,8 @@ impl Eval {
     /// surfaced loudly rather than scored vacuously).
     pub fn outcome_for_calls(&self, count: usize, observed: &str) -> Result<EvalOutcome> {
         let (times, negated, mock) = match self {
-            Eval::Called { times, mock, .. } => (*times, false, mock),
-            Eval::NotCalled { mock, .. } => (None, true, mock),
+            Eval::Called(CalledEval { times, mock, .. }) => (*times, false, mock),
+            Eval::NotCalled(NotCalledEval { mock, .. }) => (None, true, mock),
             _ => {
                 return Err(Error::Invalid(
                     "outcome_for_calls invoked on a judge-backed eval".into(),
@@ -277,23 +306,25 @@ impl Eval {
     /// eval.
     pub fn outcome(&self, raw: &JudgeValue, reason: String) -> Result<EvalOutcome> {
         match (self, raw) {
-            (Eval::Boolean { expected, .. }, JudgeValue::Bool(value)) => Ok(EvalOutcome {
-                label: self.label(),
-                passed: value == expected,
-                detail: EvalDetail::Boolean {
-                    value: *value,
-                    expected: *expected,
-                },
-                reason,
-            }),
+            (Eval::Boolean(BooleanEval { expected, .. }), JudgeValue::Bool(value)) => {
+                Ok(EvalOutcome {
+                    label: self.label(),
+                    passed: value == expected,
+                    detail: EvalDetail::Boolean {
+                        value: *value,
+                        expected: *expected,
+                    },
+                    reason,
+                })
+            }
             (
-                Eval::Numeric {
+                Eval::Numeric(NumericEval {
                     min,
                     max,
                     threshold,
                     comparator,
                     ..
-                },
+                }),
                 JudgeValue::Number(value),
             ) => {
                 let clamped = value.clamp(*min, *max);
@@ -308,17 +339,17 @@ impl Eval {
                     reason,
                 })
             }
-            (Eval::Boolean { .. }, JudgeValue::Number(_)) => Err(Error::provider(
+            (Eval::Boolean(_), JudgeValue::Number(_)) => Err(Error::provider(
                 "judge",
                 "boolean eval received a numeric verdict",
             )),
-            (Eval::Numeric { .. }, JudgeValue::Bool(_)) => Err(Error::provider(
+            (Eval::Numeric(_), JudgeValue::Bool(_)) => Err(Error::provider(
                 "judge",
                 "numeric eval received a boolean verdict",
             )),
             // Deterministic kinds are scored via `outcome_for_calls`, never by
             // a judge verdict — routing one here is a runner bug.
-            (Eval::Called { .. } | Eval::NotCalled { .. }, _) => Err(Error::Invalid(
+            (Eval::Called(_) | Eval::NotCalled(_), _) => Err(Error::Invalid(
                 "a call eval cannot be scored by a judge verdict".into(),
             )),
         }
@@ -418,28 +449,28 @@ mod tests {
 
     #[test]
     fn numeric_threshold_gte_passes_at_boundary() {
-        let eval = Eval::Numeric {
+        let eval = Eval::Numeric(NumericEval {
             criterion: "polite".into(),
             min: 0.0,
             max: 10.0,
             threshold: 7.0,
             comparator: Comparator::Gte,
             name: None,
-        };
+        });
         let outcome = eval.outcome(&JudgeValue::Number(7.0), "ok".into()).unwrap();
         assert!(outcome.passed);
     }
 
     #[test]
     fn numeric_value_is_clamped_to_scale() {
-        let eval = Eval::Numeric {
+        let eval = Eval::Numeric(NumericEval {
             criterion: "x".into(),
             min: 0.0,
             max: 10.0,
             threshold: 9.0,
             comparator: Comparator::Gte,
             name: None,
-        };
+        });
         // Judge over-reports 12 -> clamped to 10, still passes.
         let outcome = eval
             .outcome(&JudgeValue::Number(12.0), String::new())
@@ -453,11 +484,11 @@ mod tests {
 
     #[test]
     fn boolean_expected_false_inverts() {
-        let eval = Eval::Boolean {
+        let eval = Eval::Boolean(BooleanEval {
             criterion: "leaks a secret".into(),
             expected: false,
             name: None,
-        };
+        });
         let pass = eval
             .outcome(&JudgeValue::Bool(false), String::new())
             .unwrap();
@@ -470,11 +501,11 @@ mod tests {
 
     #[test]
     fn kind_mismatch_is_provider_error() {
-        let eval = Eval::Boolean {
+        let eval = Eval::Boolean(BooleanEval {
             criterion: "x".into(),
             expected: true,
             name: None,
-        };
+        });
         assert!(eval
             .outcome(&JudgeValue::Number(1.0), String::new())
             .is_err());
@@ -482,14 +513,14 @@ mod tests {
 
     #[test]
     fn degenerate_numeric_scale_is_invalid() {
-        let eval = Eval::Numeric {
+        let eval = Eval::Numeric(NumericEval {
             criterion: "x".into(),
             min: 5.0,
             max: 5.0,
             threshold: 5.0,
             comparator: Comparator::Gte,
             name: None,
-        };
+        });
         assert!(eval.validate().is_err());
     }
 
@@ -517,22 +548,22 @@ mod tests {
 
     #[test]
     fn criterion_and_label_for_both_kinds() {
-        let bool_named = Eval::Boolean {
+        let bool_named = Eval::Boolean(BooleanEval {
             criterion: "is polite".into(),
             expected: true,
             name: Some("politeness".into()),
-        };
+        });
         assert_eq!(bool_named.criterion(), Some("is polite"));
         assert_eq!(bool_named.label(), "politeness");
 
-        let numeric_unnamed = Eval::Numeric {
+        let numeric_unnamed = Eval::Numeric(NumericEval {
             criterion: "warmth".into(),
             min: 0.0,
             max: 10.0,
             threshold: 5.0,
             comparator: Comparator::Gte,
             name: None,
-        };
+        });
         assert_eq!(numeric_unnamed.criterion(), Some("warmth"));
         // Falls back to the criterion when unnamed.
         assert_eq!(numeric_unnamed.label(), "warmth");
@@ -540,45 +571,45 @@ mod tests {
 
     #[test]
     fn validate_rejects_empty_criterion_and_out_of_range_threshold() {
-        let empty = Eval::Boolean {
+        let empty = Eval::Boolean(BooleanEval {
             criterion: "   ".into(),
             expected: true,
             name: None,
-        };
+        });
         assert!(empty.validate().is_err());
 
-        let bad_threshold = Eval::Numeric {
+        let bad_threshold = Eval::Numeric(NumericEval {
             criterion: "x".into(),
             min: 0.0,
             max: 10.0,
             threshold: 11.0,
             comparator: Comparator::Gte,
             name: None,
-        };
+        });
         assert!(bad_threshold.validate().is_err());
 
         // A well-formed numeric eval validates.
-        let ok = Eval::Numeric {
+        let ok = Eval::Numeric(NumericEval {
             criterion: "x".into(),
             min: 0.0,
             max: 10.0,
             threshold: 7.0,
             comparator: Comparator::Gte,
             name: None,
-        };
+        });
         ok.validate().unwrap();
     }
 
     #[test]
     fn outcome_rejects_numeric_eval_with_boolean_verdict() {
-        let eval = Eval::Numeric {
+        let eval = Eval::Numeric(NumericEval {
             criterion: "x".into(),
             min: 0.0,
             max: 10.0,
             threshold: 5.0,
             comparator: Comparator::Gte,
             name: None,
-        };
+        });
         assert!(eval
             .outcome(&JudgeValue::Bool(true), String::new())
             .is_err());
@@ -614,7 +645,9 @@ mod tests {
         )
         .unwrap();
         called.validate().unwrap();
-        assert!(matches!(&called, Eval::Called { mock, times: Some(1), .. } if mock == "push"));
+        assert!(
+            matches!(&called, Eval::Called(CalledEval { mock, times: Some(1), .. }) if mock == "push")
+        );
         assert_eq!(called.label(), "called: push");
         assert!(called.criterion().is_none());
 

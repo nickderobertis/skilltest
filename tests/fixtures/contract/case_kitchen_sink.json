@@ -1,0 +1,65 @@
+{
+  "name": "kitchen_sink",
+  "skill": "tests/fixtures/skills/deployer",
+  "input": "Deploy the app",
+  "user": {
+    "persona": "a terse operator\nsay: Yes, proceed.",
+    "done_when": "the conversation has reached turns>=1",
+    "max_turns": 3
+  },
+  "mocks": [
+    {
+      "name": "push",
+      "match": {
+        "tool": "bash",
+        "pattern": "git push( --force)?\\b",
+        "input": { "command": { "contains": "origin" } }
+      },
+      "stub": { "output": "Everything up-to-date", "exit_code": 0 }
+    },
+    {
+      "name": "danger",
+      "match": { "contains": "rm -rf" },
+      "deny": "destructive commands are blocked"
+    },
+    {
+      "name": "status",
+      "match": { "input": { "command": "git status" } },
+      "rewrite": { "command": "git status --short" }
+    },
+    {
+      "name": "sudo",
+      "match": { "tool": "bash", "contains": "sudo" }
+    }
+  ],
+  "spy": true,
+  "evals": [
+    {
+      "type": "boolean",
+      "criterion": "the reply mentions `flying pigs`",
+      "expected": false,
+      "name": "no-nonsense"
+    },
+    {
+      "type": "numeric",
+      "criterion": "mentions `Deployment finished.`",
+      "min": 0.0,
+      "max": 10.0,
+      "threshold": 5.0,
+      "comparator": "gt",
+      "name": "finished"
+    },
+    {
+      "type": "called",
+      "mock": "push",
+      "times": 1,
+      "where": { "command": { "contains": "origin" } },
+      "name": "pushed-once"
+    },
+    {
+      "type": "not_called",
+      "mock": "sudo",
+      "name": "no-sudo"
+    }
+  ]
+}

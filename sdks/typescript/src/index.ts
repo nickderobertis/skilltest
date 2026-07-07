@@ -23,7 +23,12 @@ export {
   called,
   notCalled,
   user,
+  type BooleanEval,
+  type CalledEval,
+  type ComparatorInput,
   type Eval,
+  type NotCalledEval,
+  type NumericEval,
   type SimulatedUser,
   type TestCaseInput,
 } from "./case.js";

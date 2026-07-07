@@ -34,6 +34,7 @@
  * counting as zero calls.
  */
 import { SkilltestUsageError } from "./errors.js";
+import type { FieldPredicateSpec, MockDecl, MockMatch } from "./generated/case.js";
 import type { CaseRun } from "./generated/report.js";
 
 /** A predicate on one input-field value; build with {@link contains} /
@@ -42,7 +43,7 @@ import type { CaseRun } from "./generated/report.js";
 export interface Matcher {
   readonly kind: "matcher";
   readonly description: string;
-  readonly compiled?: Record<string, string>;
+  readonly compiled?: FieldPredicateSpec;
   matches(value: string): boolean;
 }
 
@@ -298,9 +299,11 @@ export class ToolSpy {
   }
 
   /** @internal The hook-side `match` object for this spy/mock's criteria,
-   * shared by a mock's declaration and a named spy's case declaration. */
-  matchSpec(): Record<string, unknown> {
-    const match: Record<string, unknown> = {};
+   * shared by a mock's declaration and a named spy's case declaration. Typed
+   * as the generated {@link MockMatch}, so a contract change here is a compile
+   * error, not a silently-dropped key. */
+  matchSpec(): MockMatch {
+    const match: MockMatch = {};
     if (this.criteria.tool !== undefined) match.tool = this.criteria.tool;
     if (this.criteria.contains !== undefined) match.contains = this.criteria.contains;
     if (this.criteria.pattern !== undefined) {
@@ -322,7 +325,7 @@ export class ToolSpy {
 
   /** @internal A named spy's no-action declaration for a case's `mocks` block,
    * so a `called`/`notCalled` eval can reference it by `name`. */
-  caseDecl(name: string): Record<string, unknown> {
+  caseDecl(name: string): MockDecl {
     return { name, match: this.matchSpec() };
   }
 }
@@ -348,8 +351,9 @@ export class ToolMock extends ToolSpy {
     this.action = action;
   }
 
-  /** @internal The declaration this compiles to in the `--mocks` file. */
-  decl(name: string): Record<string, unknown> {
+  /** @internal The declaration this compiles to in the `--mocks` file. Typed
+   * as the generated {@link MockDecl} — the input contract. */
+  decl(name: string): MockDecl {
     this.name = name;
     return { name, match: this.matchSpec(), ...this.action };
   }
@@ -367,7 +371,7 @@ export class ToolMock extends ToolSpy {
  * predicates cannot run inside the harness, so they are a loud
  * construction-time error (use a spy for those).
  */
-function compileCriterion(key: string, criterion: Criterion): Record<string, string> | string {
+function compileCriterion(key: string, criterion: Criterion): string | FieldPredicateSpec {
   if (typeof criterion === "string") return criterion;
   if (
     typeof criterion === "object" &&
@@ -425,8 +429,8 @@ export function rewrite(options: MatchOptions & { input: Record<string, unknown>
  * {@link ToolMock} with a synthetic name; spies contribute nothing (they
  * filter locally) but still require the channel (`--spy`).
  */
-export function compileDecls(mocks: readonly ToolSpy[]): Record<string, unknown>[] {
-  const decls: Record<string, unknown>[] = [];
+export function compileDecls(mocks: readonly ToolSpy[]): MockDecl[] {
+  const decls: MockDecl[] = [];
   mocks.forEach((mock, index) => {
     if (mock instanceof ToolMock) decls.push(mock.decl(`__mock_${index}`));
   });

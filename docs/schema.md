@@ -167,10 +167,18 @@ const report = await runSkill(testCase({
 Under the hood the SDK serializes the case to JSON and runs `skilltest run
 --case-json <file>`; unlike a YAML `PATH`, a code-defined case's `skill`
 resolves relative to the **working directory** (the SDKs run the CLI from your
-project). The CLI validates the compiled case exactly as it validates YAML, so a
-malformed case is a loud usage error, never a vacuous pass. YAML files remain
-first-class — a path works everywhere a code-defined case does, and the plugins
-still auto-discover `*.skilltest.yaml` files.
+project). The builders construct models **generated from the input contract**
+(`schemas/case.schema.json` — see "Input contract" below), so the payload shape
+cannot drift from the Rust parse, and the CLI validates the compiled case
+exactly as it validates YAML — a malformed case is a loud usage error, never a
+vacuous pass. YAML files remain first-class — a path works everywhere a
+code-defined case does, and the plugins still auto-discover `*.skilltest.yaml`
+files.
+
+Unknown fields are rejected **everywhere** in a case — including inside an
+eval, the `user` block, and the map forms of `stub`/`deny` and field
+predicates — with an error naming the unknown key. A typo like `expcted:` can
+therefore never silently fall back to a default and invert an eval's intent.
 
 Mocking/spying is delivered per run with zero permanent config mutation
 (oneharness's `run --mock-rules`/`--spy-file`); what a harness supports varies
@@ -252,22 +260,30 @@ was on with no tool calls — the SDKs rely on that distinction so an unbound
 spy errs instead of reading as "zero calls". Deterministic eval outcomes use
 the `calls` detail kind: `{kind: "calls", count, times, negated}`.
 
-## Output contract: how the CLI and the SDKs stay in sync
+## The contracts: how the CLI and the SDKs stay in sync
 
-The Rust report types (`crates/skilltest-core/src/report.rs` and friends) are
-the single source of truth for the JSON contract, and every SDK's models are
-**generated** from them — no per-language model code is written or reviewed by
-hand. The chain, all driven by `scripts/gen-contract.sh` (`just gen-contract`):
+Two JSON contracts bind the CLI to the SDKs, both generated from the Rust
+types by `scripts/gen-contract.sh` (`just gen-contract`) and both enforced by
+the same drift gate:
+
+- the **output contract** — the `--format json` report the SDKs parse
+  (`schemas/report.schema.json`, `schemas/validation.schema.json`), and
+- the **input contract** — the test-case shape (`schemas/case.schema.json`,
+  from `crates/skilltest-core/src/testcase.rs` + `eval.rs` + `mock.rs`), from
+  which each SDK's *case* models are generated so the code-first case builders
+  construct generated types and cannot emit a shape the Rust parse would
+  reject or silently ignore.
+
+The chain:
 
 1. The types derive `schemars::JsonSchema`, and `skilltest schema
-   <report|validation>` emits their JSON Schema (draft-07 on purpose — the
+   <report|validation|case>` emits their JSON Schema (draft-07 on purpose — the
    dialect the generators below digest reliably).
-2. The script writes those schemas to `schemas/report.schema.json` and
-   `schemas/validation.schema.json` (the **goldens**), then generates each
-   SDK's models from them:
+2. The script writes those schemas to `schemas/` (the **goldens**), then
+   generates each SDK's models from them:
    - Python: [`datamodel-code-generator`](https://github.com/koxudaxi/datamodel-code-generator)
-     → Pydantic v2 models in `skilltest_sdk/_report.py` / `_validation.py`, so
-     Python keeps full runtime validation for free.
+     → Pydantic v2 models in `skilltest_sdk/_report.py` / `_validation.py` /
+     `_case.py`, so Python keeps full runtime validation for free.
    - TypeScript: [`json-schema-to-typescript`](https://www.npmjs.com/package/json-schema-to-typescript)
      → type declarations in `src/generated/` (types only by design; the drift
      gate is what guarantees the shape, so the runner casts after `JSON.parse`
@@ -277,6 +293,14 @@ hand. The chain, all driven by `scripts/gen-contract.sh` (`just gen-contract`):
    artifacts, so a contract change that skips regeneration — or a hand-edit of
    generated code — fails CI with the exact diff. A Rust e2e test additionally
    pins the binary to the checked-in goldens.
+4. **Kitchen-sink golden** (input contract only):
+   `tests/fixtures/contract/case_kitchen_sink.json` is one maximal case pinned
+   by *three* parties — a Rust e2e test asserts a maximally-populated
+   `TestCase` serializes to exactly it (and that it parses strictly and runs
+   green against the fake provider), and each SDK asserts its case builders
+   compile to exactly it. A field added to the contract forces the golden to
+   change, which fails each SDK's pin until its builders can express the new
+   field — additive drift is caught, not just breaking drift.
 
 Hand-written code never restates the contract's shape: helpers like
 `describe_failures`/`assistantText` live in thin facades (`models.py`,

@@ -340,6 +340,197 @@ fn case_json_malformed_exits_two() {
 }
 
 #[test]
+fn case_json_typoed_eval_field_exits_two_naming_the_field() {
+    // A typo'd eval key must be a loud usage error naming the field — never a
+    // silently-applied default that could invert the eval's intent.
+    let skill = fixtures().join("skills/greeter");
+    let body = format!(
+        r#"{{"skill":{s:?},"input":"Greet Dr. Smith",
+            "evals":[{{"type":"boolean","criterion":"greets","expcted":false}}]}}"#,
+        s = skill.to_str().unwrap()
+    );
+    let out = run_case_json(&body, &["--format", "json"]);
+    assert_eq!(out.status.code(), Some(2), "typo'd eval field exits 2");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("expcted"),
+        "stderr names the field: {stderr}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The input contract: `schemas/case.schema.json` is the golden the SDKs'
+// generated case models come from, and the kitchen-sink fixture is the shared
+// JSON every party pins — Rust serialization here, and each SDK's case
+// builders in their own suites. Drift in any direction breaks a named test.
+// ---------------------------------------------------------------------------
+
+/// Path to the shared kitchen-sink case golden.
+fn kitchen_sink_path() -> PathBuf {
+    fixtures().join("contract/case_kitchen_sink.json")
+}
+
+#[test]
+fn kitchen_sink_golden_matches_rust_construction() {
+    use skilltest_core::{
+        BooleanEval, CalledEval, Comparator, DenySpec, Eval, FieldPredicate, FieldPredicateSpec,
+        MockDecl, MockMatch, NotCalledEval, NumericEval, SimulatedUser, StubOutput, StubSpec,
+        TestCase,
+    };
+    use std::collections::BTreeMap;
+
+    let contains = |needle: &str| {
+        FieldPredicate::Spec(FieldPredicateSpec {
+            equals: None,
+            contains: Some(needle.to_string()),
+            pattern: None,
+        })
+    };
+    let where_origin: BTreeMap<String, FieldPredicate> =
+        [("command".to_string(), contains("origin"))].into();
+
+    // A maximal case exercising every field of the input contract. If a field
+    // is added to the Rust types, this construction (and the golden) must grow
+    // with it — which in turn fails the SDK builder golden tests until the
+    // builders can express it.
+    let case = TestCase {
+        name: "kitchen_sink".into(),
+        skill: "tests/fixtures/skills/deployer".into(),
+        input: "Deploy the app".into(),
+        user: Some(SimulatedUser {
+            persona: "a terse operator\nsay: Yes, proceed.".into(),
+            done_when: Some("the conversation has reached turns>=1".into()),
+            max_turns: Some(3),
+        }),
+        mocks: vec![
+            MockDecl {
+                name: Some("push".into()),
+                matcher: MockMatch {
+                    tool: Some("bash".into()),
+                    contains: None,
+                    pattern: Some("git push( --force)?\\b".into()),
+                    input: where_origin.clone(),
+                },
+                stub: Some(StubSpec::Full(StubOutput {
+                    output: "Everything up-to-date".into(),
+                    exit_code: 0,
+                })),
+                deny: None,
+                rewrite: None,
+            },
+            MockDecl {
+                name: Some("danger".into()),
+                matcher: MockMatch {
+                    tool: None,
+                    contains: Some("rm -rf".into()),
+                    pattern: None,
+                    input: BTreeMap::new(),
+                },
+                stub: None,
+                deny: Some(DenySpec::Text("destructive commands are blocked".into())),
+                rewrite: None,
+            },
+            MockDecl {
+                name: Some("status".into()),
+                matcher: MockMatch {
+                    tool: None,
+                    contains: None,
+                    pattern: None,
+                    input: [(
+                        "command".to_string(),
+                        FieldPredicate::Equals("git status".into()),
+                    )]
+                    .into(),
+                },
+                stub: None,
+                deny: None,
+                rewrite: Some(serde_json::json!({ "command": "git status --short" })),
+            },
+            MockDecl {
+                name: Some("sudo".into()),
+                matcher: MockMatch {
+                    tool: Some("bash".into()),
+                    contains: Some("sudo".into()),
+                    pattern: None,
+                    input: BTreeMap::new(),
+                },
+                stub: None,
+                deny: None,
+                rewrite: None,
+            },
+        ],
+        spy: true,
+        evals: vec![
+            Eval::Boolean(BooleanEval {
+                criterion: "the reply mentions `flying pigs`".into(),
+                expected: false,
+                name: Some("no-nonsense".into()),
+            }),
+            Eval::Numeric(NumericEval {
+                criterion: "mentions `Deployment finished.`".into(),
+                min: 0.0,
+                max: 10.0,
+                threshold: 5.0,
+                comparator: Comparator::Gt,
+                name: Some("finished".into()),
+            }),
+            Eval::Called(CalledEval {
+                mock: "push".into(),
+                times: Some(1),
+                r#where: where_origin,
+                name: Some("pushed-once".into()),
+            }),
+            Eval::NotCalled(NotCalledEval {
+                mock: "sudo".into(),
+                r#where: BTreeMap::new(),
+                name: Some("no-sudo".into()),
+            }),
+        ],
+    };
+
+    let golden: Value = serde_json::from_str(
+        &std::fs::read_to_string(kitchen_sink_path()).expect("kitchen-sink golden exists"),
+    )
+    .expect("golden is valid JSON");
+    let serialized = serde_json::to_value(&case).expect("case serializes");
+    assert_eq!(
+        serialized, golden,
+        "tests/fixtures/contract/case_kitchen_sink.json is out of date with the Rust input \
+         types — update the golden and every SDK's case builders together"
+    );
+
+    // And the golden round-trips through the strict parse.
+    let parsed: TestCase = serde_json::from_value(golden).expect("golden parses strictly");
+    assert_eq!(parsed, case);
+}
+
+#[test]
+fn kitchen_sink_golden_runs_and_passes() {
+    // The golden is executable, not just parseable: from the repo root (its
+    // `skill` is repo-relative) it runs against the fake provider and every
+    // eval kind passes.
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let out = Command::new(skilltest())
+        .current_dir(&repo_root)
+        .arg("run")
+        .arg("--case-json")
+        .arg(kitchen_sink_path())
+        .arg("--provider")
+        .arg(fake_provider())
+        .args(["--platform", "demo", "--model", "fake", "--format", "json"])
+        .output()
+        .expect("executes");
+    assert!(
+        out.status.success(),
+        "kitchen sink passes; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report = json(&out);
+    assert_eq!(report["runs"][0]["case"], "kitchen_sink");
+    assert_eq!(report["runs"][0]["evals"].as_array().unwrap().len(), 4);
+}
+
+#[test]
 fn case_json_missing_file_exits_two() {
     let missing =
         std::env::temp_dir().join(format!("skilltest-nocasejson-{}.json", std::process::id()));
@@ -454,6 +645,11 @@ fn schema_report_matches_checked_in_golden() {
 #[test]
 fn schema_validation_matches_checked_in_golden() {
     assert_schema_matches_golden("validation", "validation.schema.json");
+}
+
+#[test]
+fn schema_case_matches_checked_in_golden() {
+    assert_schema_matches_golden("case", "case.schema.json");
 }
 
 #[test]

@@ -140,6 +140,9 @@ enum SchemaTarget {
     Report,
     /// The `skilltest validate --format json` report.
     Validation,
+    /// The test-case **input** (one `--case-json` object / YAML case file):
+    /// the shape the SDKs' generated case models are built from.
+    Case,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -418,6 +421,7 @@ fn cmd_schema(args: &SchemaArgs) -> Result<ExitCode> {
     let schema = match args.target {
         SchemaTarget::Report => generator.into_root_schema_for::<Report>(),
         SchemaTarget::Validation => generator.into_root_schema_for::<ValidationReport>(),
+        SchemaTarget::Case => generator.into_root_schema_for::<TestCase>(),
     };
     let json = serde_json::to_string_pretty(&schema)
         .map_err(|e| Error::Invalid(format!("could not serialize schema: {e}")))?;

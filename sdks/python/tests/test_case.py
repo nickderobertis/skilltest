@@ -144,3 +144,59 @@ def test_malformed_inline_case_raises_usage_error(fixtures: Path) -> None:
     case = TestCase(skill=skills(fixtures) / "greeter", input="hi", evals=[])
     with pytest.raises(SkilltestUsageError):
         run_skill(case)
+
+
+def test_builders_compile_to_the_kitchen_sink_golden(fixtures: Path) -> None:
+    """The input-contract pin: a maximal case built with every builder feature
+    must compile to exactly `tests/fixtures/contract/case_kitchen_sink.json`.
+    The same golden is pinned Rust-side (construction + strict parse + an
+    executable e2e run) and by the TypeScript builders, so drift in any
+    direction breaks a named test. If the contract gains a field: update the
+    golden, the Rust construction, and every SDK's builders together."""
+    import json
+
+    from skilltest_sdk import contains, deny, rewrite
+
+    push = stub(
+        tool="bash",
+        pattern=r"git push( --force)?\b",
+        where={"command": contains("origin")},
+        output="Everything up-to-date",
+        name="push",
+    )
+    danger = deny(contains="rm -rf", message="destructive commands are blocked", name="danger")
+    status = rewrite(
+        where={"command": "git status"}, input={"command": "git status --short"}, name="status"
+    )
+    sudo = spy(tool="bash", contains="sudo", name="sudo")
+    case = TestCase(
+        name="kitchen_sink",
+        skill="tests/fixtures/skills/deployer",
+        input="Deploy the app",
+        user=user(
+            "a terse operator\nsay: Yes, proceed.",
+            done_when="the conversation has reached turns>=1",
+            max_turns=3,
+        ),
+        mocks=[push, danger, status, sudo],
+        evals=[
+            boolean("the reply mentions `flying pigs`", expected=False, name="no-nonsense"),
+            numeric(
+                "mentions `Deployment finished.`",
+                min=0,
+                max=10,
+                threshold=5,
+                comparator=">",
+                name="finished",
+            ),
+            called("push", times=1, where={"command": contains("origin")}, name="pushed-once"),
+            not_called("sudo", name="no-sudo"),
+        ],
+    )
+
+    golden_path = fixtures / "contract" / "case_kitchen_sink.json"
+    golden = json.loads(golden_path.read_text())
+    assert case._compile() == golden, (
+        "the compiled case drifted from the kitchen-sink golden — "
+        "update the golden, the Rust construction, and both SDKs' builders together"
+    )

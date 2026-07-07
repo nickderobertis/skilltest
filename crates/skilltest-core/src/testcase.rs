@@ -4,6 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
@@ -13,43 +14,51 @@ use crate::mock::MockDecl;
 /// The simulated-user block that turns a single-turn case into a multi-turn one.
 /// When present, after each assistant turn the runner asks the provider to play
 /// the user (guided by `persona`) until `done_when` holds or `max_turns` is hit.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SimulatedUser {
     /// Instructions describing how the simulated user should behave.
     pub persona: String,
     /// A plain-English condition; when the judge decides it holds, the
     /// conversation ends. Optional — without it the run ends at `max_turns` or
     /// when the skill reports itself done.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub done_when: Option<String>,
     /// Per-case override of the global assistant-turn cap.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_turns: Option<u32>,
 }
 
 /// One test case.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+///
+/// This type is the source of truth for the **input contract**
+/// (`schemas/case.schema.json`): the shape a `--case-json` payload — and the
+/// SDKs' generated case models — must have. Serialization skips
+/// absent/default fields so the canonical JSON form is minimal; the SDK case
+/// builders emit that same form (pinned by the kitchen-sink golden in
+/// `tests/fixtures/contract/`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TestCase {
     /// Human-readable name (defaults to the file stem when loaded from a file).
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub name: String,
     /// Path to the skill directory under test, relative to the test-case file.
     pub skill: PathBuf,
     /// The initial data/prompt handed to the skill as the first user message.
     pub input: String,
     /// Present for multi-turn cases; absent for single-turn.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user: Option<SimulatedUser>,
     /// Mock/spy declarations for this case: a declaration with a `stub`/`deny`/
     /// `rewrite` action intercepts matching tool calls; one without observes
     /// only. `called`/`not_called` evals reference these by `name`.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub mocks: Vec<MockDecl>,
     /// Record every tool call through the mock/spy channel even with no
     /// `mocks` declared, so code-level consumers (the SDKs' spies) get records.
     /// Implied whenever `mocks` is non-empty.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub spy: bool,
     /// The evals that decide whether this case passes. Must be non-empty.
     pub evals: Vec<Eval>,
@@ -218,7 +227,7 @@ pub fn discover_cases(path: &Path) -> Result<Vec<PathBuf>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::eval::Eval;
+    use crate::eval::{BooleanEval, Eval};
 
     #[test]
     fn parses_single_turn_case() {
@@ -232,7 +241,7 @@ evals:
         let case: TestCase = serde_yaml::from_str(yaml).unwrap();
         assert!(!case.is_multi_turn());
         assert_eq!(case.evals.len(), 1);
-        assert!(matches!(case.evals[0], Eval::Boolean { .. }));
+        assert!(matches!(case.evals[0], Eval::Boolean(BooleanEval { .. })));
     }
 
     #[test]
@@ -269,6 +278,31 @@ evals:
     fn unknown_field_is_rejected() {
         let yaml = "skill: ./x\ninput: hi\nbogus: 1\nevals: []\n";
         assert!(serde_yaml::from_str::<TestCase>(yaml).is_err());
+    }
+
+    #[test]
+    fn unknown_eval_field_is_rejected_not_silently_ignored() {
+        // A typo'd eval key (`expcted`) must be a loud parse error naming the
+        // field — never a silently-applied default, which could invert the
+        // eval's intent into a vacuous pass.
+        let yaml = "skill: ./x\ninput: hi\nevals:\n  - type: boolean\n    criterion: c\n    expcted: false\n";
+        let err = serde_yaml::from_str::<TestCase>(yaml).unwrap_err();
+        assert!(
+            err.to_string().contains("expcted"),
+            "error names the unknown field: {err}"
+        );
+        // Same strictness through the JSON path the SDKs use.
+        let json =
+            r#"{"skill":"./x","input":"hi","evals":[{"type":"called","mock":"m","tmies":1}]}"#;
+        let err = TestCase::from_json(json, Path::new(".")).unwrap_err();
+        assert!(err.to_string().contains("tmies"), "{err}");
+    }
+
+    #[test]
+    fn unknown_user_field_is_rejected() {
+        let yaml = "skill: ./x\ninput: hi\nuser:\n  persona: p\n  don_when: x\nevals:\n  - type: boolean\n    criterion: c\n";
+        let err = serde_yaml::from_str::<TestCase>(yaml).unwrap_err();
+        assert!(err.to_string().contains("don_when"), "{err}");
     }
 
     /// Write `yaml` into a unique temp dir as `name`, returning the file path.
@@ -343,11 +377,11 @@ evals:
             user: None,
             mocks: Vec::new(),
             spy: false,
-            evals: vec![Eval::Boolean {
+            evals: vec![Eval::Boolean(BooleanEval {
                 criterion: "c".into(),
                 expected: true,
                 name: None,
-            }],
+            })],
         };
         assert!(case.validate().is_err(), "blank input");
         case.input = "ok".into();
@@ -364,11 +398,11 @@ evals:
             user: None,
             mocks: Vec::new(),
             spy: false,
-            evals: vec![Eval::Boolean {
+            evals: vec![Eval::Boolean(BooleanEval {
                 criterion: "c".into(),
                 expected: true,
                 name: None,
-            }],
+            })],
         };
         let mut blank_persona = base.clone();
         blank_persona.user = Some(SimulatedUser {

@@ -24,9 +24,15 @@ resolves relative to the working directory, `input` is the first user message,
 [`deny`][skilltest_sdk.mock.deny] / [`rewrite`][skilltest_sdk.mock.rewrite]
 objects you would pass to ``run_skill(mocks=...)`` (bound for assertions after
 the run, and referenceable by name from a `called`/`not_called` eval), and
-`evals` decide pass/fail. The CLI validates the compiled case, so a malformed
-one is a loud [`SkilltestUsageError`][skilltest_sdk.errors.SkilltestUsageError],
-never a vacuous pass.
+`evals` decide pass/fail.
+
+The builders construct models **generated from the CLI's own input schema**
+(`schemas/case.schema.json` → ``_case.py``, via ``just gen-contract``), so the
+payload shape cannot drift from the Rust parse: a renamed or removed field is a
+type error here, not a silently-ignored key at runtime. The CLI then validates
+the compiled case semantically, so a malformed one is a loud
+[`SkilltestUsageError`][skilltest_sdk.errors.SkilltestUsageError], never a
+vacuous pass.
 
 Writing cases in code is the recommended approach — it keeps the case, its
 mocks, and any deterministic transcript checks in one typed place. YAML files
@@ -38,9 +44,22 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
-from .mock import Criterion, ToolMock, ToolSpy, _compile_criterion
+from ._case import (
+    BooleanEval,
+    CalledEval,
+    FieldPredicateSpec,
+    MockDecl,
+    NotCalledEval,
+    NumericEval,
+    SimulatedUser,
+)
+from ._case import (
+    TestCase as _CaseModel,
+)
+from .errors import SkilltestUsageError
+from .mock import Criterion, Matcher, ToolMock, ToolSpy
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -56,11 +75,12 @@ __all__ = [
     "user",
 ]
 
-
-def _drop_none(obj: dict[str, Any]) -> dict[str, Any]:
-    """A JSON object with the ``None``-valued keys removed, so optional fields
-    are simply absent (the Rust case type applies its own defaults)."""
-    return {key: value for key, value in obj.items() if value is not None}
+#: One eval, as accepted by a [`TestCase`][skilltest_sdk.case.TestCase] —
+#: build with [`boolean`][skilltest_sdk.case.boolean] /
+#: [`numeric`][skilltest_sdk.case.numeric] / [`called`][skilltest_sdk.case.called]
+#: / [`not_called`][skilltest_sdk.case.not_called]. The union arms are models
+#: generated from the input contract.
+type Eval = BooleanEval | NumericEval | CalledEval | NotCalledEval
 
 
 # ---------------------------------------------------------------------------
@@ -68,22 +88,24 @@ def _drop_none(obj: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-class Eval:
-    """One eval, built with [`boolean`][skilltest_sdk.case.boolean] /
-    [`numeric`][skilltest_sdk.case.numeric] / [`called`][skilltest_sdk.case.called]
-    / [`not_called`][skilltest_sdk.case.not_called]. Opaque: it carries the
-    JSON the CLI validates."""
-
-    def __init__(self, json: dict[str, Any]) -> None:
-        self._json = json
-
-
-def boolean(criterion: str, *, expected: bool = True, name: str | None = None) -> Eval:
+def boolean(criterion: str, *, expected: bool = True, name: str | None = None) -> BooleanEval:
     """Assert a plain-English ``criterion`` holds (or, with ``expected=False``,
     that it does not). Scored by the judge against the transcript."""
-    return Eval(
-        _drop_none({"type": "boolean", "criterion": criterion, "expected": expected, "name": name})
-    )
+    return BooleanEval(type="boolean", criterion=criterion, expected=expected, name=name)
+
+
+#: The comparator sugar accepted by [`numeric`][skilltest_sdk.case.numeric]:
+#: the symbol or its canonical wire name.
+_COMPARATORS: dict[str, Literal["gte", "gt", "lte", "lt"]] = {
+    ">=": "gte",
+    ">": "gt",
+    "<=": "lte",
+    "<": "lt",
+    "gte": "gte",
+    "gt": "gt",
+    "lte": "lte",
+    "lt": "lt",
+}
 
 
 def numeric(
@@ -94,22 +116,46 @@ def numeric(
     threshold: float,
     comparator: str = ">=",
     name: str | None = None,
-) -> Eval:
+) -> NumericEval:
     """Score ``criterion`` on the ``[min, max]`` scale and pass when the score
     satisfies ``comparator`` (``>=`` ``>`` ``<=`` ``<``) against ``threshold``."""
-    return Eval(
-        _drop_none(
-            {
-                "type": "numeric",
-                "criterion": criterion,
-                "min": min,
-                "max": max,
-                "threshold": threshold,
-                "comparator": comparator,
-                "name": name,
-            }
+    canonical = _COMPARATORS.get(comparator)
+    if canonical is None:
+        raise SkilltestUsageError(
+            f"unknown comparator {comparator!r}; use one of >= > <= < (or gte/gt/lte/lt)"
         )
+    return NumericEval(
+        type="numeric",
+        criterion=criterion,
+        min=min,
+        max=max,
+        threshold=threshold,
+        comparator=canonical,
+        name=name,
     )
+
+
+def _compile_where(
+    where: dict[str, Criterion] | None,
+) -> dict[str, str | FieldPredicateSpec] | None:
+    """Lower ``where`` criteria to the generated predicate models: exact
+    strings pass through; [`contains`][skilltest_sdk.mock.contains] /
+    [`matching`][skilltest_sdk.mock.matching] lower to their hook-side form.
+    Arbitrary predicates cannot run hook-side — loud error."""
+    if not where:
+        return None
+    compiled: dict[str, str | FieldPredicateSpec] = {}
+    for key, criterion in where.items():
+        if isinstance(criterion, str):
+            compiled[key] = criterion
+        elif isinstance(criterion, Matcher) and criterion.compiled is not None:
+            compiled[key] = FieldPredicateSpec(**criterion.compiled)
+        else:
+            raise SkilltestUsageError(
+                f"eval `where` field `{key}` must be an exact string, contains(), or "
+                "matching() — arbitrary predicates cannot run hook-side"
+            )
+    return compiled
 
 
 def called(
@@ -118,21 +164,14 @@ def called(
     times: int | None = None,
     where: dict[str, Criterion] | None = None,
     name: str | None = None,
-) -> Eval:
+) -> CalledEval:
     """Deterministic (no judge): assert the named ``mock``/spy observed at least
     one matching call, or exactly ``times``. Reference a
     [`spy`][skilltest_sdk.mock.spy]/[`stub`][skilltest_sdk.mock.stub]/… by the
     ``name=`` you gave it in the case's ``mocks``. ``where`` narrows by input
     field (exact string or [`contains`][skilltest_sdk.mock.contains]/
     [`matching`][skilltest_sdk.mock.matching])."""
-    json: dict[str, Any] = {"type": "called", "mock": mock}
-    if times is not None:
-        json["times"] = times
-    if where:
-        json["where"] = {key: _compile_criterion(key, value) for key, value in where.items()}
-    if name is not None:
-        json["name"] = name
-    return Eval(json)
+    return CalledEval(type="called", mock=mock, times=times, where=_compile_where(where), name=name)
 
 
 def not_called(
@@ -140,40 +179,15 @@ def not_called(
     *,
     where: dict[str, Criterion] | None = None,
     name: str | None = None,
-) -> Eval:
+) -> NotCalledEval:
     """Deterministic: assert the named ``mock``/spy observed **no** matching
     call (optionally narrowed by ``where``)."""
-    json: dict[str, Any] = {"type": "not_called", "mock": mock}
-    if where:
-        json["where"] = {key: _compile_criterion(key, value) for key, value in where.items()}
-    if name is not None:
-        json["name"] = name
-    return Eval(json)
+    return NotCalledEval(type="not_called", mock=mock, where=_compile_where(where), name=name)
 
 
 # ---------------------------------------------------------------------------
 # Simulated user (multi-turn)
 # ---------------------------------------------------------------------------
-
-
-@dataclass
-class SimulatedUser:
-    """The simulated-user block that makes a case multi-turn. Build with
-    [`user`][skilltest_sdk.case.user]."""
-
-    persona: str
-    done_when: str | None = None
-    max_turns: int | None = None
-
-    @property
-    def _json(self) -> dict[str, Any]:
-        return _drop_none(
-            {
-                "persona": self.persona,
-                "done_when": self.done_when,
-                "max_turns": self.max_turns,
-            }
-        )
 
 
 def user(
@@ -224,24 +238,25 @@ class TestCase:
     spy: bool = False
 
     def _compile(self) -> dict[str, Any]:
-        """The JSON the CLI ingests via ``--case-json``. Assigns names to the
-        case's mocks (so binding and `called`/`not_called` references resolve)
-        and turns the spy channel on when any mock/spy is present."""
-        payload: dict[str, Any] = {
-            "skill": str(self.skill),
-            "input": self.input,
-            "evals": [e._json for e in self.evals],
-        }
-        if self.name is not None:
-            payload["name"] = self.name
-        if self.user is not None:
-            payload["user"] = self.user._json
-        decls = _compile_case_mocks(self.mocks)
-        if decls:
-            payload["mocks"] = decls
-        if self.spy or self.mocks:
-            payload["spy"] = True
-        return payload
+        """The JSON the CLI ingests via ``--case-json``, built through the
+        generated [`_case.TestCase`] model so the payload shape is pinned to
+        the input contract. Assigns names to the case's mocks (so binding and
+        `called`/`not_called` references resolve) and turns the spy channel on
+        when any mock/spy is present."""
+        decls = [MockDecl.model_validate(d) for d in _compile_case_mocks(self.mocks)]
+        model = _CaseModel(
+            name=self.name,
+            skill=str(self.skill),
+            input=self.input,
+            user=self.user,
+            mocks=decls or None,
+            spy=True if (self.spy or self.mocks) else None,
+            evals=list(self.evals),
+        )
+        # exclude_none mirrors the Rust types' skip-absent serialization, so
+        # the emitted JSON is the canonical minimal form the kitchen-sink
+        # golden pins.
+        return model.model_dump(exclude_none=True)
 
 
 def _compile_case_mocks(mocks: Sequence[ToolSpy]) -> list[dict[str, Any]]:

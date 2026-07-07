@@ -22,10 +22,13 @@ fi
 artifacts=(
   "schemas/report.schema.json"
   "schemas/validation.schema.json"
+  "schemas/case.schema.json"
   "sdks/python/skilltest_sdk/_report.py"
   "sdks/python/skilltest_sdk/_validation.py"
+  "sdks/python/skilltest_sdk/_case.py"
   "sdks/typescript/src/generated/report.ts"
   "sdks/typescript/src/generated/validation.ts"
+  "sdks/typescript/src/generated/case.ts"
 )
 
 stage="$(mktemp -d)"
@@ -41,6 +44,10 @@ cargo build -p skilltest-cli --quiet
 
 ./target/debug/skilltest schema report > "$stage/schemas/report.schema.json"
 ./target/debug/skilltest schema validation > "$stage/schemas/validation.schema.json"
+# The input contract: the test-case shape (`--case-json` / YAML case files),
+# from which each SDK's *case* models are generated — so the code-first case
+# builders construct generated types and cannot drift from the Rust parse.
+./target/debug/skilltest schema case > "$stage/schemas/case.schema.json"
 
 # Python: pydantic models via datamodel-code-generator (pinned in uv.lock).
 # Run from sdks/python so the ruff formatter it invokes picks up that project's
@@ -65,6 +72,7 @@ gen_python() {
 }
 gen_python report
 gen_python validation
+gen_python case
 
 # TypeScript: type declarations via json-schema-to-typescript (pinned in
 # pnpm-lock.yaml). Types only by design — the drift gate is what guarantees
@@ -85,6 +93,7 @@ gen_typescript() {
 }
 gen_typescript report
 gen_typescript validation
+gen_typescript case
 
 status=0
 for artifact in "${artifacts[@]}"; do

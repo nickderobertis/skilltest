@@ -25,27 +25,41 @@
  * / {@link import("./mock.js").deny | deny} / {@link import("./mock.js").rewrite | rewrite}
  * objects you would pass to `runSkill({ mocks })` (bound for assertions after
  * the run, and referenceable by name from a `called`/`notCalled` eval), and
- * `evals` decide pass/fail. The CLI validates the compiled case, so a malformed
- * one throws a {@link import("./errors.js").SkilltestUsageError | SkilltestUsageError}.
+ * `evals` decide pass/fail.
+ *
+ * The builders construct types **generated from the CLI's own input schema**
+ * (`schemas/case.schema.json` → `src/generated/case.ts`, via `just
+ * gen-contract`), so the payload shape cannot drift from the Rust parse: a
+ * renamed or removed field is a compile error here, not a silently-ignored key
+ * at runtime. The CLI then validates the compiled case semantically, so a
+ * malformed one throws a
+ * {@link import("./errors.js").SkilltestUsageError | SkilltestUsageError}.
  *
  * Writing cases in code is the recommended approach; YAML files remain fully
  * supported (`runSkill("cases/greet.yaml")`) and are what `discover` collects.
  */
 import { SkilltestUsageError } from "./errors.js";
+import type {
+  BooleanEval,
+  CalledEval,
+  TestCase as CaseJson,
+  Comparator,
+  Eval,
+  FieldPredicate,
+  NotCalledEval,
+  NumericEval,
+  SimulatedUser,
+} from "./generated/case.js";
 import { type Criterion, ToolMock, type ToolSpy, type WhereCriteria } from "./mock.js";
 
-/** One eval, built with {@link boolean} / {@link numeric} / {@link called} /
- * {@link notCalled}. Opaque: it carries the JSON the CLI validates. */
-export interface Eval {
-  readonly json: Record<string, unknown>;
-}
-
-/** The simulated-user block that makes a case multi-turn (see {@link user}). */
-export interface SimulatedUser {
-  persona: string;
-  doneWhen?: string;
-  maxTurns?: number;
-}
+export type {
+  BooleanEval,
+  CalledEval,
+  Eval,
+  NotCalledEval,
+  NumericEval,
+  SimulatedUser,
+} from "./generated/case.js";
 
 /** A full test case defined in code — the twin of a `*.skilltest.yaml` file.
  * Pass one (via {@link testCase}) to {@link import("./runner.js").runSkill}. */
@@ -75,29 +89,51 @@ export interface TestCaseInput {
 export function boolean(
   criterion: string,
   options: { expected?: boolean; name?: string } = {},
-): Eval {
-  const json: Record<string, unknown> = { type: "boolean", criterion };
-  json.expected = options.expected ?? true;
-  if (options.name !== undefined) json.name = options.name;
-  return { json };
+): BooleanEval {
+  return {
+    type: "boolean",
+    criterion,
+    expected: options.expected ?? true,
+    ...(options.name !== undefined && { name: options.name }),
+  };
 }
+
+/** The comparator sugar {@link numeric} accepts: the symbol or its canonical
+ * wire name. */
+export type ComparatorInput = Comparator | ">=" | ">" | "<=" | "<";
+
+const COMPARATORS: Record<ComparatorInput, Comparator> = {
+  ">=": "gte",
+  ">": "gt",
+  "<=": "lte",
+  "<": "lt",
+  gte: "gte",
+  gt: "gt",
+  lte: "lte",
+  lt: "lt",
+};
 
 /** Score `criterion` on the `[min, max]` scale and pass when the score
  * satisfies `comparator` (`>=` `>` `<=` `<`, default `>=`) against `threshold`. */
 export function numeric(
   criterion: string,
-  options: { min: number; max: number; threshold: number; comparator?: string; name?: string },
-): Eval {
-  const json: Record<string, unknown> = {
+  options: {
+    min: number;
+    max: number;
+    threshold: number;
+    comparator?: ComparatorInput;
+    name?: string;
+  },
+): NumericEval {
+  return {
     type: "numeric",
     criterion,
     min: options.min,
     max: options.max,
     threshold: options.threshold,
-    comparator: options.comparator ?? ">=",
+    comparator: COMPARATORS[options.comparator ?? ">="],
+    ...(options.name !== undefined && { name: options.name }),
   };
-  if (options.name !== undefined) json.name = options.name;
-  return { json };
 }
 
 /** Deterministic (no judge): assert the named `mock`/spy observed at least one
@@ -106,12 +142,14 @@ export function numeric(
 export function called(
   mock: string,
   options: { times?: number; where?: WhereCriteria; name?: string } = {},
-): Eval {
-  const json: Record<string, unknown> = { type: "called", mock };
-  if (options.times !== undefined) json.times = options.times;
-  if (options.where !== undefined) json.where = compileWhere(options.where);
-  if (options.name !== undefined) json.name = options.name;
-  return { json };
+): CalledEval {
+  return {
+    type: "called",
+    mock,
+    ...(options.times !== undefined && { times: options.times }),
+    ...(options.where !== undefined && { where: compileWhere(options.where) }),
+    ...(options.name !== undefined && { name: options.name }),
+  };
 }
 
 /** Deterministic: assert the named `mock`/spy observed **no** matching call
@@ -119,11 +157,13 @@ export function called(
 export function notCalled(
   mock: string,
   options: { where?: WhereCriteria; name?: string } = {},
-): Eval {
-  const json: Record<string, unknown> = { type: "not_called", mock };
-  if (options.where !== undefined) json.where = compileWhere(options.where);
-  if (options.name !== undefined) json.name = options.name;
-  return { json };
+): NotCalledEval {
+  return {
+    type: "not_called",
+    mock,
+    ...(options.where !== undefined && { where: compileWhere(options.where) }),
+    ...(options.name !== undefined && { name: options.name }),
+  };
 }
 
 /** A simulated user for a multi-turn case: after each assistant turn the judge
@@ -133,7 +173,11 @@ export function user(
   persona: string,
   options: { doneWhen?: string; maxTurns?: number } = {},
 ): SimulatedUser {
-  return { persona, doneWhen: options.doneWhen, maxTurns: options.maxTurns };
+  return {
+    persona,
+    ...(options.doneWhen !== undefined && { done_when: options.doneWhen }),
+    ...(options.maxTurns !== undefined && { max_turns: options.maxTurns }),
+  };
 }
 
 /**
@@ -150,31 +194,25 @@ export function isTestCaseInput(value: unknown): value is TestCaseInput {
   return typeof value === "object" && value !== null && "skill" in value && "evals" in value;
 }
 
-/** @internal The JSON the CLI ingests via `--case-json`: assigns names to the
- * case's mocks (so binding and `called`/`notCalled` references resolve) and
- * turns the spy channel on when any mock/spy is present. */
-export function compileCase(input: TestCaseInput): Record<string, unknown> {
-  const payload: Record<string, unknown> = {
+/** @internal The JSON the CLI ingests via `--case-json`, typed as the
+ * generated case model so the payload shape is pinned to the input contract:
+ * assigns names to the case's mocks (so binding and `called`/`notCalled`
+ * references resolve) and turns the spy channel on when any mock/spy is
+ * present. */
+export function compileCase(input: TestCaseInput): CaseJson {
+  const decls = compileCaseMocks(input.mocks ?? []);
+  return {
     skill: input.skill,
     input: input.input,
-    evals: input.evals.map((e) => e.json),
+    evals: input.evals,
+    ...(input.name !== undefined && { name: input.name }),
+    ...(input.user !== undefined && { user: input.user }),
+    ...(decls.length > 0 && { mocks: decls }),
+    ...((input.spy || (input.mocks?.length ?? 0) > 0) && { spy: true }),
   };
-  if (input.name !== undefined) payload.name = input.name;
-  if (input.user !== undefined) payload.user = compileUser(input.user);
-  const decls = compileCaseMocks(input.mocks ?? []);
-  if (decls.length > 0) payload.mocks = decls;
-  if (input.spy || (input.mocks && input.mocks.length > 0)) payload.spy = true;
-  return payload;
 }
 
-function compileUser(u: SimulatedUser): Record<string, unknown> {
-  const json: Record<string, unknown> = { persona: u.persona };
-  if (u.doneWhen !== undefined) json.done_when = u.doneWhen;
-  if (u.maxTurns !== undefined) json.max_turns = u.maxTurns;
-  return json;
-}
-
-function compileWhere(where: WhereCriteria): Record<string, unknown> {
+function compileWhere(where: WhereCriteria): Record<string, FieldPredicate> {
   return Object.fromEntries(
     Object.entries(where).map(([key, value]) => [key, compileWhereCriterion(key, value)]),
   );
@@ -182,7 +220,7 @@ function compileWhere(where: WhereCriteria): Record<string, unknown> {
 
 // A case's `called`/`notCalled` `where` runs hook-side (Rust), so only exact
 // strings and the shipped matchers can cross — mirror the mock rule.
-function compileWhereCriterion(key: string, criterion: Criterion): unknown {
+function compileWhereCriterion(key: string, criterion: Criterion): FieldPredicate {
   if (typeof criterion === "string") return criterion;
   if (
     typeof criterion === "object" &&
@@ -198,8 +236,8 @@ function compileWhereCriterion(key: string, criterion: Criterion): unknown {
   );
 }
 
-function compileCaseMocks(mocks: readonly ToolSpy[]): Record<string, unknown>[] {
-  const decls: Record<string, unknown>[] = [];
+function compileCaseMocks(mocks: readonly ToolSpy[]): import("./generated/case.js").MockDecl[] {
+  const decls: import("./generated/case.js").MockDecl[] = [];
   mocks.forEach((mock, index) => {
     if (mock instanceof ToolMock) {
       decls.push(mock.decl(mock.mockName ?? `__case_mock_${index}`));
