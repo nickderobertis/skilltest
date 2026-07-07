@@ -34,7 +34,12 @@ from .case import (
     numeric,
     user,
 )
-from .errors import SkilltestError, SkilltestProviderError, SkilltestUsageError
+from .errors import (
+    ProviderErrorKind,
+    SkilltestError,
+    SkilltestProviderError,
+    SkilltestUsageError,
+)
 from .mock import (
     Matcher,
     ToolCall,
@@ -57,6 +62,7 @@ from .models import (
     MockCall,
     NumericDetail,
     Report,
+    ReportError,
     Summary,
     ToolEvent,
     Transcript,
@@ -84,7 +90,9 @@ __all__ = [
     "Message",
     "MockCall",
     "NumericDetail",
+    "ProviderErrorKind",
     "Report",
+    "ReportError",
     "SimulatedUser",
     "SkillStream",
     "SkilltestError",

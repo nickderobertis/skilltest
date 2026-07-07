@@ -17,6 +17,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ValidationError
 
+from ._error import ReportError
 from .case import TestCase
 from .errors import SkilltestError, SkilltestProviderError, SkilltestUsageError
 from .mock import ToolSpy, bind_mocks, compile_decls
@@ -238,19 +239,45 @@ def validate_skill(
 
 
 def _raise_for_status(proc: subprocess.CompletedProcess[str]) -> None:
-    raise_for_code(proc.returncode, proc.stderr.strip() or proc.stdout.strip())
+    if proc.returncode in _REPORTING_CODES:
+        return
+    structured = parse_report_error(proc.stdout)
+    raise_for_code(proc.returncode, proc.stderr.strip() or proc.stdout.strip(), structured)
 
 
-def raise_for_code(code: int | None, detail: str) -> None:
+def parse_report_error(stdout: str) -> ReportError | None:
+    """The structured error the CLI emits on stdout for a ``--format json``
+    failure, or ``None`` when stdout is not that envelope — an older binary that
+    printed nothing to stdout, or a human-format run. Callers fall back to the
+    stderr text. Shared by the buffered and streaming APIs."""
+    text = stdout.strip()
+    if not text:
+        return None
+    try:
+        return ReportError.model_validate_json(text)
+    except ValidationError:
+        return None
+
+
+def raise_for_code(
+    code: int | None,
+    detail: str,
+    structured: ReportError | None = None,
+) -> None:
     """Map a skilltest exit code to an exception (shared by the buffered and
-    streaming APIs). Codes 0/1 produce a report and never raise."""
+    streaming APIs). Codes 0/1 produce a report and never raise. ``structured``,
+    when the CLI emitted the JSON error envelope, carries the classified
+    ``kind``/``context`` onto a [`SkilltestProviderError`]."""
     if code in _REPORTING_CODES:
         return
+    message = (structured.message if structured else "") or detail
     if code == 2:
-        raise SkilltestUsageError(detail)
+        raise SkilltestUsageError(message)
     if code == 3:
-        raise SkilltestProviderError(detail)
-    raise SkilltestError(f"skilltest exited {code}: {detail}")
+        kind = structured.kind if structured else None
+        context = structured.context if structured else None
+        raise SkilltestProviderError(message, kind=kind, context=context)
+    raise SkilltestError(f"skilltest exited {code}: {message}")
 
 
 def _parse[T: BaseModel](model: type[T], stdout: str) -> T:

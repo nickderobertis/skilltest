@@ -1,3 +1,6 @@
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import {
   SkilltestProviderError,
@@ -9,6 +12,24 @@ import {
   validateSkill,
 } from "../src/index.js";
 import { caseFile, requireBinaries, skillDir } from "./helpers.js";
+
+/**
+ * Write a config pointing the oneharness provider at a scripted fake emitting
+ * `resultsJson`, so a classified failure can be exercised offline. Returns the
+ * config path and a cleanup thunk.
+ */
+function fakeOneharnessConfig(resultsJson: string): { config: string; cleanup: () => void } {
+  const dir = mkdtempSync(join(tmpdir(), "skilltest-ts-err-"));
+  const oh = join(dir, "oneharness");
+  writeFileSync(oh, `#!/bin/sh\ncat >/dev/null\nprintf '%s' '${resultsJson}'\n`);
+  chmodSync(oh, 0o755);
+  const config = join(dir, "skilltest.yaml");
+  writeFileSync(
+    config,
+    `provider:\n  kind: oneharness\n  bin: ${oh}\n  judge_harness: claude-code\n  timeout_secs: 5\nplatforms: [claude-code]\nmodels: [sonnet]\n`,
+  );
+  return { config, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+}
 
 beforeAll(() => {
   requireBinaries();
@@ -90,6 +111,33 @@ describe("runSkill", () => {
     await expect(
       runSkill(caseFile("greet_pass.yaml"), { bin: "/nonexistent/skilltest-bin" }),
     ).rejects.toBeInstanceOf(SkilltestProviderError);
+  });
+
+  it("carries the structured kind/context on a classified provider failure", async () => {
+    // oneharness reports a deadline as `status: "timeout"`; the SDK surfaces it
+    // as a typed `kind` so consumers branch on the category, not the message.
+    const { config, cleanup } = fakeOneharnessConfig(
+      '{"results":[{"status":"timeout","stderr":"deadline exceeded"}]}',
+    );
+    // The env default would pass `--provider`, overriding the config's oneharness
+    // provider — drop it so the fake oneharness bin applies. `delete` (not `=
+    // undefined`, which sets the string "undefined") truly unsets it.
+    const savedProvider = process.env.SKILLTEST_PROVIDER;
+    // biome-ignore lint/performance/noDelete: the env var must be truly removed, not set to "undefined"
+    delete process.env.SKILLTEST_PROVIDER;
+    try {
+      let caught: unknown;
+      await runSkill(caseFile("greet_pass.yaml"), { config }).catch((err) => {
+        caught = err;
+      });
+      expect(caught).toBeInstanceOf(SkilltestProviderError);
+      const err = caught as SkilltestProviderError;
+      expect(err.kind).toBe("timeout");
+      expect(err.context).toBe("oneharness:claude-code");
+    } finally {
+      if (savedProvider !== undefined) process.env.SKILLTEST_PROVIDER = savedProvider;
+      cleanup();
+    }
   });
 });
 

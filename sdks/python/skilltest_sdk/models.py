@@ -11,6 +11,7 @@ generated fields.
 
 from __future__ import annotations
 
+from ._error import ReportError
 from ._report import (
     BooleanDetail,
     CallsDetail,
@@ -36,6 +37,7 @@ __all__ = [
     "MockCall",
     "NumericDetail",
     "Report",
+    "ReportError",
     "Summary",
     "ToolEvent",
     "Transcript",

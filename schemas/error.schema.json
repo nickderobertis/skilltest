@@ -1,0 +1,109 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ReportError",
+  "description": "A structured error, emitted as the `--format json` / `json-stream` output\nwhen a `skilltest run` cannot produce a [`Report`].\n\nThis is the machine-readable counterpart to the human hint the CLI prints on\nstderr: it rides on stdout so SDK/plugin consumers get the [`ProviderErrorKind`]\n(and the `code`/`context`) for targeted handling — retry on\n[`ProviderErrorKind::Timeout`], fail fast on [`ProviderErrorKind::Auth`] —\ninstead of matching substrings in the message. For `json` the object is\nemitted bare; for `json-stream` it is the terminal\n`{\"type\":\"error\",\"error\":{…}}` line.",
+  "type": "object",
+  "properties": {
+    "code": {
+      "description": "The coarse failure class, matching the process exit code.",
+      "allOf": [
+        {
+          "$ref": "#/definitions/ErrorCode"
+        }
+      ]
+    },
+    "context": {
+      "description": "The provider context the failure came from (e.g. `oneharness:claude-code`,\n`api-judge`). Absent for usage errors.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "kind": {
+      "description": "The structured provider-failure category, when skilltest could classify\nit. Absent for usage errors and for unclassified provider failures.",
+      "anyOf": [
+        {
+          "$ref": "#/definitions/ProviderErrorKind"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "message": {
+      "description": "A human-readable description of what went wrong (the same text printed on\nstderr, minus the suggested-action hint).",
+      "type": "string"
+    }
+  },
+  "required": [
+    "code",
+    "message"
+  ],
+  "definitions": {
+    "ErrorCode": {
+      "description": "Which class of failure a [`ReportError`] describes. Mirrors the process exit\ncode so a JSON consumer gets the same coarse classification as a shell script\nbranching on `$?`.",
+      "oneOf": [
+        {
+          "description": "Bad usage or input (exit 2): malformed config/case YAML, a missing file,\na semantically invalid test definition.",
+          "type": "string",
+          "const": "usage"
+        },
+        {
+          "description": "A provider/environment failure (exit 3): the harness or judge could not\nbe reached or misbehaved.",
+          "type": "string",
+          "const": "provider"
+        }
+      ]
+    },
+    "ProviderErrorKind": {
+      "description": "Structured classification of a provider failure.\n\nThis is the machine-readable category SDK/plugin consumers branch on instead\nof matching substrings in the human message (the reason this type exists: a\ntimeout is [`ProviderErrorKind::Timeout`], not `message.contains(\"timed\nout\")`). It is part of the JSON error contract — it serializes as a\nsnake_case string and is re-exported through every SDK's generated models, so\nthe vocabulary here is the vocabulary consumers see.\n\nThe set is closed on purpose so the generated SDK types are exhaustive\nunions; a failure skilltest cannot map to a specific category (e.g. a\nprovider or oneharness failure label added upstream that this version does\nnot recognize) becomes [`ProviderErrorKind::Other`] rather than a new,\nunhandled string.",
+      "oneOf": [
+        {
+          "description": "Authentication/authorization failed (missing or rejected credentials).",
+          "type": "string",
+          "const": "auth"
+        },
+        {
+          "description": "The provider rate-limited the call; a backoff-and-retry may succeed.",
+          "type": "string",
+          "const": "rate_limit"
+        },
+        {
+          "description": "The harness/vendor does not recognize the requested model.",
+          "type": "string",
+          "const": "model_not_found"
+        },
+        {
+          "description": "The account's quota or billing limit is exhausted.",
+          "type": "string",
+          "const": "quota"
+        },
+        {
+          "description": "A transient server-side overload; retried internally where possible.",
+          "type": "string",
+          "const": "overloaded"
+        },
+        {
+          "description": "The call exceeded its deadline (harness `--timeout`, curl `--max-time`).",
+          "type": "string",
+          "const": "timeout"
+        },
+        {
+          "description": "The provider process could not be started (binary missing, not runnable).",
+          "type": "string",
+          "const": "spawn"
+        },
+        {
+          "description": "The provider ran but produced output that violated the protocol\n(unparseable envelope, missing results, malformed verdict).",
+          "type": "string",
+          "const": "protocol"
+        },
+        {
+          "description": "A classified failure that does not map to a more specific category. The\nhuman `message` carries the specifics.",
+          "type": "string",
+          "const": "other"
+        }
+      ]
+    }
+  }
+}

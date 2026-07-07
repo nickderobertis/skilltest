@@ -27,6 +27,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
+from ._error import ReportError
 from ._report import ToolEvent
 from .case import TestCase
 from .errors import SkilltestProviderError
@@ -85,6 +86,7 @@ class SkillStream:
 
         assert proc.stdout is not None
         try:
+            structured: ReportError | None = None
             async for raw in proc.stdout:
                 line = raw.decode().strip()
                 if not line:
@@ -97,12 +99,16 @@ class SkillStream:
                     self.report = Report.model_validate(obj["report"])
                     if self._mocks:
                         bind_mocks(self._mocks, self.report.runs)
+                elif kind == "error":
+                    # The terminal error line for a failed streamed run — carries
+                    # the same structured `kind`/`context` as the buffered output.
+                    structured = ReportError.model_validate(obj["error"])
             await proc.wait()
             # A hard failure (bad input / provider error) once the stream ends.
             detail = ""
             if proc.stderr is not None:
                 detail = (await proc.stderr.read()).decode().strip()
-            raise_for_code(proc.returncode, detail)
+            raise_for_code(proc.returncode, detail, structured)
         finally:
             # The consumer stopped early (break): kill the CLI so oneharness's
             # stream closes and the harness is torn down.

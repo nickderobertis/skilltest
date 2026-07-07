@@ -65,6 +65,7 @@ export {
   SkilltestProviderError,
   SkilltestUsageError,
 } from "./errors.js";
+export type { ErrorCode, ProviderErrorKind, ReportError } from "./generated/error.js";
 export { assistantText, describeFailures, toolCalls } from "./helpers.js";
 export type {
   BooleanDetail,
