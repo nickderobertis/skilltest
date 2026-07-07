@@ -4,6 +4,7 @@ import {
   SkilltestUsageError,
   boolean,
   called,
+  contains,
   notCalled,
   numeric,
   runSkill,
@@ -99,7 +100,7 @@ describe("code-defined cases", () => {
     // No string names to keep in sync: `called`/`notCalled` take the
     // spy/stub object itself and resolve to its compiled declaration name —
     // including an unnamed spy, which gets a declaration only because an
-    // eval references it.
+    // eval references it. `where` narrows an object ref just like a string ref.
     const push = stub({ pattern: /git push( --force)?\b/, output: "Everything up-to-date" });
     const sudo = spy({ contains: "sudo" });
     const report = await runSkill({
@@ -108,7 +109,7 @@ describe("code-defined cases", () => {
       mocks: [push, sudo],
       evals: [
         boolean("the reply reports `Everything up-to-date`"),
-        called(push, { times: 1 }),
+        called(push, { times: 1, where: { command: contains("origin") } }),
         notCalled(sudo),
       ],
     });
@@ -213,6 +214,8 @@ describe("code-defined cases", () => {
   });
 
   it("binds case-level mocks when a stream completes", async () => {
+    // A *named* mock passed by object: the eval resolves to the given name,
+    // and the streaming path compiles the case identically to the buffered one.
     const push = stub({
       pattern: /git push( --force)?\b/,
       output: "Everything up-to-date",
@@ -222,7 +225,7 @@ describe("code-defined cases", () => {
       skill: skillDir("deployer"),
       input: "Deploy the app",
       mocks: [push],
-      evals: [boolean("the reply reports `Everything up-to-date`")],
+      evals: [boolean("the reply reports `Everything up-to-date`"), called(push, { times: 1 })],
     });
     for await (const _ of stream) {
       // drain

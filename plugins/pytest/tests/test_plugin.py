@@ -138,12 +138,14 @@ def test_full_code_defined_case_surface_is_reexported(fixtures: Path) -> None:
     assert report.passed, describe_failures(report)
     assert report.runs[0].turns == 2
 
-    push = stub(pattern=r"git push( --force)?\b", output="Everything up-to-date", name="push")
+    # The eval references the stub by object — no name to keep in sync — and
+    # the reference resolves through the plugin's re-export and streaming path.
+    push = stub(pattern=r"git push( --force)?\b", output="Everything up-to-date")
     mocked = TestCase(
         skill=fixtures / "skills" / "deployer",
         input="Deploy the app",
         mocks=[push],
-        evals=[called("push", times=1)],
+        evals=[called(push, times=1)],
     )
     stream = stream_skill(mocked)
 

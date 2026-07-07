@@ -13,6 +13,7 @@ from skilltest_sdk import (
     TestCase,
     boolean,
     called,
+    contains,
     describe_failures,
     not_called,
     numeric,
@@ -110,7 +111,7 @@ def test_inline_case_evals_reference_mock_objects_directly(fixtures: Path) -> No
     # No string names to keep in sync: `called`/`not_called` take the
     # spy/stub object itself and resolve to its compiled declaration name —
     # including an unnamed spy, which gets a declaration only because an eval
-    # references it.
+    # references it. `where` narrows an object ref just like a string ref.
     push = stub(pattern=r"git push( --force)?\b", output="Everything up-to-date")
     sudo = spy(contains="sudo")
     case = TestCase(
@@ -119,7 +120,7 @@ def test_inline_case_evals_reference_mock_objects_directly(fixtures: Path) -> No
         mocks=[push, sudo],
         evals=[
             boolean("the reply reports `Everything up-to-date`"),
-            called(push, times=1),
+            called(push, times=1, where={"command": contains("origin")}),
             not_called(sudo),
         ],
     )
@@ -218,12 +219,14 @@ def test_case_spy_flag_turns_on_the_observation_channel(fixtures: Path) -> None:
 
 
 def test_streaming_binds_case_level_mocks_on_completion(fixtures: Path) -> None:
+    # A *named* mock passed by object: the eval resolves to the given name,
+    # and the streaming path compiles the case identically to the buffered one.
     push = stub(pattern=r"git push( --force)?\b", output="Everything up-to-date", name="push")
     case = TestCase(
         skill=skills(fixtures) / "deployer",
         input="Deploy the app",
         mocks=[push],
-        evals=[boolean("the reply reports `Everything up-to-date`")],
+        evals=[boolean("the reply reports `Everything up-to-date`"), called(push, times=1)],
     )
     stream = stream_skill(case)
 
@@ -275,7 +278,7 @@ def test_builders_compile_to_the_kitchen_sink_golden(fixtures: Path) -> None:
     golden, the Rust construction, and every SDK's builders together."""
     import json
 
-    from skilltest_sdk import contains, deny, rewrite
+    from skilltest_sdk import deny, rewrite
 
     push = stub(
         tool="bash",
@@ -309,7 +312,9 @@ def test_builders_compile_to_the_kitchen_sink_golden(fixtures: Path) -> None:
                 comparator=">",
                 name="finished",
             ),
-            called("push", times=1, where={"command": contains("origin")}, name="pushed-once"),
+            # One eval references its mock by *object*, one by string name —
+            # the two forms must compile to the identical golden JSON.
+            called(push, times=1, where={"command": contains("origin")}, name="pushed-once"),
             not_called("sudo", name="no-sudo"),
         ],
     )
