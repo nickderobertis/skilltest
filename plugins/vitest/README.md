@@ -6,28 +6,50 @@ deterministic checks. Built on
 [`@skill-test/sdk`](../../sdks/typescript/README.md) — the SDK's API is
 re-exported here, so a vitest suite needs only this one dependency.
 
-## As code
+## Define the whole case in code (recommended)
+
+Build the case — skill, input, evals, an optional simulated user, mocks — right
+in the test, and register it in one line with `skillTest`. Everything the YAML
+carries has a typed builder:
 
 ```ts
-import { runSkill, assistantText } from "@skill-test/vitest";
+import { skillTest, testCase, boolean, numeric } from "@skill-test/vitest";
 
-test("greeter names the patient", async () => {
-  const report = await runSkill("cases/greet.yaml", {
-    platforms: ["claude-code"],
-    models: ["claude-opus-4-8"],
-  });
-  expect(report.passed, report.runs[0]?.case).toBe(true);
+skillTest(
+  "greeter names the patient",
+  testCase({
+    skill: "skills/greeter",            // resolved relative to the working dir
+    input: "Greet Dr. Smith, who has an appointment today.",
+    evals: [
+      boolean("the reply greets Dr. Smith by name"),
+      numeric("how warm is the tone", { min: 0, max: 10, threshold: 7 }),
+    ],
+  }),
+);
+```
+
+Multi-turn cases add `user(...)`; call-count checks use `called` / `notCalled`
+referencing a named `stub`/`spy`. For a matrix or extra deterministic checks,
+call `runSkill` from an ordinary `test` — it takes the same case object:
+
+```ts
+import { runSkill, testCase, boolean, assistantText } from "@skill-test/vitest";
+
+test("greeter across the matrix", async () => {
+  const report = await runSkill(
+    testCase({ skill: "skills/greeter", input: "Greet Dr. Smith", evals: [boolean("greets by name")] }),
+    { platforms: ["claude-code"], models: ["claude-opus-4-8"] },
+  );
+  expect(report.passed).toBe(true);
   expect(assistantText(report.runs[0]!.transcript)).toContain("Dr. Smith");
 });
 ```
 
-## One-liner
+## Or point at a YAML file
 
-```ts
-import { skillTest } from "@skill-test/vitest";
-
-skillTest("greeter confirms the appointment", "cases/greet.yaml");
-```
+`skillTest` and `runSkill` accept a path just as well
+(`skillTest("greeter", "cases/greet.yaml")`). The full field reference for both
+forms is [`docs/schema.md`](../../docs/schema.md).
 
 ## Assert on tool use, and stream
 

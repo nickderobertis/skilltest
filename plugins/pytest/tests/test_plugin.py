@@ -92,6 +92,20 @@ def test_collected_case_failure_reports_judge_reason(pytester: pytest.Pytester) 
     result.stdout.fnmatch_lines(["*skilltest case failed:*", "*says-goodbye*"])
 
 
+def test_code_defined_case_is_reexported_and_runs(fixtures: Path) -> None:
+    # The recommended form: build the whole case in code and hand it to
+    # run_skill — the case API rides the same one-dependency re-export.
+    from skilltest_pytest import TestCase, boolean, run_skill
+
+    case = TestCase(
+        skill=fixtures / "skills" / "greeter",
+        input="Greet Dr. Smith, who has an appointment today.",
+        evals=[boolean("the reply greets `Dr. Smith` by name")],
+    )
+    report = run_skill(case)
+    assert report.passed, describe_failures(report)
+
+
 def test_mock_api_is_reexported_and_binds(cases: Path) -> None:
     # The mock/spy API rides the one-dependency re-export; code-level mocks
     # intercept and bind through the plugin's SDK exactly as through the SDK.

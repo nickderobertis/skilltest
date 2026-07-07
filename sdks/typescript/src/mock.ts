@@ -130,6 +130,12 @@ export interface MatchOptions {
   pattern?: string | RegExp;
   /** Per-input-field criteria (see {@link WhereCriteria}). */
   where?: WhereCriteria;
+  /**
+   * A caller-visible name, so a case's `called`/`notCalled` eval can reference
+   * this spy/mock (see the `TestCaseInput` in `case.ts`). A named spy's
+   * criteria must be hook-expressible (no {@link anything} predicate).
+   */
+  name?: string;
 }
 
 function coerceField(value: unknown): string {
@@ -284,6 +290,41 @@ export class ToolSpy {
     const records = this.bound?.length ? this.bound : (this.pool ?? []);
     return describeObserved(records);
   }
+
+  /** The caller-visible `name`, when one was given — used by a case's
+   * `called`/`notCalled` eval to reference this spy/mock. */
+  get mockName(): string | undefined {
+    return this.criteria.name;
+  }
+
+  /** @internal The hook-side `match` object for this spy/mock's criteria,
+   * shared by a mock's declaration and a named spy's case declaration. */
+  matchSpec(): Record<string, unknown> {
+    const match: Record<string, unknown> = {};
+    if (this.criteria.tool !== undefined) match.tool = this.criteria.tool;
+    if (this.criteria.contains !== undefined) match.contains = this.criteria.contains;
+    if (this.criteria.pattern !== undefined) {
+      match.pattern =
+        typeof this.criteria.pattern === "string"
+          ? this.criteria.pattern
+          : this.criteria.pattern.source;
+    }
+    if (this.criteria.where !== undefined && Object.keys(this.criteria.where).length > 0) {
+      match.input = Object.fromEntries(
+        Object.entries(this.criteria.where).map(([key, criterion]) => [
+          key,
+          compileCriterion(key, criterion),
+        ]),
+      );
+    }
+    return match;
+  }
+
+  /** @internal A named spy's no-action declaration for a case's `mocks` block,
+   * so a `called`/`notCalled` eval can reference it by `name`. */
+  caseDecl(name: string): Record<string, unknown> {
+    return { name, match: this.matchSpec() };
+  }
 }
 
 /** One mock action, keyed exactly like the YAML declaration. */
@@ -310,24 +351,7 @@ export class ToolMock extends ToolSpy {
   /** @internal The declaration this compiles to in the `--mocks` file. */
   decl(name: string): Record<string, unknown> {
     this.name = name;
-    const match: Record<string, unknown> = {};
-    if (this.criteria.tool !== undefined) match.tool = this.criteria.tool;
-    if (this.criteria.contains !== undefined) match.contains = this.criteria.contains;
-    if (this.criteria.pattern !== undefined) {
-      match.pattern =
-        typeof this.criteria.pattern === "string"
-          ? this.criteria.pattern
-          : this.criteria.pattern.source;
-    }
-    if (this.criteria.where !== undefined && Object.keys(this.criteria.where).length > 0) {
-      match.input = Object.fromEntries(
-        Object.entries(this.criteria.where).map(([key, criterion]) => [
-          key,
-          compileCriterion(key, criterion),
-        ]),
-      );
-    }
-    return { name, match, ...this.action };
+    return { name, match: this.matchSpec(), ...this.action };
   }
 
   /** @internal A mock binds the calls its own rule intercepted (by resolved

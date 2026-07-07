@@ -19,6 +19,34 @@ const text = assistantText(report.runs[0]!.transcript);
 const result = await validateSkill("skills/greeter");
 ```
 
+### Define the case in code (recommended)
+
+Instead of a YAML file, build the whole case — skill, input, evals, an optional
+simulated user, mocks — in code and pass it straight to `runSkill`. Everything
+the YAML carries has a typed builder:
+
+```ts
+import { runSkill, testCase, boolean, numeric } from "@skill-test/sdk";
+
+const report = await runSkill(
+  testCase({
+    skill: "skills/greeter",             // resolved relative to the working dir
+    input: "Greet Dr. Smith, who has an appointment today.",
+    evals: [
+      boolean("the reply greets Dr. Smith by name"),
+      numeric("how warm is the tone", { min: 0, max: 10, threshold: 7 }),
+    ],
+  }),
+);
+if (!report.passed) throw new Error(describeFailures(report));
+```
+
+Add `user(persona, { doneWhen })` for a multi-turn case, and a `mocks` array of
+`stub`/`spy`/`deny`/`rewrite` (name them to reference from a `called` /
+`notCalled` eval). A YAML path (`runSkill("cases/greet.yaml")`) works everywhere
+a case object does; the field reference for both is
+[`docs/schema.md`](../../docs/schema.md).
+
 ### Tool events
 
 Each assistant turn carries the normalized tool events the skill took (shell

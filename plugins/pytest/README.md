@@ -6,10 +6,38 @@ your own deterministic checks. Built on
 [`skilltest-sdk`](../../sdks/python/README.md) — the SDK's code API is
 re-exported here, so a pytest suite needs only this one dependency.
 
-## Two ways to use it
+## Define the whole case in code (recommended)
 
-**Auto-collected case files.** Name a case `something.skilltest.yaml` and pytest
-runs it:
+Build the case — skill, input, evals, an optional simulated user, mocks — right
+in the test. Everything the YAML carries has a typed builder, so the case, its
+mocks, and any deterministic transcript checks live in one place:
+
+```python
+from skilltest_pytest import TestCase, run_skill, boolean, numeric, describe_failures
+
+def test_greeter():
+    case = TestCase(
+        skill="skills/greeter",           # resolved relative to the working dir
+        input="Greet Dr. Smith, who has an appointment today.",
+        evals=[
+            boolean("the reply greets Dr. Smith by name"),
+            numeric("how warm is the tone", min=0, max=10, threshold=7),
+        ],
+    )
+    report = run_skill(case, platforms=["claude-code"], models=["claude-opus-4-8"])
+    assert report.passed, describe_failures(report)
+```
+
+Multi-turn cases add `user(...)`; deterministic call-count checks use `called` /
+`not_called` referencing a named `stub`/`spy` (or the mock objects' own
+assertions — see below). `run_skill` also takes `platforms=`/`models=` to fan a
+case across a matrix.
+
+## Or point at a YAML file
+
+`run_skill` accepts a path just as well (`run_skill("cases/greet.yaml")`), and
+**auto-collection** still works: name a case `something.skilltest.yaml` and
+pytest runs it with no test function at all —
 
 ```yaml
 # greet.skilltest.yaml
@@ -20,16 +48,7 @@ evals:
     criterion: "the reply greets Dr. Smith by name"
 ```
 
-**As code**, for matrices and deterministic mix-ins:
-
-```python
-from skilltest_pytest import run_skill, describe_failures, assistant_text
-
-def test_greeter():
-    report = run_skill("cases/greet.yaml", platforms=["claude-code"], models=["claude-opus-4-8"])
-    assert report.passed, describe_failures(report)
-    assert "Dr. Smith" in assistant_text(report.runs[0].transcript)
-```
+The full field reference for both forms is [`docs/schema.md`](../../docs/schema.md).
 
 ## Assert on tool use, and stream
 

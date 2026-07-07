@@ -21,6 +21,10 @@ export function caseFile(name: string): string {
   return join(FIXTURES, "cases", name);
 }
 
+export function skillDir(name: string): string {
+  return join(FIXTURES, "skills", name);
+}
+
 /** Directory of self-contained `*.skilltest.yaml` cases for the discovery test. */
 export function collectedDir(): string {
   return join(here, "collected");

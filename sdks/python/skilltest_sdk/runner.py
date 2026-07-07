@@ -17,6 +17,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ValidationError
 
+from .case import TestCase
 from .errors import SkilltestError, SkilltestProviderError, SkilltestUsageError
 from .mock import ToolSpy, bind_mocks, compile_decls
 from .models import Report, ValidationReport
@@ -89,7 +90,7 @@ def _run(argv: list[str], cwd: str | Path | None) -> subprocess.CompletedProcess
 
 
 def run_skill(
-    case: str | Path,
+    case: str | Path | TestCase,
     *,
     bin: str | Path | None = None,
     provider: str | Sequence[str] | None = None,
@@ -103,21 +104,25 @@ def run_skill(
 ) -> Report:
     """Run one or more test cases and return the parsed [`Report`].
 
-    ``case`` is a test-case YAML file or a directory of them. A failing eval is
-    *not* an exception — it is reported in ``report.passed``/``report.runs`` so
-    the caller can assert and inspect. Only bad input ([`SkilltestUsageError`])
-    and provider failures ([`SkilltestProviderError`]) raise.
+    ``case`` is a [`TestCase`][skilltest_sdk.case.TestCase] built in code (the
+    recommended form), a test-case YAML file, or a directory of them. A failing
+    eval is *not* an exception — it is reported in
+    ``report.passed``/``report.runs`` so the caller can assert and inspect. Only
+    bad input ([`SkilltestUsageError`]) and provider failures
+    ([`SkilltestProviderError`]) raise.
 
     ``mocks`` takes [`spy`][skilltest_sdk.mock.spy] /
     [`stub`][skilltest_sdk.mock.stub] / [`deny`][skilltest_sdk.mock.deny] /
     [`rewrite`][skilltest_sdk.mock.rewrite] objects: mocks compile into the
     run's hook-side ruleset (prepended to the case's own `mocks:` block, so
     the test-local rule wins), and after the run every object is bound with
-    the calls it matched — assert on it directly. Each call re-binds fresh.
+    the calls it matched — assert on it directly. A ``TestCase``'s own
+    ``mocks`` are bound the same way. Each call re-binds fresh.
     """
-    with mock_run_args(mocks) as mock_args:
+    case_mocks = tuple(case.mocks) if isinstance(case, TestCase) else ()
+    with case_run_args(case) as case_args, mock_run_args(mocks) as mock_args:
         argv = build_run_argv(
-            case,
+            case_args,
             bin=bin,
             provider=provider,
             platforms=platforms,
@@ -131,9 +136,30 @@ def run_skill(
         proc = _run(argv, cwd)
     _raise_for_status(proc)
     report = _parse(Report, proc.stdout)
-    if mocks:
-        bind_mocks(mocks, report.runs)
+    bound = [*case_mocks, *mocks]
+    if bound:
+        bind_mocks(bound, report.runs)
     return report
+
+
+@contextlib.contextmanager
+def case_run_args(case: str | Path | TestCase) -> Iterator[list[str]]:
+    """The ``skilltest run`` argv fragments a ``case`` becomes (internal, shared
+    with the streaming API): a YAML file/directory rides as a positional path; a
+    code-defined [`TestCase`][skilltest_sdk.case.TestCase] is written to a temp
+    JSON file passed as ``--case-json``. The temp file lives for the ``with``
+    body (the run)."""
+    if not isinstance(case, TestCase):
+        yield [str(case)]
+        return
+    fd, path = tempfile.mkstemp(prefix="skilltest-case-", suffix=".json")
+    try:
+        with os.fdopen(fd, "w") as handle:
+            json.dump([case._compile()], handle)
+        yield ["--case-json", path]
+    finally:
+        with contextlib.suppress(OSError):
+            os.unlink(path)
 
 
 @contextlib.contextmanager
@@ -161,7 +187,7 @@ def mock_run_args(mocks: Sequence[ToolSpy]) -> Iterator[list[str]]:
 
 
 def build_run_argv(
-    case: str | Path,
+    case_args: Sequence[str],
     *,
     bin: str | Path | None,
     provider: str | Sequence[str] | None,
@@ -174,12 +200,14 @@ def build_run_argv(
     mock_args: Sequence[str] = (),
 ) -> list[str]:
     """Build the ``skilltest run`` argv for output format ``fmt`` (``json`` for the
-    buffered API, ``json-stream`` for the streaming API). Internal, shared by
-    ``run_skill`` and the streaming API."""
+    buffered API, ``json-stream`` for the streaming API). ``case_args`` are the
+    fragments identifying the case(s) — a positional path or ``--case-json
+    <file>`` (see [`case_run_args`][skilltest_sdk.runner.case_run_args]).
+    Internal, shared by ``run_skill`` and the streaming API."""
     argv = [_resolve_bin(bin)]
     if config is not None:
         argv += ["--config", str(config)]
-    argv += ["run", str(case), "--format", fmt]
+    argv += ["run", *case_args, "--format", fmt]
 
     resolved_provider = _resolve_provider(provider)
     if resolved_provider is not None:

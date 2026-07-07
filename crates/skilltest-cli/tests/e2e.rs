@@ -212,6 +212,165 @@ fn json_stream_short_circuits_when_the_consumer_stops_reading() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Code-defined cases: the `--case-json` ingestion path the SDKs use to run a
+// case built in code (no YAML file on disk). Same conversation loop, evals,
+// and JSON contract — only the case's origin differs.
+// ---------------------------------------------------------------------------
+
+/// Write `json` to a temp `--case-json` file and run it against the fake
+/// provider, returning the process output.
+fn run_case_json(json: &str, extra: &[&str]) -> Output {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static N: AtomicU64 = AtomicU64::new(0);
+    // A per-call unique tag: these tests run in parallel, so a shared dir would
+    // let one case.json clobber another's.
+    let dir = unique_dir(&format!("case-json-{}", N.fetch_add(1, Ordering::Relaxed)));
+    let file = dir.join("case.json");
+    std::fs::write(&file, json).unwrap();
+    let mut cmd = Command::new(skilltest());
+    cmd.arg("run")
+        .arg("--case-json")
+        .arg(&file)
+        .arg("--provider")
+        .arg(fake_provider())
+        .args(["--platform", "demo", "--model", "fake"])
+        .args(extra);
+    cmd.output().expect("skilltest run executes")
+}
+
+#[test]
+fn case_json_single_object_runs_like_a_yaml_case() {
+    let skill = fixtures().join("skills/greeter");
+    let body = format!(
+        r#"{{"name":"inline_greet","skill":{skill:?},"input":"Greet Dr. Smith",
+            "evals":[{{"type":"boolean","criterion":"the reply greets `Dr. Smith` by name"}}]}}"#,
+        skill = skill.to_str().unwrap()
+    );
+    let out = run_case_json(&body, &["--format", "json"]);
+    assert!(
+        out.status.success(),
+        "expected exit 0; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report = json(&out);
+    assert_eq!(report["passed"], Value::Bool(true));
+    assert_eq!(report["runs"][0]["case"], "inline_greet");
+    assert_eq!(report["runs"][0]["turns"], 1);
+}
+
+#[test]
+fn case_json_array_runs_every_case() {
+    let skill = fixtures().join("skills/greeter");
+    let s = skill.to_str().unwrap();
+    let body = format!(
+        r#"[
+            {{"skill":{s:?},"input":"Greet Dr. Smith",
+              "evals":[{{"type":"boolean","criterion":"greets `Dr. Smith`"}}]}},
+            {{"name":"second","skill":{s:?},"input":"Greet Dr. Smith",
+              "evals":[{{"type":"boolean","criterion":"confirms `confirmed`"}}]}}
+        ]"#
+    );
+    let out = run_case_json(&body, &["--format", "json"]);
+    assert!(out.status.success(), "expected exit 0");
+    let report = json(&out);
+    assert_eq!(report["summary"]["runs"], 2);
+    // Unnamed first case defaults to `case`; the second keeps its name.
+    let names: Vec<&str> = report["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["case"].as_str().unwrap())
+        .collect();
+    assert!(
+        names.contains(&"case") && names.contains(&"second"),
+        "{names:?}"
+    );
+}
+
+#[test]
+fn case_json_resolves_relative_skill_against_the_working_directory() {
+    // A code-defined case's `skill` resolves relative to CWD (the SDKs run the
+    // CLI from the user's project), not to the temp file the JSON lives in.
+    let dir = unique_dir("case-json-cwd");
+    let file = dir.join("case.json");
+    std::fs::write(
+        &file,
+        r#"{"skill":"skills/greeter","input":"Greet Dr. Smith",
+            "evals":[{"type":"boolean","criterion":"greets `Dr. Smith`"}]}"#,
+    )
+    .unwrap();
+    let out = Command::new(skilltest())
+        .current_dir(fixtures())
+        .arg("run")
+        .arg("--case-json")
+        .arg(&file)
+        .arg("--provider")
+        .arg(fake_provider())
+        .args(["--platform", "demo", "--model", "fake", "--format", "json"])
+        .output()
+        .expect("executes");
+    assert!(
+        out.status.success(),
+        "expected exit 0; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(json(&out)["passed"], Value::Bool(true));
+}
+
+#[test]
+fn case_json_failing_eval_exits_one() {
+    let skill = fixtures().join("skills/greeter");
+    let body = format!(
+        r#"{{"skill":{s:?},"input":"Greet Dr. Smith",
+            "evals":[{{"type":"boolean","criterion":"mentions `nonexistent phrase`"}}]}}"#,
+        s = skill.to_str().unwrap()
+    );
+    let out = run_case_json(&body, &["--format", "json"]);
+    assert_eq!(out.status.code(), Some(1), "a failing eval exits 1");
+    assert_eq!(json(&out)["passed"], Value::Bool(false));
+}
+
+#[test]
+fn case_json_malformed_exits_two() {
+    let out = run_case_json("{ not valid json", &["--format", "json"]);
+    assert_eq!(out.status.code(), Some(2), "bad input exits 2");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("case-json"), "stderr explains: {stderr}");
+}
+
+#[test]
+fn case_json_missing_file_exits_two() {
+    let missing =
+        std::env::temp_dir().join(format!("skilltest-nocasejson-{}.json", std::process::id()));
+    let out = Command::new(skilltest())
+        .arg("run")
+        .arg("--case-json")
+        .arg(&missing)
+        .args(["--provider", "true"])
+        .output()
+        .expect("executes");
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "an unreadable --case-json exits 2"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("case-json"), "stderr explains: {stderr}");
+}
+
+#[test]
+fn run_with_no_cases_is_a_usage_error() {
+    // Neither a positional PATH nor --case-json: a loud usage error, not a
+    // vacuous success.
+    let out = Command::new(skilltest())
+        .arg("run")
+        .args(["--provider", "true"])
+        .output()
+        .expect("executes");
+    assert_eq!(out.status.code(), Some(2), "no cases exits 2");
+}
+
 #[test]
 fn missing_provider_exits_three() {
     let out = Command::new(skilltest())

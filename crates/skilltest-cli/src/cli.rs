@@ -29,6 +29,11 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
+// `Run`'s arg struct is by far the largest variant, but this enum is a
+// short-lived, once-per-process parse target — boxing the variant (clap does
+// not flatten through `Box` in a `Subcommand` derive) would add indirection for
+// no real benefit here.
+#[allow(clippy::large_enum_variant)]
 enum Command {
     /// Run test cases against a skill and score the transcripts.
     Run(RunArgs),
@@ -43,8 +48,16 @@ enum Command {
 #[derive(Args)]
 struct RunArgs {
     /// Test-case YAML files, or directories containing them.
-    #[arg(value_name = "PATH", required = true)]
+    #[arg(value_name = "PATH")]
     paths: Vec<PathBuf>,
+
+    /// Fully-specified test case(s) as a JSON file — a single case object or an
+    /// array, the shape the language SDKs emit for a case built in code (see
+    /// `docs/schema.md`). Unlike a YAML `PATH`, `skill` paths inside resolve
+    /// relative to the working directory. Repeatable, and combines with any
+    /// positional YAML `PATH`s.
+    #[arg(long = "case-json", value_name = "FILE")]
+    case_json: Vec<PathBuf>,
 
     /// Harness platform(s) to run on (repeatable; overrides config).
     #[arg(short = 'p', long = "platform", value_name = "PLATFORM")]
@@ -215,6 +228,14 @@ fn cmd_run(config_path: Option<&Path>, args: &RunArgs) -> Result<ExitCode> {
             cases.push(TestCase::load(&file)?);
         }
     }
+    for file in &args.case_json {
+        cases.extend(load_case_json(file)?);
+    }
+    if cases.is_empty() {
+        return Err(Error::Invalid(
+            "no test cases given: pass a test-case PATH or --case-json <FILE>".into(),
+        ));
+    }
 
     let runner = Runner::new(provider.as_ref(), &config);
 
@@ -293,6 +314,22 @@ fn load_mocks_file(path: &Path) -> Result<Vec<skilltest_core::MockDecl>> {
             path.display()
         ))
     })
+}
+
+/// Load a `--case-json` file: one or more fully-specified test cases as JSON
+/// (a single case object or an array), the delivery channel the SDKs use for a
+/// code-defined case. A code-defined case has no source file, so `skill` paths
+/// resolve relative to the working directory.
+fn load_case_json(path: &Path) -> Result<Vec<TestCase>> {
+    let text = std::fs::read_to_string(path).map_err(|e| {
+        Error::Invalid(format!(
+            "could not read --case-json file `{}`: {e}",
+            path.display()
+        ))
+    })?;
+    let base = std::env::current_dir()
+        .map_err(|e| Error::Invalid(format!("could not resolve the working directory: {e}")))?;
+    TestCase::from_json(&text, &base)
 }
 
 fn build_provider(config: &Config) -> Result<Box<dyn Provider>> {

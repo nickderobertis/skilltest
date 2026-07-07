@@ -208,20 +208,24 @@ class ToolSpy:
         contains: str | None = None,
         pattern: str | re.Pattern[str] | None = None,
         where: dict[str, Criterion] | None = None,
+        name: str | None = None,
     ) -> None:
         if tool is None and contains is None and pattern is None and not where:
             raise SkilltestUsageError(
                 "a spy/mock needs at least one criterion (tool=, contains=, pattern=, where=)"
             )
-        for name, value in (("tool", tool), ("contains", contains)):
+        for field, value in (("tool", tool), ("contains", contains)):
             if value == "":
-                raise SkilltestUsageError(f"empty `{name}` would match everything")
+                raise SkilltestUsageError(f"empty `{field}` would match everything")
         self._tool = tool
         self._contains = contains
         self._pattern: re.Pattern[str] | None = re.compile(pattern) if pattern is not None else None
         if self._pattern is not None and not self._pattern.pattern:
             raise SkilltestUsageError("empty `pattern` would match everything")
         self._where: dict[str, Criterion] = dict(where or {})
+        #: A caller-visible name, so a case's `called`/`not_called` eval can
+        #: reference this mock/spy (see `TestCase`). `None` = auto-named.
+        self._user_name = name
         self._calls: list[ToolCall] | None = None
         #: For a `where()` view: the parent's calls, shown in failure messages
         #: when the filtered result is empty (so a miss is diagnosable).
@@ -285,9 +289,33 @@ class ToolSpy:
         view._contains = None
         view._pattern = None
         view._where = {}
+        view._user_name = None
         view._calls = [c for c in self.calls if _view_criteria_hold(criteria, c)]
         view._pool = self.calls
         return view
+
+    # -- case compilation -----------------------------------------------------
+
+    def _match_spec(self) -> dict[str, Any]:
+        """(Internal) The hook-side `match` object for this spy/mock's criteria,
+        shared by a mock's declaration and a named spy's case declaration."""
+        match: dict[str, Any] = {}
+        if self._tool is not None:
+            match["tool"] = self._tool
+        if self._contains is not None:
+            match["contains"] = self._contains
+        if self._pattern is not None:
+            match["pattern"] = self._pattern.pattern
+        if self._where:
+            match["input"] = {
+                key: _compile_criterion(key, value) for key, value in self._where.items()
+            }
+        return match
+
+    def _case_decl(self, name: str) -> dict[str, Any]:
+        """(Internal) A named spy's no-action declaration for a case's `mocks:`
+        block, so a `called`/`not_called` eval can reference it by `name`."""
+        return {"name": name, "match": self._match_spec()}
 
     # -- assertions -----------------------------------------------------------
 
@@ -365,8 +393,9 @@ class ToolMock(ToolSpy):
         contains: str | None = None,
         pattern: str | re.Pattern[str] | None = None,
         where: dict[str, Criterion] | None = None,
+        name: str | None = None,
     ) -> None:
-        super().__init__(tool=tool, contains=contains, pattern=pattern, where=where)
+        super().__init__(tool=tool, contains=contains, pattern=pattern, where=where, name=name)
         self._action = action
         #: Synthetic declaration name, assigned when compiled into a run.
         self._name: str | None = None
@@ -374,18 +403,7 @@ class ToolMock(ToolSpy):
     def _decl(self, name: str) -> dict[str, Any]:
         """(Internal) The declaration this compiles to in the `--mocks` file."""
         self._name = name
-        match: dict[str, Any] = {}
-        if self._tool is not None:
-            match["tool"] = self._tool
-        if self._contains is not None:
-            match["contains"] = self._contains
-        if self._pattern is not None:
-            match["pattern"] = self._pattern.pattern
-        if self._where:
-            match["input"] = {
-                key: _compile_criterion(key, value) for key, value in self._where.items()
-            }
-        return {"name": name, "match": match, **self._action}
+        return {"name": name, "match": self._match_spec(), **self._action}
 
     def _bind(self, calls: Sequence[ToolCall]) -> None:
         # A mock binds the calls its own rule intercepted (by resolved name),
@@ -420,6 +438,7 @@ def spy(
     contains: str | None = None,
     pattern: str | re.Pattern[str] | None = None,
     where: dict[str, Criterion] | None = None,
+    name: str | None = None,
 ) -> ToolSpy:
     """A spy: observe every matching tool call, intercept nothing.
 
@@ -427,8 +446,13 @@ def spy(
     ``contains``/``pattern`` match over the call's event JSON; ``where`` gives
     per-input-field criteria. Spies filter locally, so ``pattern`` is native
     Python `re` and ``where`` values may be arbitrary predicates.
+
+    Give a ``name`` to reference this spy from a case's
+    [`called`][skilltest_sdk.case.called] / [`not_called`][skilltest_sdk.case.not_called]
+    eval; a named spy's criteria must be hook-expressible (no
+    [`anything`][skilltest_sdk.mock.anything] or Python predicates).
     """
-    return ToolSpy(tool=tool, contains=contains, pattern=pattern, where=where)
+    return ToolSpy(tool=tool, contains=contains, pattern=pattern, where=where, name=name)
 
 
 def stub(
@@ -439,17 +463,20 @@ def stub(
     tool: str | None = None,
     pattern: str | re.Pattern[str] | None = None,
     where: dict[str, Criterion] | None = None,
+    name: str | None = None,
 ) -> ToolMock:
     """Fake a matching SHELL call's result: the real command never runs and
     the model receives ``output`` as the tool's genuine result. The positional
     argument is the ``contains`` matcher (the common case). ``pattern`` is
-    Rust-regex (linear-time; no lookarounds) — it runs inside the harness."""
+    Rust-regex (linear-time; no lookarounds) — it runs inside the harness.
+    A ``name`` lets a case's `called`/`not_called` eval reference this mock."""
     return ToolMock(
         {"stub": {"output": output, "exit_code": exit_code}},
         tool=tool,
         contains=contains,
         pattern=pattern,
         where=where,
+        name=name,
     )
 
 
@@ -460,15 +487,18 @@ def deny(
     tool: str | None = None,
     pattern: str | re.Pattern[str] | None = None,
     where: dict[str, Criterion] | None = None,
+    name: str | None = None,
 ) -> ToolMock:
     """Block a matching call; the model reads ``message`` as the tool's
-    feedback. Works on every hook-capable harness (the most portable verb)."""
+    feedback. Works on every hook-capable harness (the most portable verb).
+    A ``name`` lets a case's `called`/`not_called` eval reference this mock."""
     return ToolMock(
         {"deny": message},
         tool=tool,
         contains=contains,
         pattern=pattern,
         where=where,
+        name=name,
     )
 
 
@@ -479,16 +509,19 @@ def rewrite(
     tool: str | None = None,
     pattern: str | re.Pattern[str] | None = None,
     where: dict[str, Criterion] | None = None,
+    name: str | None = None,
 ) -> ToolMock:
     """Substitute a matching call's raw input fields — the low-level escape
     hatch, and the way to mock file reads (rewrite ``file_path`` to a
-    fixture). ``input`` is the substituted arguments object."""
+    fixture). ``input`` is the substituted arguments object.
+    A ``name`` lets a case's `called`/`not_called` eval reference this mock."""
     return ToolMock(
         {"rewrite": input},
         tool=tool,
         contains=contains,
         pattern=pattern,
         where=where,
+        name=name,
     )
 
 

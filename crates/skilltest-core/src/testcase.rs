@@ -71,20 +71,62 @@ impl TestCase {
             path: path.to_path_buf(),
             source,
         })?;
-        if case.name.is_empty() {
-            case.name = path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("case")
-                .to_string();
-        }
-        if let Some(parent) = path.parent() {
-            if case.skill.is_relative() {
-                case.skill = parent.join(&case.skill);
-            }
-        }
-        case.validate()?;
+        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("case");
+        let base = path.parent().unwrap_or_else(|| Path::new(""));
+        case.finalize(base, stem)?;
         Ok(case)
+    }
+
+    /// Parse one or more fully-specified test cases from JSON — a single case
+    /// object or an array — the shape the language SDKs emit when a case is
+    /// built in code rather than written as YAML (`skilltest run --case-json`).
+    ///
+    /// Unlike [`load`](Self::load) these cases have no source file, so each is
+    /// finalized against `base_dir` (typically the working directory): a
+    /// relative `skill` resolves there, and an unnamed case defaults to `case`
+    /// (suffixed with its index when several are unnamed, keeping report keys
+    /// distinct).
+    ///
+    /// # Errors
+    /// [`Error::Invalid`] if the JSON does not parse into test cases, or if any
+    /// case is internally inconsistent.
+    pub fn from_json(json: &str, base_dir: &Path) -> Result<Vec<Self>> {
+        // Accept either a bare object (one case) or an array of them, so a
+        // single code-defined case need not be wrapped.
+        let value: serde_json::Value = serde_json::from_str(json)
+            .map_err(|e| Error::Invalid(format!("invalid --case-json: {e}")))?;
+        let mut cases: Vec<TestCase> = match value {
+            serde_json::Value::Array(_) => serde_json::from_value(value),
+            _ => serde_json::from_value(value).map(|c| vec![c]),
+        }
+        .map_err(|e| Error::Invalid(format!("invalid --case-json: {e}")))?;
+        for (index, case) in cases.iter_mut().enumerate() {
+            let default_name = if index == 0 {
+                "case".to_string()
+            } else {
+                format!("case-{}", index + 1)
+            };
+            case.finalize(base_dir, &default_name)?;
+        }
+        Ok(cases)
+    }
+
+    /// Finalize an in-memory case: default `name` to `default_name` when unset,
+    /// resolve a relative `skill` against `base_dir`, and validate. Shared by
+    /// [`load`](Self::load) (anchored at the file's directory) and
+    /// [`from_json`](Self::from_json) (anchored at the working directory, since
+    /// a code-defined case has no file).
+    ///
+    /// # Errors
+    /// [`Error::Invalid`] if the case is internally inconsistent.
+    pub fn finalize(&mut self, base_dir: &Path, default_name: &str) -> Result<()> {
+        if self.name.is_empty() {
+            self.name = default_name.to_string();
+        }
+        if self.skill.is_relative() {
+            self.skill = base_dir.join(&self.skill);
+        }
+        self.validate()
     }
 
     /// Whether this is a multi-turn case (has a simulated user).
@@ -343,6 +385,54 @@ evals:
             max_turns: Some(0),
         });
         assert!(zero_turns.validate().is_err());
+    }
+
+    #[test]
+    fn from_json_parses_a_single_object_and_resolves_skill() {
+        let json = r#"{"skill":"./greeter","input":"hi","evals":[{"type":"boolean","criterion":"greets"}]}"#;
+        let base = Path::new("/work/cases");
+        let cases = TestCase::from_json(json, base).unwrap();
+        assert_eq!(cases.len(), 1);
+        assert_eq!(cases[0].name, "case");
+        // A relative skill resolves against the supplied base directory.
+        assert_eq!(cases[0].skill, PathBuf::from("/work/cases/greeter"));
+    }
+
+    #[test]
+    fn from_json_parses_an_array_and_indexes_unnamed_cases() {
+        let json = r#"[
+            {"skill":"/abs/a","input":"hi","evals":[{"type":"boolean","criterion":"c"}]},
+            {"name":"named","skill":"/abs/b","input":"hi","evals":[{"type":"boolean","criterion":"c"}]},
+            {"skill":"/abs/c","input":"hi","evals":[{"type":"boolean","criterion":"c"}]}
+        ]"#;
+        let cases = TestCase::from_json(json, Path::new("/work")).unwrap();
+        assert_eq!(
+            cases.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(),
+            ["case", "named", "case-3"]
+        );
+        // An absolute skill is left untouched.
+        assert_eq!(cases[0].skill, PathBuf::from("/abs/a"));
+    }
+
+    #[test]
+    fn from_json_rejects_malformed_and_inconsistent_cases() {
+        // Not JSON at all.
+        assert!(matches!(
+            TestCase::from_json("{not json", Path::new(".")),
+            Err(Error::Invalid(_))
+        ));
+        // An unknown field is rejected (the case type denies them).
+        let unknown = r#"{"skill":"./x","input":"hi","bogus":1,"evals":[{"type":"boolean","criterion":"c"}]}"#;
+        assert!(matches!(
+            TestCase::from_json(unknown, Path::new(".")),
+            Err(Error::Invalid(_))
+        ));
+        // Parses, but validation fails (no evals).
+        let empty_evals = r#"{"skill":"./x","input":"hi","evals":[]}"#;
+        assert!(matches!(
+            TestCase::from_json(empty_evals, Path::new(".")),
+            Err(Error::Invalid(_))
+        ));
     }
 
     #[test]

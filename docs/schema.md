@@ -122,6 +122,56 @@ evals:
 A **single-turn** case omits `user`: the skill produces one assistant turn, then
 the evals score it. A **multi-turn** case includes `user` and loops.
 
+### Defining a case in code (the recommended form)
+
+The YAML above is one way to write a case; the SDKs let you build the same case
+in code and run it directly — the recommended approach, since the case, its
+mocks, and any deterministic transcript checks stay in one typed place. The
+builders map one-to-one onto the fields above:
+
+```python
+# Python (skilltest-sdk / skilltest-pytest)
+from skilltest_sdk import TestCase, run_skill, boolean, numeric, called, stub, user
+
+case = TestCase(
+    skill="skills/greeter",          # relative to the working directory, not a file
+    input="Greet Dr. Smith, who has an appointment today.",
+    user=user("a terse patient", done_when="the appointment is confirmed"),  # optional
+    mocks=[stub(pattern=r"git push\b", output="Everything up-to-date", name="push")],
+    evals=[
+        boolean("the reply greets Dr. Smith by name"),
+        numeric("how warm is the tone", min=0, max=10, threshold=7),
+        called("push", times=1),     # references the named mock above
+    ],
+)
+report = run_skill(case)
+```
+
+```ts
+// TypeScript (@skill-test/sdk / @skill-test/vitest)
+import { runSkill, testCase, boolean, numeric, called, stub, user } from "@skill-test/sdk";
+
+const report = await runSkill(testCase({
+  skill: "skills/greeter",
+  input: "Greet Dr. Smith, who has an appointment today.",
+  user: user("a terse patient", { doneWhen: "the appointment is confirmed" }),
+  mocks: [stub({ pattern: /git push\b/, output: "Everything up-to-date", name: "push" })],
+  evals: [
+    boolean("the reply greets Dr. Smith by name"),
+    numeric("how warm is the tone", { min: 0, max: 10, threshold: 7 }),
+    called("push", { times: 1 }),
+  ],
+}));
+```
+
+Under the hood the SDK serializes the case to JSON and runs `skilltest run
+--case-json <file>`; unlike a YAML `PATH`, a code-defined case's `skill`
+resolves relative to the **working directory** (the SDKs run the CLI from your
+project). The CLI validates the compiled case exactly as it validates YAML, so a
+malformed case is a loud usage error, never a vacuous pass. YAML files remain
+first-class — a path works everywhere a code-defined case does, and the plugins
+still auto-discover `*.skilltest.yaml` files.
+
 Mocking/spying is delivered per run with zero permanent config mutation
 (oneharness's `run --mock-rules`/`--spy-file`); what a harness supports varies
 (rewrite/stub work on claude-code, codex, opencode, crush, cursor; goose is

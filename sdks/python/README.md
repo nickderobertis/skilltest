@@ -18,6 +18,34 @@ result = validate_skill("skills/greeter")
 assert result.valid
 ```
 
+### Define the case in code (recommended)
+
+Instead of a YAML file, build the whole case — skill, input, evals, an optional
+simulated user, mocks — in code and pass it straight to `run_skill`. Everything
+the YAML carries has a typed builder, so the case and its checks live in one
+place:
+
+```python
+from skilltest_sdk import TestCase, run_skill, boolean, numeric
+
+case = TestCase(
+    skill="skills/greeter",              # resolved relative to the working dir
+    input="Greet Dr. Smith, who has an appointment today.",
+    evals=[
+        boolean("the reply greets Dr. Smith by name"),
+        numeric("how warm is the tone", min=0, max=10, threshold=7),
+    ],
+)
+report = run_skill(case)
+assert report.passed, describe_failures(report)
+```
+
+Add `user(persona=..., done_when=...)` for a multi-turn case, and `mocks=[...]`
+of `stub`/`spy`/`deny`/`rewrite` (name them to reference from a `called` /
+`not_called` eval). A YAML path (`run_skill("cases/greet.yaml")`) works
+everywhere a `TestCase` does; the field reference for both is
+[`docs/schema.md`](../../docs/schema.md).
+
 ### Tool events
 
 Each assistant turn carries the normalized tool events the skill took (shell
