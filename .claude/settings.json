@@ -50,8 +50,28 @@
       "Bash(git log:*)",
       "Bash(git tag:*)",
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(just setup-llmlint)",
+      "Bash(just lint-llm-validate:*)",
+      "Bash(just lint-llm:*)",
+      "Bash(just lint-llm-diff:*)",
+      "Bash(./scripts/setup-llmlint.sh)",
+      "Bash(llmlint:*)"
     ],
     "deny": []
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PROJECT_DIR}/scripts/setup-llmlint.sh\"",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
   }
 }

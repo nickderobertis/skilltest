@@ -196,3 +196,19 @@ test-claude:
 # self-skips when its key is absent. This is the suite CI's e2e-judge-api runs.
 test-judge-api:
     cargo test -p skilltest-cli --test live_api_judge -- --ignored --nocapture
+
+# Install/refresh the optional llmlint toolchain. Idempotent.
+setup-llmlint:
+    ./scripts/setup-llmlint.sh
+
+# Optional LLM-as-judge lint; non-deterministic and out of `check`.
+lint-llm *paths:
+    llmlint {{paths}}
+
+# Deterministic llmlint config/ignore/version-bump validation.
+lint-llm-validate *args:
+    PATH="$HOME/.local/bin:$PATH" llmlint validate {{args}}
+
+# llmlint scoped to changed files since the merge-base with main.
+lint-llm-diff base="origin/main" *args:
+    llmlint --diff --diff-base "{{base}}" {{args}}
