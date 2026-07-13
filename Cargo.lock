@@ -166,6 +166,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
+name = "onejudge"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4833a264f719ebceca8278c8848944a1b9c9fbc72fb753700ee11719a34e1f10"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "proc-macro2"
 version = "1.0.106"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -346,6 +357,7 @@ dependencies = [
 name = "skilltest-core"
 version = "0.10.0"
 dependencies = [
+ "onejudge",
  "regex",
  "schemars",
  "serde",

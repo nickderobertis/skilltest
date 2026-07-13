@@ -1247,7 +1247,7 @@ impl Provider for OneharnessProvider {
         let prompt = if session.is_some() {
             latest_user_message(messages).unwrap_or_default()
         } else {
-            render_transcript_for_respond(messages)
+            build_respond_prompt(messages)
         };
         let history_name = self.history_name(platform, model, messages);
         let outcome = self.run(&RunArgs {
@@ -1302,7 +1302,7 @@ impl Provider for OneharnessProvider {
         let prompt = if session.is_some() {
             latest_user_message(messages).unwrap_or_default()
         } else {
-            render_transcript_for_respond(messages)
+            build_respond_prompt(messages)
         };
         let history_name = self.history_name(platform, model, messages);
         let outcome = self.run_streaming(
@@ -2130,36 +2130,6 @@ fn parse_chat_response(vendor: ApiVendor, raw: &str) -> Result<ChatOutcome> {
     }
 }
 
-/// Render the conversation as `Role: content` lines for inlining in a prompt.
-/// Used by the judge, the simulated user, and the no-resume fallback path of
-/// `respond`.
-fn render_transcript(messages: &[Message]) -> String {
-    messages
-        .iter()
-        .map(|m| {
-            let role = match m.role {
-                Role::User => "User",
-                Role::Assistant => "Assistant",
-                Role::System => "System",
-            };
-            format!("{role}: {}", m.content)
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-/// The prompt for `respond` when we cannot resume a harness session: inline the
-/// whole conversation so the stateless harness call sees it. The skill is
-/// passed separately as `--system`, so it does *not* appear here.
-fn render_transcript_for_respond(messages: &[Message]) -> String {
-    format!(
-        "Conversation so far (most recent last):\n{}\n\n\
-         Write only the assistant's next reply, following your system \
-         instructions. Output the reply text and nothing else.",
-        render_transcript(messages),
-    )
-}
-
 /// The most recent user message in the transcript — used as the next-turn
 /// prompt when resuming a real harness session.
 fn latest_user_message(messages: &[Message]) -> Option<String> {
@@ -2170,43 +2140,72 @@ fn latest_user_message(messages: &[Message]) -> Option<String> {
         .map(|m| m.content.clone())
 }
 
-fn build_user_prompt(persona: &str, messages: &[Message]) -> String {
-    format!(
-        "You are role-playing the USER in a conversation with an AI assistant. \
-         Stay in character:\n\n{persona}\n\n\
-         Conversation so far (most recent last):\n{transcript}\n\n\
-         Write only the user's next message. Output the message text and nothing \
-         else.",
-        transcript = render_transcript(messages),
-    )
+// ---------------------------------------------------------------------------
+// onejudge bridge — prompt building is shared with the extracted engine.
+//
+// skilltest keeps its own `Message`/`JudgeQuery`/`JudgeKind` types (they carry
+// the `JsonSchema` derives the `--format json` contract needs, which onejudge
+// does not), so the two are converted here at the call sites. The prompt text
+// itself lives in one place: `onejudge::build_{respond,user,judge}_prompt`. The
+// respond/user prompts are byte-identical to skilltest's originals; the judge
+// prompt additionally renders each assistant turn's tool events (`[tool]` lines)
+// and orders the transcript before the criterion so a provider's prompt cache
+// can reuse the prefix across criteria.
+// ---------------------------------------------------------------------------
+
+/// Convert a skilltest transcript slice into onejudge's `Message` model (the
+/// two are field-identical; only the owning crate differs).
+fn to_onejudge_messages(messages: &[Message]) -> Vec<onejudge::Message> {
+    messages
+        .iter()
+        .map(|m| onejudge::Message {
+            role: match m.role {
+                Role::User => onejudge::Role::User,
+                Role::Assistant => onejudge::Role::Assistant,
+                Role::System => onejudge::Role::System,
+            },
+            content: m.content.clone(),
+            events: m
+                .events
+                .iter()
+                .map(|e| onejudge::ToolEvent {
+                    kind: e.kind.clone(),
+                    name: e.name.clone(),
+                    input: e.input.clone(),
+                    output: e.output.clone(),
+                    index: e.index,
+                })
+                .collect(),
+        })
+        .collect()
 }
 
-fn build_judge_prompt(query: &JudgeQuery<'_>, messages: &[Message]) -> String {
-    let transcript = render_transcript(messages);
-    match query.kind {
-        JudgeKind::Boolean => format!(
-            "You are a strict, careful evaluator of an AI assistant's behavior.\n\n\
-             Criterion: {criterion}\n\n\
-             Transcript:\n{transcript}\n\n\
-             Decide whether the criterion is satisfied. Respond with ONLY a \
-             single-line JSON object and nothing else:\n\
-             {{\"value\": true or false, \"reason\": \"<one short sentence>\"}}",
-            criterion = query.criterion,
-        ),
-        JudgeKind::Numeric => {
-            let (min, max) = query.scale.unwrap_or((0.0, 10.0));
-            format!(
-                "You are a strict, careful evaluator of an AI assistant's behavior.\n\n\
-                 Criterion: {criterion}\n\n\
-                 Transcript:\n{transcript}\n\n\
-                 Score how well the criterion is satisfied on a scale from {min} to \
-                 {max} (inclusive). Respond with ONLY a single-line JSON object and \
-                 nothing else:\n\
-                 {{\"value\": <number between {min} and {max}>, \"reason\": \"<one short sentence>\"}}",
-                criterion = query.criterion,
-            )
-        }
+/// Convert a skilltest [`JudgeQuery`] into onejudge's, for prompt building.
+fn to_onejudge_query<'a>(query: &JudgeQuery<'a>) -> onejudge::JudgeQuery<'a> {
+    onejudge::JudgeQuery {
+        kind: match query.kind {
+            JudgeKind::Boolean => onejudge::JudgeKind::Boolean,
+            JudgeKind::Numeric => onejudge::JudgeKind::Numeric,
+        },
+        criterion: query.criterion,
+        scale: query.scale,
     }
+}
+
+/// The `respond` prompt for a stateless (no-resume) call: onejudge inlines the
+/// whole conversation. Byte-identical to skilltest's former local builder.
+fn build_respond_prompt(messages: &[Message]) -> String {
+    onejudge::build_respond_prompt(&to_onejudge_messages(messages))
+}
+
+/// The simulated-user prompt. Byte-identical to skilltest's former local builder.
+fn build_user_prompt(persona: &str, messages: &[Message]) -> String {
+    onejudge::build_user_prompt(persona, &to_onejudge_messages(messages))
+}
+
+/// The judge prompt. Events-aware and transcript-first (see the module note).
+fn build_judge_prompt(query: &JudgeQuery<'_>, messages: &[Message]) -> String {
+    onejudge::build_judge_prompt(&to_onejudge_query(query), &to_onejudge_messages(messages))
 }
 
 /// Extract the first JSON object from `text`, tolerating code fences and prose
@@ -2298,7 +2297,7 @@ mod tests {
             Message::assistant("Hello"),
             Message::user("Again?"),
         ];
-        let prompt = render_transcript_for_respond(&messages);
+        let prompt = build_respond_prompt(&messages);
         assert!(prompt.contains("User: Hi"));
         assert!(prompt.contains("Assistant: Hello"));
         assert!(prompt.contains("User: Again?"));

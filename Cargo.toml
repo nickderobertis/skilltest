@@ -12,6 +12,10 @@ authors = ["Nick DeRobertis"]
 
 [workspace.dependencies]
 skilltest-core = { path = "crates/skilltest-core", version = "0.10.0" }
+# The extracted simulated-interaction + judging engine. skilltest composes over
+# its prompt-building / verdict-parsing so the two share one source of truth for
+# how a judge is asked and how its reply is read. Pinned to the 0.2.x line.
+onejudge = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 schemars = "1"
