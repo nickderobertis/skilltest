@@ -202,8 +202,10 @@ setup-llmlint:
     ./scripts/setup-llmlint.sh
 
 # Optional LLM-as-judge lint; non-deterministic and out of `check`.
+# ONEHARNESS_RUN_MODE=fallback is the routing `oneharness.toml` describes but cannot
+# carry: the SDK-bundled oneharness 0.3.x refuses the `run_mode` key (see that file).
 lint-llm *paths:
-    llmlint {{paths}}
+    ONEHARNESS_RUN_MODE=fallback llmlint {{paths}}
 
 # Deterministic llmlint config/ignore/version-bump validation.
 lint-llm-validate *args:
@@ -211,4 +213,4 @@ lint-llm-validate *args:
 
 # llmlint scoped to changed files since the merge-base with main.
 lint-llm-diff base="origin/main" *args:
-    llmlint --diff --diff-base "{{base}}" {{args}}
+    ONEHARNESS_RUN_MODE=fallback llmlint --diff --diff-base "{{base}}" {{args}}
