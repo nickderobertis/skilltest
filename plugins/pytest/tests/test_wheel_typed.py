@@ -21,7 +21,8 @@ CLASSIFIER = "Classifier: Typing :: Typed"
 
 
 def build_wheel(project: Path, out_dir: Path) -> Path:
-    """``uv build --wheel`` for ``project`` into ``out_dir``; returns the wheel."""
+    # The same invocation the release scripts use, so the wheel inspected here
+    # is built exactly as the one publish.yml uploads.
     subprocess.run(
         ["uv", "build", "--wheel", "--out-dir", str(out_dir)],
         cwd=project,
@@ -56,7 +57,7 @@ def test_wheel_ships_py_typed_marker_and_classifier(tmp_path: Path) -> None:
     assert CLASSIFIER in wheel_metadata(wheel).splitlines()
 
 
-def test_wheel_check_fails_without_marker_and_classifier(tmp_path: Path) -> None:
+def test_stripped_wheel_lacks_marker_and_classifier(tmp_path: Path) -> None:
     """The assertions above discriminate: a copy of the project stripped of the
     marker and the classifier builds a wheel that carries neither."""
     stripped = tmp_path / "stripped"
