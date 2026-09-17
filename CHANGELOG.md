@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.10.1](https://github.com/nickderobertis/skilltest/compare/v0.10.0...v0.10.1) (2026-09-17)
+
+### Bug Fixes
+
+* **sdk:** ship py.typed in the skilltest-sdk and skilltest-pytest wheels ([#37](https://github.com/nickderobertis/skilltest/issues/37)) ([e313356](https://github.com/nickderobertis/skilltest/commit/e313356ccf893a3c5bd15678a7243f31d0cc2db2))
+
 ## [0.10.0](https://github.com/nickderobertis/skilltest/compare/v0.9.0...v0.10.0) (2026-07-07)
 
 ### Features
