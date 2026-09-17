@@ -6,6 +6,10 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
 authors = [{ name = "Nick DeRobertis" }]
+# The package ships inline type annotations; together with the empty
+# `py.typed` marker beside `__init__.py` this tells type checkers to use them
+# (PEP 561). Held to the built wheel by tests/test_wheel_typed.py.
+classifiers = ["Typing :: Typed"]
 dependencies = [
     "pydantic>=2.7",
     # Bundles the `oneharness` binary the default provider drives, so installing
