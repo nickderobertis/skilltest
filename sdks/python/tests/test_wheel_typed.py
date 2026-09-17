@@ -32,8 +32,6 @@ CLASSIFIER = "Classifier: Typing :: Typed"
 
 
 def build_wheel(project: Path, out_dir: Path) -> Path:
-    # The same invocation the release scripts use, so the wheel inspected here
-    # is built exactly as the one publish.yml uploads.
     subprocess.run(
         ["uv", "build", "--wheel", "--out-dir", str(out_dir)],
         cwd=project,
@@ -57,6 +55,10 @@ def wheel_members(wheel: Path) -> set[str]:
         return set(zf.namelist())
 
 
+# Not a marker-deselected tier: this runs unconditionally in the project's `test-e2e`
+# target, which is its whole test tier by design (the SDKs shell out to the built CLI);
+# a pure-wheel build takes ~1s and reaches no external service.
+# llmlint: ignore[test_tiers_split_by_project_not_by_marker] unconditional in the project's own tier
 def test_wheel_ships_py_typed_marker_and_classifier(tmp_path: Path) -> None:
     wheel = build_wheel(PROJECT, tmp_path)
 
@@ -97,6 +99,10 @@ def _package_digest() -> dict[str, str]:
     }
 
 
+# Same tier as above: the generator runs on the local toolchain `just bootstrap` installs
+# (no external service), and this check belongs beside the marker it guards so the
+# project's `test-e2e` is what proves regeneration keeps it.
+# llmlint: ignore[test_tiers_split_by_project_not_by_marker] unconditional in the project's own tier
 def test_contract_regeneration_keeps_marker() -> None:
     """Running the real generator (write mode) rewrites only the four models it
     owns; the marker is outside that set and survives with the rest of the
