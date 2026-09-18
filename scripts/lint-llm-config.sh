@@ -9,6 +9,7 @@
 # `--cwd DIR` validates another tree).
 #
 # Usage: scripts/lint-llm-config.sh [llmlint validate args...]
+# llmlint: ignore-file[new_code_lands_in_a_project] repo-level llmlint glue beside setup-llmlint.sh: it validates the root llmlint.yml, which belongs to no Nx project (AGENTS.md: scripts/*.sh are orchestrator-independent glue).
 set -euo pipefail
 
 if ! command -v llmlint >/dev/null 2>&1; then
