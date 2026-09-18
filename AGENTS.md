@@ -189,11 +189,6 @@ always runs as part of `just check`.
   `just check`): install the pinned `freeze`, capture the deterministic scene SVGs,
   regenerate the README hero GIF, and refresh the committed baseline after an
   intended output change. See `screenshots/AGENTS.md`.
-- `just lint-llm-config` — whole-config llmlint validation, independent of any
-  diff: every plugin URL fetched fresh (a throwaway cache, so an upstream rename
-  can't hide behind a cached copy) and every `ignore` directive's rule known. CI's
-  `llmlint` job runs it (with `--diff-base origin/main`) before the judged tier;
-  `just test-lint-llm-config` is its network-backed journey test.
 
 `just` needs `cargo` (+ `cargo-nextest`), `uv`, and `node`/`pnpm` on `PATH`; nx
 itself is a root dev-dependency installed by `just bootstrap`. CI installs the
