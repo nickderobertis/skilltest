@@ -14,7 +14,10 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-just_bin="$(command -v just)"
+just_bin="$(command -v just)" || {
+  echo "test-lint-llm-config: just not found on PATH; install it (https://just.systems) and re-run" >&2
+  exit 127
+}
 work="$(mktemp -d)"
 server_pid=""
 cleanup() {
