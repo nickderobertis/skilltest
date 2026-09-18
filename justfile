@@ -211,6 +211,16 @@ lint-llm *paths:
 lint-llm-validate *args:
     PATH="$HOME/.local/bin:$PATH" llmlint validate {{args}}
 
+# Whole-config llmlint validation, independent of any diff: every plugin URL
+# fetched fresh (never from cache), every ignore directive's rule known. CI's
+# llmlint job runs this before judging anything. Extra args go to `llmlint validate`.
+lint-llm-config *args:
+    @PATH="$HOME/.local/bin:$PATH" bash scripts/lint-llm-config.sh {{args}}
+
+# Journey test for `lint-llm-config` (needs llmlint + network; not in `check`).
+test-lint-llm-config:
+    @PATH="$HOME/.local/bin:$PATH" bash scripts/test-lint-llm-config.sh
+
 # llmlint scoped to changed files since the merge-base with main.
 lint-llm-diff base="origin/main" *args:
     ONEHARNESS_RUN_MODE=fallback llmlint --diff --diff-base "{{base}}" {{args}}

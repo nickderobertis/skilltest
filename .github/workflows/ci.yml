@@ -90,8 +90,11 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - name: Install llmlint toolchain
         run: ./scripts/setup-llmlint.sh
+      # Whole-config validation, whatever the diff reaches: every plugin URL
+      # fetched fresh, every ignore directive's rule known, plus the version-bump
+      # check against the PR base — before anything is judged.
       - name: Validate llmlint config
-        run: just lint-llm-validate --diff-base origin/main
+        run: just lint-llm-config --diff-base origin/main
       - name: Lint changed files
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}

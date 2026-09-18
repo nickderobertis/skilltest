@@ -53,6 +53,8 @@
       "Bash(git commit:*)",
       "Bash(just setup-llmlint)",
       "Bash(just lint-llm-validate:*)",
+      "Bash(just lint-llm-config:*)",
+      "Bash(just test-lint-llm-config:*)",
       "Bash(just lint-llm:*)",
       "Bash(just lint-llm-diff:*)",
       "Bash(./scripts/setup-llmlint.sh)",
