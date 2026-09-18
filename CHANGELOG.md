@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.10.2](https://github.com/nickderobertis/skilltest/compare/v0.10.1...v0.10.2) (2026-09-18)
+
+### Bug Fixes
+
+* **lint:** load the Bash rules and the renamed project-graph plugin in llmlint.yml ([#44](https://github.com/nickderobertis/skilltest/issues/44)) ([6ae0d41](https://github.com/nickderobertis/skilltest/commit/6ae0d4140b9ec51b12c094c30c8bbba4c4a9068f)), closes [#39](https://github.com/nickderobertis/skilltest/issues/39) [#38](https://github.com/nickderobertis/skilltest/issues/38)
+
 ## [0.10.1](https://github.com/nickderobertis/skilltest/compare/v0.10.0...v0.10.1) (2026-09-17)
 
 ### Bug Fixes
