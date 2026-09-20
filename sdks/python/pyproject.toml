@@ -15,8 +15,10 @@ dependencies = [
     # Bundles the `oneharness` binary the default provider drives, so installing
     # the SDK is all the setup a live run needs — no separate oneharness install.
     # The runner points skilltest at it via SKILLTEST_ONEHARNESS_BIN. Bounded to
-    # the 0.3.x line skilltest's OneharnessProvider targets (v0.3.6+ features).
-    "oneharness-cli>=0.3.7,<0.4",
+    # the 0.16.x line skilltest's OneharnessProvider targets: 0.16 is the first
+    # line that parses the baseline `oneharness.toml`'s `run_mode` key, so the
+    # repo-root config no longer needs an env-spelled workaround.
+    "oneharness-cli>=0.16.0,<0.17",
 ]
 
 [dependency-groups]

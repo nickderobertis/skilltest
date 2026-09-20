@@ -17,21 +17,32 @@
 
 set -euo pipefail
 
-# Pinned to the version skilltest's OneharnessProvider targets. v0.2.1 first
-# delivered `--system` to every harness (so codex/goose could be driven, not just
-# claude-code) and fixed the codex bypass flags; v0.2.37 extracts OpenCode's final
-# text from its JSONL (`text_source: json:opencode-parts`, so transcripts carry
-# clean text instead of raw stdout). v0.3.6 adds `--events` (normalized tool-call
-# events skilltest lifts onto each turn) and `--stream` (NDJSON events for the
-# streaming/short-circuit API); v0.3.7 the mock/spy seam (`oneharness mock`,
-# `run --mock-rules`/`--spy-file`); v0.3.8 opt-in run history (`run --history
-# --history-dir <DIR> --history-name <NAME>`, a `history_file` in the report, and
-# the `oneharness history list/show/clear` verbs) — skilltest records each skill
-# run to a centralized dir so past runs are reviewable. Note v0.3.0 normalized
-# `--mode` approval modes (breaking): skilltest passes no `--mode`, so
-# oneharness's default applies — configure approval (e.g. `bypass`) via
-# oneharness's own config. Bump here when skilltest adopts a newer oneharness.
-default_version="v0.3.8"
+# Pinned to the version skilltest's OneharnessProvider targets, and kept in
+# lockstep with the `oneharness-cli` bounds both SDKs declare and the
+# `install-oneharness` recipe's default in the justfile. The whole argv surface
+# skilltest drives landed by v0.3.8 — `--system` (v0.2.1, the skill as a real
+# system prompt on every harness), native reply extraction (v0.2.37, OpenCode's
+# nested JSONL included), `--events`/`--stream` (v0.3.6), the mock/spy seam
+# (v0.3.7: `oneharness mock`, `run --mock-rules`/`--spy-file`) and opt-in run
+# history (v0.3.8: `run --history --history-dir --history-name`, the report's
+# `history_file`, and the `oneharness history` verbs).
+#
+# v0.16.0 is what skilltest targets now. Two things it changes matter here:
+# `run` prints a human-readable report unless `--format json` or `--compact` is
+# given (skilltest always passes `--compact`, or `--stream`, whose NDJSON is
+# format-independent), and `run_mode` is a config key the whole 0.16 line
+# parses — so the repo-root `oneharness.toml` carries it directly instead of the
+# `ONEHARNESS_RUN_MODE` env workaround the recipes used to layer on. It also
+# reports `supports_resume` for every registered harness, which is why
+# `skilltest_core::provider::supports_resume` now mirrors the whole registry
+# (the `oneharness list` drift alarm in tests/oneharness_integration.rs).
+#
+# Note v0.3.0 normalized `--mode` approval modes (breaking): skilltest passes no
+# `--mode`, so oneharness's default applies — configure approval (e.g. `bypass`)
+# via oneharness's own config. History written by a pre-0.16 skilltest lives in
+# the legacy store format; `oneharness history migrate` rewrites it in place.
+# Bump here when skilltest adopts a newer oneharness.
+default_version="v0.16.0"
 version="${1:-$default_version}"
 repo="nickderobertis/oneharness"
 dest="${ONEHARNESS_INSTALL_DIR:-$HOME/.local/bin}"
