@@ -25,4 +25,6 @@ clap = { version = "4", features = ["derive"] }
 
 [profile.dev]
 # Faster incremental e2e runs; the e2e suite spawns the binary many times.
+# The debuginfo level for dev/test builds lives in `.cargo/config.toml`; cargo
+# merges its `[profile.dev]` with this one key by key.
 opt-level = 0
