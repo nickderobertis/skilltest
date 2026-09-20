@@ -1375,22 +1375,19 @@ impl Provider for OneharnessProvider {
 /// subprocess; `supports_resume_matches_the_real_registry` in
 /// `crates/skilltest-cli/tests/oneharness_integration.rs` drives the real
 /// `oneharness list --format json` and fails the moment the two disagree, so a
-/// registry that moves again is caught rather than silently mis-routed.
+/// registry that moves again is caught rather than silently mis-routed. That
+/// alarm is in the hermetic tier rather than the gate for the same reason the
+/// mock engine's is (AGENTS.md, "The provider boundary"): reconciling against
+/// oneharness needs the oneharness binary, which the gate deliberately does
+/// not require. `just test-oneharness` and CI's e2e workflows run it.
 ///
 /// Saying `true` is safe even where a harness reports no session id headlessly
 /// (`session_capable: false` — goose, crush, copilot): the runner only passes
 /// `--resume` once oneharness has echoed a `session_id` for that run, so those
 /// harnesses keep falling back to the inlined transcript exactly as before. An
 /// unknown harness id is `false`, never an optimistic guess.
-///
-// llmlint: ignore[invalid_states_unrepresentable] The harness-id domain is
-// owned by oneharness, not skilltest: a `platforms:` entry is free-form user
-// YAML and a newer oneharness can register an id this build has never heard
-// of. Closing it into an enum here would reject a valid platform at parse time
-// rather than route it conservatively, which is precisely what the `false`
-// arm exists to do. This is also a stable public signature the SDKs' callers
-// depend on.
 #[must_use]
+// llmlint: ignore[invalid_states_unrepresentable] The harness-id domain is owned by oneharness, not skilltest: a `platforms:` entry is free-form user YAML and a newer oneharness can register an id this build has never heard of. Closing it into an enum here would reject a valid platform at parse time instead of routing it conservatively, which is exactly what the `false` arm exists to do — and this is a stable public signature both SDKs' callers depend on.
 pub fn supports_resume(harness: &str) -> bool {
     matches!(
         harness,

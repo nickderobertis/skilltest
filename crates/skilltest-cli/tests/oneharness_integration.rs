@@ -365,7 +365,11 @@ fn supports_resume_matches_the_real_registry() {
     assert!(!harnesses.is_empty(), "registry: {registry:#}");
     for harness in harnesses {
         let id = harness["id"].as_str().expect("every entry has an id");
-        let registered = harness["supports_resume"].as_bool().unwrap_or(false);
+        // Strictly a bool: a missing or re-typed column is a registry contract
+        // change skilltest must be told about, not read as "no resume".
+        let registered = harness["supports_resume"]
+            .as_bool()
+            .unwrap_or_else(|| panic!("{id} has no boolean supports_resume: {harness:#}"));
         assert_eq!(
             supports_resume(id),
             registered,
