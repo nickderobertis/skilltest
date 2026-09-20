@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.10.3](https://github.com/nickderobertis/skilltest/compare/v0.10.2...v0.10.3) (2026-09-20)
+
+### Build System
+
+* **cargo:** line-table debuginfo for dev and one target dir per clone ([#46](https://github.com/nickderobertis/skilltest/issues/46)) ([e47f2e7](https://github.com/nickderobertis/skilltest/commit/e47f2e7f46169878b50eb09776e1b1c4abdffb1a))
+
 ## [0.10.2](https://github.com/nickderobertis/skilltest/compare/v0.10.1...v0.10.2) (2026-09-18)
 
 ### Bug Fixes
