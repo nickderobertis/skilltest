@@ -7,7 +7,7 @@ provider backends.
 
 ## 1. The oneharness provider (default)
 
-[`oneharness`](https://github.com/nickderobertis/oneharness) (v0.3.8+) is a
+[`oneharness`](https://github.com/nickderobertis/oneharness) (v0.16.0) is a
 prompt→text runner over many agentic harnesses (Claude Code, Codex, OpenCode,
 Cursor, …). skilltest's `OneharnessProvider` wires six real oneharness features
 into the runner:
@@ -16,11 +16,12 @@ into the runner:
   prompt (e.g. `--append-system-prompt` for claude-code), not inlined into the
   user turn.
 - **`--resume <session>`** — for harnesses that support session continuation
-  (`claude-code`, `opencode`, `cursor` today; see `oneharness list` and
+  (every harness in the v0.16 registry; see `oneharness list` and
   `supports_resume`), the runner threads the `session_id` returned on each turn
   into the next `respond` call, so the harness sees a real continuing
-  conversation and keeps its tool state. For harnesses without resume support,
-  skilltest falls back to inlining the full transcript on every turn.
+  conversation and keeps its tool state. A harness that reports no `session_id`
+  headlessly has no handle to continue from, so skilltest keeps inlining the
+  full transcript on every turn for it.
 - **`--events`** — normalized tool events (`{kind, name, input, output, index}`)
   lifted from each harness's transcript. skilltest attaches them to the assistant
   turn (`Message.events` in the [report](schema.md)) so consumers can inspect
@@ -43,8 +44,8 @@ into the runner:
   inside the harness, and appends every observed call to the spy JSONL, which
   skilltest parses into the report's `mock_calls`. A harness that cannot
   express a requested verb (e.g. rewrite on goose) is a loud oneharness usage
-  error surfaced as a provider error. Requires oneharness v0.3.7+ (the release
-  carrying the `mock` responder and `run --mock-rules`/`--spy-file`).
+  error surfaced as a provider error. The `mock` responder and
+  `run --mock-rules`/`--spy-file` landed in oneharness v0.3.7.
 - **`--history` / `--history-dir` / `--history-name`** — each **skill** run is
   recorded to a centralized run-history directory shared across every skilltest
   invocation, so past runs can be reviewed with `oneharness history`. The
@@ -57,8 +58,10 @@ into the runner:
   session and re-runs reuse the name. The run's echoed `history_file` (absolute)
   is turned into a ready-to-run `oneharness history show <name> --history-dir
   <dir>` on the report's `CaseRun.history_command`. The judge and simulated-user
-  calls are deliberately **never** recorded. Requires oneharness v0.3.8+ (the
-  release carrying `run --history*` and the `oneharness history` verb).
+  calls are deliberately **never** recorded. `run --history*` and the
+  `oneharness history` verb landed in oneharness v0.3.8; a store written by a
+  pre-0.16 skilltest is in the legacy format, which `oneharness history migrate`
+  rewrites in place.
 
 For each operation skilltest invokes:
 
@@ -84,7 +87,11 @@ place rather than split between the two tools.
 **Output format.** skilltest deliberately omits `--output-format`: oneharness
 already requests each harness's default format and extracts the reply (and
 events) accordingly; forcing `json` everywhere once broke the text-native
-harnesses.
+harnesses. That is the *harness's* format, not oneharness's own: `oneharness
+run` prints a human-readable report unless a JSON one is asked for, so every
+buffered call passes `--compact` (which selects compact JSON on its own) and
+the streaming call passes `--stream`, whose NDJSON protocol does not depend on
+`--format`.
 
 | op | harness / model | what skilltest passes |
 | --- | --- | --- |

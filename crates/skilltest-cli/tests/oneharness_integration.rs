@@ -22,6 +22,7 @@ use std::path::PathBuf;
 use std::process::{Command, Output};
 
 use serde_json::Value;
+use skilltest_core::supports_resume;
 
 fn skilltest() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_skilltest"))
@@ -45,8 +46,19 @@ fn run_case(case: &str, extra: &[&str]) -> Output {
 }
 
 fn run_platform(case: &str, platform: &str, extra: &[&str]) -> Output {
-    Command::new(skilltest())
-        .arg("run")
+    run_platform_in(case, platform, extra, None)
+}
+
+/// As [`run_platform`], with an optional `SKILLTEST_HISTORY_DIR` so a test can
+/// own the history store it asserts on instead of writing to the developer's.
+fn run_platform_in(
+    case: &str,
+    platform: &str,
+    extra: &[&str],
+    history_dir: Option<&std::path::Path>,
+) -> Output {
+    let mut cmd = Command::new(skilltest());
+    cmd.arg("run")
         .arg(fixtures().join("cases").join(case))
         .args(["--oneharness-bin", &oneharness_bin()])
         .args(["--platform", platform])
@@ -57,9 +69,35 @@ fn run_platform(case: &str, platform: &str, extra: &[&str]) -> Output {
         .args(extra)
         // The shim stands in for the claude CLI; oneharness resolves the
         // harness binary from this env override exactly like a user's.
-        .env("ONEHARNESS_BIN_CLAUDE_CODE", shim())
-        .output()
-        .expect("skilltest run executes")
+        .env("ONEHARNESS_BIN_CLAUDE_CODE", shim());
+    if let Some(dir) = history_dir {
+        cmd.env("SKILLTEST_HISTORY_DIR", dir);
+    }
+    cmd.output().expect("skilltest run executes")
+}
+
+/// A private scratch directory removed when the test drops it.
+struct Scratch(PathBuf);
+
+impl Scratch {
+    fn new(tag: &str) -> Scratch {
+        let dir = std::env::temp_dir().join(format!(
+            "skilltest-ohit-{tag}-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or_default()
+        ));
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        Scratch(dir)
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
 }
 
 fn report(output: &Output) -> Value {
@@ -301,4 +339,164 @@ fn streaming_with_mocks_through_real_oneharness() {
     let records = report["runs"][0]["mock_calls"].as_array().unwrap();
     assert_eq!(records[0]["action"], "stub");
     assert_eq!(records[0]["mock"], "push");
+}
+
+#[test]
+#[ignore = "needs oneharness on PATH (just install-oneharness); run via just test-oneharness"]
+fn supports_resume_matches_the_real_registry() {
+    // skilltest mirrors oneharness's `supports_resume` column rather than
+    // probing it per run, so this is the drift alarm: ask the installed binary
+    // what it registers and hold the mirror to it, id by id. A release that
+    // adds a harness (or withdraws resume from one) fails here instead of
+    // silently routing a resumable harness down the inline-transcript path.
+    let out = Command::new(oneharness_bin())
+        .args(["list", "--format", "json"])
+        .output()
+        .expect("oneharness list executes");
+    assert!(
+        out.status.success(),
+        "oneharness list failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let registry: Value = serde_json::from_slice(&out.stdout).expect("list emits JSON");
+    let harnesses = registry["harnesses"]
+        .as_array()
+        .expect("the registry lists harnesses");
+    assert!(!harnesses.is_empty(), "registry: {registry:#}");
+    for harness in harnesses {
+        let id = harness["id"].as_str().expect("every entry has an id");
+        let registered = harness["supports_resume"].as_bool().unwrap_or(false);
+        assert_eq!(
+            supports_resume(id),
+            registered,
+            "skilltest::supports_resume({id}) disagrees with the installed \
+             oneharness registry; update provider::supports_resume"
+        );
+    }
+}
+
+#[test]
+#[ignore = "needs oneharness on PATH (just install-oneharness); run via just test-oneharness"]
+fn resume_threads_session_id_through_real_oneharness() {
+    // Two assistant turns on a resume-capable harness: turn 1 has no session to
+    // continue, turn 2 carries the `session_id` the shim echoed. The shim
+    // appends ` RESUMED:<id>` whenever oneharness handed it `--resume`, so the
+    // transcript itself says which turn continued a session.
+    let out = run_case("resume_multiturn.yaml", &["--format", "json"]);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report = report(&out);
+    let messages = report["runs"][0]["transcript"]["messages"]
+        .as_array()
+        .expect("a transcript");
+    let assistant: Vec<&str> = messages
+        .iter()
+        .filter(|m| m["role"] == "assistant")
+        .map(|m| m["content"].as_str().unwrap_or_default())
+        .collect();
+    assert_eq!(assistant.len(), 2, "messages: {messages:#?}");
+    assert!(
+        !assistant[0].contains("RESUMED:"),
+        "the opening turn has no session to continue: {}",
+        assistant[0]
+    );
+    assert!(
+        assistant[1].contains("RESUMED:fake-claude-1"),
+        "turn 2 must resume the session the harness reported: {}",
+        assistant[1]
+    );
+}
+
+#[test]
+#[ignore = "needs oneharness on PATH (just install-oneharness); run via just test-oneharness"]
+fn history_recording_round_trips_through_real_oneharness() {
+    // Recording is on by default, so a plain run writes a session into the
+    // centralized store and the report offers the command that replays it. The
+    // proof that the command is real (not just well-formed) is running it.
+    let store = Scratch::new("history");
+    let out = run_platform_in(
+        "spy_plain.yaml",
+        "claude-code",
+        &["--format", "json"],
+        Some(&store.0),
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report = report(&out);
+    let command = report["runs"][0]["history_command"]
+        .as_str()
+        .expect("a recorded run offers a history_command");
+    assert!(
+        command.contains("history show") && command.contains(&store.0.display().to_string()),
+        "command: {command}"
+    );
+
+    // Replay it exactly as a user would read it off the report.
+    let replay = Command::new("sh")
+        .args(["-c", command])
+        .output()
+        .expect("the history command executes");
+    assert!(
+        replay.status.success(),
+        "`{command}` failed: {}",
+        String::from_utf8_lossy(&replay.stderr)
+    );
+    let recorded = String::from_utf8_lossy(&replay.stdout);
+    assert!(
+        recorded.contains("claude-code") && recorded.contains("Deployment finished"),
+        "the replayed session carries the run: {recorded}"
+    );
+}
+
+#[test]
+#[ignore = "needs oneharness on PATH (just install-oneharness); run via just test-oneharness"]
+fn history_off_offers_no_replay_command_through_real_oneharness() {
+    // The recovery side of the same seam: with recording disabled no `--history`
+    // flag is passed, oneharness echoes no `history_file`, and skilltest must
+    // offer no command rather than one that would resolve to nothing.
+    let store = Scratch::new("nohistory");
+    let config = store.0.join("skilltest.yaml");
+    std::fs::write(
+        &config,
+        format!(
+            "provider:\n  kind: oneharness\n  bin: {}\n  judge_harness: claude-code\n  \
+             timeout_secs: 60\n  history: false\nplatforms: [claude-code]\nmodels: [fake-model]\n\
+             judge_model: fake-model\n",
+            oneharness_bin()
+        ),
+    )
+    .expect("config written");
+    let out = run_platform_in(
+        "spy_plain.yaml",
+        "claude-code",
+        &["--format", "json", "--config", config.to_str().unwrap()],
+        Some(&store.0),
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report = report(&out);
+    assert!(
+        report["runs"][0]["history_command"].is_null(),
+        "report: {report:#}"
+    );
+    assert!(
+        std::fs::read_dir(&store.0)
+            .expect("store dir")
+            .flatten()
+            .all(|e| e.file_name() == "skilltest.yaml"),
+        "nothing was recorded into {}",
+        store.0.display()
+    );
 }

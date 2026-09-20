@@ -317,7 +317,7 @@ while a mock/spy's `.calls` keep the skill's original attempt.
   language's SDK.
 
 The boundary to a model is the `Provider` trait ([`docs/protocol.md`](docs/protocol.md))
-with two backends: the default **oneharness** provider (v0.3.8+) runs each skill
+with two backends: the default **oneharness** provider (v0.16.0) runs each skill
 on a harness (Claude Code, Codex, …) by passing the skill via `--system`,
 threading `session_id` through `--resume` for faithful multi-turn on supporting
 harnesses, lifting normalized tool events onto each turn via `--events` (and

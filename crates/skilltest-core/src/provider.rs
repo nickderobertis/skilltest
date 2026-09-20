@@ -592,9 +592,15 @@ impl Provider for CommandProvider {
 // ---------------------------------------------------------------------------
 
 /// The default [`Provider`]: runs each prompt on a harness through the
-/// `oneharness` CLI (targets **v0.3.8+** — the release carrying opt-in run
-/// history: `run --history`/`--history-dir`/`--history-name`, a `history_file`
-/// in the report, and the `oneharness history` verb).
+/// `oneharness` CLI (targets **v0.16.0**, the line both SDKs bundle and
+/// `scripts/install-oneharness.sh` installs).
+///
+/// Two things about that line shape the argv below. `oneharness run` prints a
+/// human-readable report unless a JSON format is asked for, so every buffered
+/// call passes `--compact` (which selects compact JSON on its own); the
+/// streaming call passes `--stream`, whose NDJSON protocol is independent of
+/// `--format`. And its registry reports `supports_resume` for every harness,
+/// which is what [`supports_resume`] mirrors.
 ///
 /// Wires six real oneharness features:
 ///
@@ -604,9 +610,10 @@ impl Provider for CommandProvider {
 /// * `--resume <session>` — multi-turn `respond` calls thread the previous
 ///   `session_id` so the harness sees a continuing conversation (and keeps its
 ///   tool state, files, etc.) instead of being re-prompted with a stringified
-///   transcript. Used only for harnesses that report `supports_resume` in the
-///   registry (claude-code, opencode, cursor today); other harnesses fall back
-///   to the inline-transcript path.
+///   transcript. Used for harnesses that report `supports_resume` in the
+///   registry — every harness on v0.16 (see [`supports_resume`]). A harness
+///   that reports no `session_id` still falls back to the inline-transcript
+///   path, because there is no handle to continue from.
 /// * `--events` — normalized tool events (`{kind, name, input, output, index}`)
 ///   lifted from each harness's transcript, so consumers can analyze *what the
 ///   skill did*, not just its final text. Attached to the assistant turn.
@@ -1360,13 +1367,27 @@ impl Provider for OneharnessProvider {
     }
 }
 
-/// The harnesses oneharness's adapter table marks `supports_resume = true`
-/// (claude-code's `--resume`, opencode's `--session`, cursor's `--resume`). Kept
-/// in sync with the `oneharness list` registry — when a new harness ships
-/// session continuation, add it here so the runner threads `session_id`.
+/// The harnesses oneharness's adapter table marks `supports_resume = true` —
+/// every harness in the v0.16 registry, which grew session continuation across
+/// the whole matrix (it was claude-code / opencode / cursor only on v0.3.x).
+///
+/// Mirrored here rather than probed, so building a run costs no extra
+/// subprocess; `supports_resume_matches_the_real_registry` in
+/// `crates/skilltest-cli/tests/oneharness_integration.rs` drives the real
+/// `oneharness list --format json` and fails the moment the two disagree, so a
+/// registry that moves again is caught rather than silently mis-routed.
+///
+/// Saying `true` is safe even where a harness reports no session id headlessly
+/// (`session_capable: false` — goose, crush, copilot): the runner only passes
+/// `--resume` once oneharness has echoed a `session_id` for that run, so those
+/// harnesses keep falling back to the inlined transcript exactly as before. An
+/// unknown harness id is `false`, never an optimistic guess.
 #[must_use]
 pub fn supports_resume(harness: &str) -> bool {
-    matches!(harness, "claude-code" | "opencode" | "cursor")
+    matches!(
+        harness,
+        "claude-code" | "codex" | "opencode" | "goose" | "qwen" | "crush" | "copilot" | "cursor"
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -2390,11 +2411,24 @@ mod tests {
 
     #[test]
     fn supports_resume_covers_known_harnesses() {
-        assert!(supports_resume("claude-code"));
-        assert!(supports_resume("opencode"));
-        assert!(supports_resume("cursor"));
-        assert!(!supports_resume("codex"));
-        assert!(!supports_resume("goose"));
+        // Every harness in the oneharness v0.16 registry (the drift alarm in
+        // the CLI's oneharness_integration suite holds this to the real
+        // `oneharness list`).
+        for harness in [
+            "claude-code",
+            "codex",
+            "opencode",
+            "goose",
+            "qwen",
+            "crush",
+            "copilot",
+            "cursor",
+        ] {
+            assert!(supports_resume(harness), "{harness}");
+        }
+        // An id oneharness does not register is never assumed resumable.
+        assert!(!supports_resume("not-a-harness"));
+        assert!(!supports_resume(""));
     }
 
     #[test]
@@ -4113,7 +4147,8 @@ echo '{{"results":[{{"status":"ok","text":"done"}}]}}'
         fn supports_resume_method_matches_free_function() {
             let provider = oh_provider(PathBuf::from("/bin/true"));
             assert!(provider.supports_resume("claude-code"));
-            assert!(!provider.supports_resume("codex"));
+            assert!(provider.supports_resume("codex"));
+            assert!(!provider.supports_resume("not-a-harness"));
         }
     }
 

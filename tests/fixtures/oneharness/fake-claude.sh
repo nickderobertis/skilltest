@@ -30,6 +30,10 @@
 # WITHOUT `--settings` (skilltest never mocks the judge), which
 # `JUDGE_SAW_SETTINGS` in the reply would expose if that ever regressed.
 #
+# A run carrying `--resume <id>` (skilltest threading a prior turn's
+# `session_id`) appends ` RESUMED:<id>` to the reply, so the integration suite
+# can see which turns continued a session rather than starting one.
+#
 # Output is Claude Code's `-p --output-format stream-json --verbose` shape
 # (what oneharness requests under `--events`): one assistant line per tool_use
 # (post-rewrite input, like the real transcript), one user line per
@@ -39,7 +43,7 @@
 
 set -euo pipefail
 
-prompt=""; settings=""; system=""
+prompt=""; settings=""; system=""; resume=""
 args=("$@")
 i=0
 while [ $i -lt ${#args[@]} ]; do
@@ -47,8 +51,10 @@ while [ $i -lt ${#args[@]} ]; do
         -p) prompt="${args[$((i + 1))]}"; i=$((i + 2)) ;;
         --settings) settings="${args[$((i + 1))]}"; i=$((i + 2)) ;;
         --append-system-prompt) system="${args[$((i + 1))]}"; i=$((i + 2)) ;;
+        # Captured so a resumed turn is observable in the reply (see below).
+        --resume) resume="${args[$((i + 1))]}"; i=$((i + 2)) ;;
         # Value-carrying flags we accept and ignore.
-        --model | --permission-mode | --resume | --json-schema | --output-format)
+        --model | --permission-mode | --json-schema | --output-format)
             i=$((i + 2)) ;;
         *) i=$((i + 1)) ;;
     esac
@@ -85,6 +91,12 @@ marker_text() { # marker_text <marker>: text after the marker, sans a trailing -
 }
 reply="$(marker_text 'fake-reply:')"
 [ -n "$reply" ] || reply="ok"
+# A resumed turn is otherwise invisible in the report: oneharness's own
+# `--resume` handling is upstream of the harness, and the reply text is all a
+# skilltest transcript carries. Surfacing the session handle here is what lets
+# the integration suite prove skilltest threaded it (and that turn 1, with no
+# prior session, did not).
+[ -z "$resume" ] || reply="$reply RESUMED:$resume"
 
 surfaced=""
 index=0

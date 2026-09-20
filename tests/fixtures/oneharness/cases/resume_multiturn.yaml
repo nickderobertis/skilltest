@@ -1,0 +1,15 @@
+# Hermetic-oneharness resume: two assistant turns (no `done_when`, so the loop
+# runs to `max_turns`) against the REAL oneharness binary. claude-code reports
+# `supports_resume`, so skilltest threads the `session_id` the shim echoes
+# (`fake-claude-1`) into turn 2 as `--resume`; the shim appends
+# ` RESUMED:<id>` to that turn's reply, which is how the suite sees which turn
+# continued a session and which started one.
+name: oh_resume_multiturn
+skill: ../../skills/greeter
+input: "I'd like to confirm my appointment, please."
+user:
+  persona: "You are a terse patient confirming an appointment."
+  max_turns: 2
+evals:
+  - type: boolean
+    criterion: "the assistant replied on each of its turns"
