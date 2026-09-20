@@ -1382,6 +1382,14 @@ impl Provider for OneharnessProvider {
 /// `--resume` once oneharness has echoed a `session_id` for that run, so those
 /// harnesses keep falling back to the inlined transcript exactly as before. An
 /// unknown harness id is `false`, never an optimistic guess.
+///
+// llmlint: ignore[invalid_states_unrepresentable] The harness-id domain is
+// owned by oneharness, not skilltest: a `platforms:` entry is free-form user
+// YAML and a newer oneharness can register an id this build has never heard
+// of. Closing it into an enum here would reject a valid platform at parse time
+// rather than route it conservatively, which is precisely what the `false`
+// arm exists to do. This is also a stable public signature the SDKs' callers
+// depend on.
 #[must_use]
 pub fn supports_resume(harness: &str) -> bool {
     matches!(

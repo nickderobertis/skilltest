@@ -500,3 +500,38 @@ fn history_off_offers_no_replay_command_through_real_oneharness() {
         store.0.display()
     );
 }
+
+#[test]
+#[ignore = "needs oneharness on PATH (just install-oneharness); run via just test-oneharness"]
+fn repo_oneharness_config_is_accepted_by_the_installed_binary() {
+    // The repo-root `oneharness.toml` is discovered upward by EVERY oneharness
+    // run started under the tree — llmlint's, and the SDK tests' too — and
+    // oneharness refuses a top-level key it does not know. That is exactly how
+    // `run_mode` got evicted from this file once, with the routing pushed into
+    // an `ONEHARNESS_RUN_MODE` override on the `lint-llm` recipes. So assert the
+    // installed binary both accepts the committed file and reads the routing
+    // out of it; a line that could not would fail here instead of at a
+    // contributor's first `just lint-llm`.
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let out = Command::new(oneharness_bin())
+        .args(["config", "--format", "json"])
+        .current_dir(&repo_root)
+        .output()
+        .expect("oneharness config executes");
+    assert!(
+        out.status.success(),
+        "the installed oneharness rejected the repo's oneharness.toml: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let effective: Value = serde_json::from_slice(&out.stdout).expect("config emits JSON");
+    assert_eq!(
+        effective["run_mode"]["value"], "fallback",
+        "config: {effective:#}"
+    );
+    let source = effective["run_mode"]["source"].as_str().unwrap_or_default();
+    assert!(
+        source.ends_with("oneharness.toml"),
+        "run_mode must come from the committed file, not a default or an env \
+         override; source: {source}"
+    );
+}

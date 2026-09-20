@@ -165,8 +165,10 @@ screenshots-bless: screenshots
 # `oneharness`; install it first with `just install-oneharness`. See docs/e2e.md.
 
 # Install the prebuilt oneharness the live e2e drives (verifies the checksum).
-# Keep in lockstep with `default_version` in scripts/install-oneharness.sh,
-# which documents what each pinned version added.
+# The version is authored in scripts/install-oneharness.sh; this default and
+# both SDKs' bounds restate it, and the gate's
+# `oneharness_pin_is_lockstep_across_installer_recipe_and_both_sdks` reconciles
+# all four.
 install-oneharness version="v0.16.0":
     @bash scripts/install-oneharness.sh {{version}}
 

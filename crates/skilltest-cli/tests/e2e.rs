@@ -1114,3 +1114,73 @@ fn oneharness_history_can_be_disabled_via_config() {
         "history was disabled, so no command should be surfaced"
     );
 }
+
+// ---------------------------------------------------------------------------
+// The oneharness version pin
+// ---------------------------------------------------------------------------
+
+/// The one place the targeted oneharness version is authored: the installer's
+/// `default_version`. Everything else restates it, so this is what they are
+/// reconciled against.
+fn installer_default_version() -> String {
+    let script = std::fs::read_to_string(repo_file("scripts/install-oneharness.sh"))
+        .expect("scripts/install-oneharness.sh is readable");
+    script
+        .lines()
+        .find_map(|l| l.strip_prefix("default_version=\"")?.strip_suffix('"'))
+        .expect("scripts/install-oneharness.sh declares default_version=\"vX.Y.Z\"")
+        .to_string()
+}
+
+fn repo_file(rel: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join(rel)
+}
+
+fn read_repo_file(rel: &str) -> String {
+    std::fs::read_to_string(repo_file(rel)).unwrap_or_else(|e| panic!("{rel} is readable: {e}"))
+}
+
+/// The targeted oneharness release is restated in four hand-edited places —
+/// the installer, the `just install-oneharness` recipe that mirrors it, and
+/// each SDK's `oneharness-cli` bound (both SDKs bundle the binary, so an
+/// install must not hand skilltest a line its provider was not built against).
+/// Drifting them apart is silent: the SDKs would ship one line while CI's live
+/// e2e installs another. This reconciles all four against the installer.
+#[test]
+fn oneharness_pin_is_lockstep_across_installer_recipe_and_both_sdks() {
+    let version = installer_default_version(); // e.g. "v0.16.0"
+    let bare = version
+        .strip_prefix('v')
+        .unwrap_or_else(|| panic!("default_version must be tag-shaped (vX.Y.Z), got {version}"));
+    let (major, minor) = {
+        let mut parts = bare.split('.');
+        let major: u32 = parts.next().and_then(|p| p.parse().ok()).expect("major");
+        let minor: u32 = parts.next().and_then(|p| p.parse().ok()).expect("minor");
+        (major, minor)
+    };
+
+    let justfile = read_repo_file("justfile");
+    assert!(
+        justfile.contains(&format!("install-oneharness version=\"{version}\":")),
+        "the `just install-oneharness` default must mirror the installer's {version}"
+    );
+
+    // `>=X.Y.Z,<X.(Y+1)` — admits the targeted release and its patch line, and
+    // nothing older or from a later minor.
+    let python = read_repo_file("sdks/python/pyproject.toml");
+    let want_python = format!("\"oneharness-cli>={bare},<{major}.{}\"", minor + 1);
+    assert!(
+        python.contains(&want_python),
+        "sdks/python/pyproject.toml must bound oneharness-cli as {want_python} to match {version}"
+    );
+
+    // npm's caret on a 0.x version is `>=0.Y.Z <0.(Y+1).0` — the same window.
+    let typescript = read_repo_file("sdks/typescript/package.json");
+    let want_ts = format!("\"oneharness-cli\": \"^{bare}\"");
+    assert!(
+        typescript.contains(&want_ts),
+        "sdks/typescript/package.json must bound oneharness-cli as {want_ts} to match {version}"
+    );
+}

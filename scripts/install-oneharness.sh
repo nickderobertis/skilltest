@@ -17,31 +17,15 @@
 
 set -euo pipefail
 
-# Pinned to the version skilltest's OneharnessProvider targets, and kept in
-# lockstep with the `oneharness-cli` bounds both SDKs declare and the
-# `install-oneharness` recipe's default in the justfile. The whole argv surface
-# skilltest drives landed by v0.3.8 — `--system` (v0.2.1, the skill as a real
-# system prompt on every harness), native reply extraction (v0.2.37, OpenCode's
-# nested JSONL included), `--events`/`--stream` (v0.3.6), the mock/spy seam
-# (v0.3.7: `oneharness mock`, `run --mock-rules`/`--spy-file`) and opt-in run
-# history (v0.3.8: `run --history --history-dir --history-name`, the report's
-# `history_file`, and the `oneharness history` verbs).
+# The targeted oneharness release, and the one place it is authored. The
+# `just install-oneharness` default and both SDKs' `oneharness-cli` bounds
+# restate it; `oneharness_pin_is_lockstep_across_installer_recipe_and_both_sdks`
+# (crates/skilltest-cli/tests/e2e.rs) reconciles all four, so bump it here and
+# let that test name whatever else has to move. What this line has to satisfy
+# lives in docs/protocol.md (the argv and report surface the provider drives).
 #
-# v0.16.0 is what skilltest targets now. Two things it changes matter here:
-# `run` prints a human-readable report unless `--format json` or `--compact` is
-# given (skilltest always passes `--compact`, or `--stream`, whose NDJSON is
-# format-independent), and `run_mode` is a config key the whole 0.16 line
-# parses — so the repo-root `oneharness.toml` carries it directly instead of the
-# `ONEHARNESS_RUN_MODE` env workaround the recipes used to layer on. It also
-# reports `supports_resume` for every registered harness, which is why
-# `skilltest_core::provider::supports_resume` now mirrors the whole registry
-# (the `oneharness list` drift alarm in tests/oneharness_integration.rs).
-#
-# Note v0.3.0 normalized `--mode` approval modes (breaking): skilltest passes no
-# `--mode`, so oneharness's default applies — configure approval (e.g. `bypass`)
-# via oneharness's own config. History written by a pre-0.16 skilltest lives in
-# the legacy store format; `oneharness history migrate` rewrites it in place.
-# Bump here when skilltest adopts a newer oneharness.
+# Upgrading past a release that changed the history store: `oneharness history
+# migrate` rewrites an older store in place — skilltest never does it for you.
 default_version="v0.16.0"
 version="${1:-$default_version}"
 repo="nickderobertis/oneharness"
