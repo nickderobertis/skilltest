@@ -90,11 +90,6 @@ marker_text() { # marker_text <marker>: text after the marker, sans a trailing -
 }
 reply="$(marker_text 'fake-reply:')"
 [ -n "$reply" ] || reply="ok"
-# A resumed turn is otherwise invisible in the report: oneharness's own
-# `--resume` handling is upstream of the harness, and the reply text is all a
-# skilltest transcript carries. Surfacing the session handle here is what lets
-# the integration suite prove skilltest threaded it (and that turn 1, with no
-# prior session, did not).
 [ -z "$resume" ] || reply="$reply RESUMED:$resume"
 
 surfaced=""

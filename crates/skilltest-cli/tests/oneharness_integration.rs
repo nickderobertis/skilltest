@@ -18,7 +18,7 @@
 //! — it is the drift alarm between skilltest's mirrored decision engine
 //! (`mock::decide`, proven in the gate) and oneharness's hook-side one.
 //!
-// llmlint: ignore-file[shell_test_tiers_stay_split] This whole file IS the host-tool tier, and `tests/AGENTS.md` fixes how this repository splits it: exactly two suites may be `#[ignore]`, `live.rs` and this one, both because they need the `oneharness` binary rather than to dodge the gate. The marker is the split — `just test-oneharness` and the `e2e-*` workflows are its separate entry point, and `just check` never runs it. Promoting it to its own nx project would duplicate the CLI's build and fixtures for a tier that is already unreachable from the gate.
+// llmlint: ignore-file[shell_test_tiers_stay_split] This file is the host-tool tier, and `tests/AGENTS.md` fixes the split: `just test-oneharness` and the `e2e-*` workflows are its only entry points, and `just check` never reaches it.
 
 use std::path::PathBuf;
 use std::process::{Command, Output};
@@ -510,14 +510,10 @@ fn history_off_offers_no_replay_command_through_real_oneharness() {
 #[test]
 #[ignore = "needs oneharness on PATH (just install-oneharness); run via just test-oneharness"]
 fn repo_oneharness_config_is_accepted_by_the_installed_binary() {
-    // The repo-root `oneharness.toml` is discovered upward by EVERY oneharness
-    // run started under the tree — llmlint's, and the SDK tests' too — and
-    // oneharness refuses a top-level key it does not know. That is exactly how
-    // `run_mode` got evicted from this file once, with the routing pushed into
-    // an `ONEHARNESS_RUN_MODE` override on the `lint-llm` recipes. So assert the
-    // installed binary both accepts the committed file and reads the routing
-    // out of it; a line that could not would fail here instead of at a
-    // contributor's first `just lint-llm`.
+    // Every oneharness run started under this tree discovers the root
+    // `oneharness.toml`, and oneharness refuses a top-level key it does not
+    // know. So the committed file must parse on the targeted line, and the
+    // routing must come from it rather than a default or an env override.
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let out = Command::new(oneharness_bin())
         .args(["config", "--format", "json"])

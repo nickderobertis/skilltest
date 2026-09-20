@@ -33,6 +33,11 @@ dest="${ONEHARNESS_INSTALL_DIR:-$HOME/.local/bin}"
 
 fail() { printf 'install-oneharness: %s\n' "$1" >&2; exit 1; }
 
+# The version becomes a release tag and an asset filename, so it is validated
+# here rather than wherever it first fails to resolve.
+[[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+    || fail "version must be tag-shaped (vMAJOR.MINOR.PATCH), got \`$version\` — e.g. $default_version"
+
 command -v gh >/dev/null 2>&1 \
     || fail "needs the GitHub CLI (\`gh\`). Install it, or build oneharness from source: cargo install --git https://github.com/$repo --tag $version --locked"
 
