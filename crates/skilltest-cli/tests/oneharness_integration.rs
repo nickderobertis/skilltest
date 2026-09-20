@@ -17,6 +17,8 @@
 //! `just test-oneharness`. CI's e2e workflows run this before the live phases
 //! — it is the drift alarm between skilltest's mirrored decision engine
 //! (`mock::decide`, proven in the gate) and oneharness's hook-side one.
+//!
+// llmlint: ignore-file[shell_test_tiers_stay_split] This whole file IS the host-tool tier, and `tests/AGENTS.md` fixes how this repository splits it: exactly two suites may be `#[ignore]`, `live.rs` and this one, both because they need the `oneharness` binary rather than to dodge the gate. The marker is the split — `just test-oneharness` and the `e2e-*` workflows are its separate entry point, and `just check` never runs it. Promoting it to its own nx project would duplicate the CLI's build and fixtures for a tier that is already unreachable from the gate.
 
 use std::path::PathBuf;
 use std::process::{Command, Output};

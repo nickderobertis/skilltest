@@ -20,7 +20,7 @@ set -euo pipefail
 # The targeted oneharness release, and the one place it is authored. The
 # `just install-oneharness` default and both SDKs' `oneharness-cli` bounds
 # restate it; `oneharness_pin_is_lockstep_across_installer_recipe_and_both_sdks`
-# (crates/skilltest-cli/tests/e2e.rs) reconciles all four, so bump it here and
+# (crates/skilltest-cli/tests/pins.rs) reconciles all four, so bump it here and
 # let that test name whatever else has to move. What this line has to satisfy
 # lives in docs/protocol.md (the argv and report surface the provider drives).
 #

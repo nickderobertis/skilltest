@@ -206,11 +206,10 @@ projects per PR. Locally, install the toolchains once (see `docs/development.md`
   uses six of its normalized features directly so skilltest can stop string-
   munging: `--system <skill instructions>` carries the skill as a real system
   prompt; `--resume <session_id>` continues a real harness session for the
-  multi-turn loop on harnesses where `supports_resume` is true — every harness
-  in the v0.16 registry, mirrored by `provider::supports_resume` and held to
-  the real `oneharness list` by a drift alarm in the hermetic suite; a harness
-  that reports no `session_id` has no handle to continue from and keeps
-  inlining the transcript;
+  multi-turn loop. Which harnesses that covers is oneharness's to say:
+  `provider::supports_resume` mirrors its registry, and the hermetic suite's
+  drift alarm holds the mirror to the real `oneharness list`, so never hand-edit
+  one without the other;
   `--events` surfaces normalized tool events (`{kind, name, input, output,
   index}`) skilltest lifts onto each assistant turn (`Message.events`) so
   consumers can assert on *what the skill did*, not just its text;
@@ -233,9 +232,8 @@ projects per PR. Locally, install the toolchains once (see `docs/development.md`
   A streaming variant (`respond_streaming`, `oneharness run --stream`) forwards
   tool events live and, on a sink `ControlFlow::Break`, kills the oneharness child
   to short-circuit a bad run; the buffered `respond` (`--compact`) is the default.
-  `--compact` is load-bearing on v0.16: `oneharness run` prints a human-readable
-  report unless a JSON one is asked for, and `--compact` selects compact JSON on
-  its own. `--stream`'s NDJSON does not depend on `--format`.
+  `--compact` is not cosmetic — it is what selects JSON at all — so do not drop
+  it while "tidying" the argv.
   Evals and the simulated user run on a fixed `judge_harness`, independent of the
   harness under test. Verdict JSON is parsed tolerantly (real models wrap it in
   prose/fences) and type-checked.

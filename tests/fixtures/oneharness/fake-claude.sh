@@ -51,8 +51,7 @@ while [ $i -lt ${#args[@]} ]; do
         -p) prompt="${args[$((i + 1))]}"; i=$((i + 2)) ;;
         --settings) settings="${args[$((i + 1))]}"; i=$((i + 2)) ;;
         --append-system-prompt) system="${args[$((i + 1))]}"; i=$((i + 2)) ;;
-        # Captured so a resumed turn is observable in the reply (see below).
-        --resume) resume="${args[$((i + 1))]}"; i=$((i + 2)) ;;
+        --resume) resume="${args[$((i + 1))]:-}"; i=$((i + 2)) ;;
         # Value-carrying flags we accept and ignore.
         --model | --permission-mode | --json-schema | --output-format)
             i=$((i + 2)) ;;
