@@ -440,12 +440,19 @@ fn history_recording_round_trips_through_real_oneharness() {
     let command = report["runs"][0]["history_command"]
         .as_str()
         .expect("a recorded run offers a history_command");
+    // Validate the whole command before running it, so a shell never sees a
+    // shape this test did not expect: `<bin> history show <name> --history-dir
+    // <store>`, with the session name skilltest derives from the case.
+    let expected_prefix = format!("{} history show skilltest-claude-code-", oneharness_bin());
+    let expected_suffix = format!("--history-dir {}", store.0.display());
     assert!(
-        command.contains("history show") && command.contains(&store.0.display().to_string()),
-        "command: {command}"
+        command.starts_with(&expected_prefix) && command.ends_with(&expected_suffix),
+        "expected `{expected_prefix}…{expected_suffix}`, got: {command}"
     );
 
-    // Replay it exactly as a user would read it off the report.
+    // Replay it exactly as a user would read it off the report — running the
+    // string verbatim is the point: it is what a reader copies out of the
+    // report, so anything less would not prove the offer is real.
     let replay = Command::new("sh")
         .args(["-c", command])
         .output()
