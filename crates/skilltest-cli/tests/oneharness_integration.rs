@@ -442,12 +442,26 @@ fn history_recording_round_trips_through_real_oneharness() {
         .expect("a recorded run offers a history_command");
     // Validate the whole command before running it, so a shell never sees a
     // shape this test did not expect: `<bin> history show <name> --history-dir
-    // <store>`, with the session name skilltest derives from the case.
+    // <store>`, with the session name skilltest derives from the case. The
+    // session name is the one part a prefix/suffix check leaves unread, so every
+    // character of it is checked against the lowercase-ascii/digit/`-` slug
+    // `history_session_name` promises — that promise is what makes the string
+    // safe to hand to `sh -c` below, so this pins it rather than assuming it.
     let expected_prefix = format!("{} history show skilltest-claude-code-", oneharness_bin());
-    let expected_suffix = format!("--history-dir {}", store.0.display());
+    let expected_suffix = format!(" --history-dir {}", store.0.display());
+    let name_tail = command
+        .strip_prefix(&expected_prefix)
+        .and_then(|rest| rest.strip_suffix(&expected_suffix))
+        .unwrap_or_else(|| {
+            panic!("expected `{expected_prefix}<name>{expected_suffix}`, got: {command}")
+        });
     assert!(
-        command.starts_with(&expected_prefix) && command.ends_with(&expected_suffix),
-        "expected `{expected_prefix}…{expected_suffix}`, got: {command}"
+        !name_tail.is_empty()
+            && name_tail
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'),
+        "the session name must be the shell-safe slug skilltest promises, \
+         got `{name_tail}` in: {command}"
     );
 
     // Replay it exactly as a user would read it off the report — running the
