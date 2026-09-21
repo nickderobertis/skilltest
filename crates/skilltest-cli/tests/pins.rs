@@ -122,6 +122,7 @@ fn documented_oneharness_version_matches_the_installer_pin() {
 /// The installer holds a version argument to the same tag shape as its pin,
 /// refusing it before any download: the refusal names the bad input and the
 /// shape to use instead, and nothing is installed.
+// llmlint: ignore-block[shell_test_tiers_stay_split] No scripts-owned project exists, and `just coverage` runs the whole Rust workspace on every `just check` regardless of what nx calls affected, so this offline (~0.1s) installer test runs whenever the installer changes; it sits beside the pin gate that already treats the installer as the pin's authority.
 #[test]
 fn installer_refuses_a_malformed_version_before_downloading() {
     let dest = std::env::temp_dir().join(format!("skilltest-pins-install-{}", std::process::id()));
@@ -141,4 +142,5 @@ fn installer_refuses_a_malformed_version_before_downloading() {
         assert!(!dest.exists(), "`{bad}` must install nothing");
     }
 }
+// llmlint: ignore-end[shell_test_tiers_stay_split]
 // llmlint: ignore-end[code_lands_in_the_domain_that_owns_it]
