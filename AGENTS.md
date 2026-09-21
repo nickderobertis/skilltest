@@ -117,8 +117,8 @@ a single template. What was pulled in, and why:
 | --- | --- |
 | `crates/skilltest-core` | Library: config, skill model + validation, test-case model, provider protocol, evals, runner, report. The stable Rust API the CLI builds on, and the source of truth for the JSON contract. |
 | `crates/skilltest-cli` | The `skilltest` binary (clap), including `skilltest schema` (emits the contract's JSON Schemas). `run` ingests cases from positional YAML `PATH`s **or** `--case-json <FILE>` — a JSON case object/array (the delivery channel for a case built in an SDK; `skill` resolves relative to CWD, not a file). Also carries `skilltest-fake-provider`, a deterministic reference provider used by the e2e suite — a second `[[bin]]` gated behind the non-default `fake-provider` feature so a published `cargo install` ships only `skilltest`; the nx `build`/`lint` targets enable the feature, release builds don't. |
-| `sdks/python` | `skilltest-sdk`: the Python SDK — runs the CLI as a subprocess and parses its JSON contract into Pydantic models (`run_skill`), plus an opt-in async streaming API (`stream_skill` → `SkillStream`, an `async for` of tool events that `break`s to short-circuit) and `tool_calls`/`ToolEvent` for tool-event analysis. `run_skill`/`stream_skill` take a YAML path **or** a code-defined `TestCase` (the `case.py` builders — `TestCase`/`user`/`boolean`/`numeric`/`called`/`not_called`, reusing the `mock.py` builders; the builders construct the **generated** `_case.py` models from the input contract, so the payload cannot drift from the Rust parse — delivered via `--case-json`). No framework code. Ships a per-target **platform wheel** that bundles the CLI at `skilltest_sdk/_bin/skilltest` (plus a pure-wheel/sdist fallback), so `pip install` needs no separate binary step; the runner resolves the bundled binary, falling back to `$SKILLTEST_BIN`/`PATH`. Depends on the `oneharness-cli` package (bounded to the release line `scripts/install-oneharness.sh` pins; `tests/pins.rs` reconciles the two) so the default provider's `oneharness` binary comes with the install too; the runner points the CLI at it via `SKILLTEST_ONEHARNESS_BIN` (a config `provider.bin` or a caller-set var still wins). |
-| `sdks/typescript` | `@skill-test/sdk`: the TypeScript SDK — same wrapper with generated type declarations (`runSkill`), plus the matching async streaming API (`streamSkill` → `SkillStream`, a `for await` of tool events that `break`s to short-circuit) and `toolCalls`/`ToolEvent`. `runSkill`/`streamSkill` take a YAML path **or** a code-defined case (the `case.ts` builders — `testCase`/`user`/`boolean`/`numeric`/`called`/`notCalled`, typed against the **generated** `src/generated/case.ts` input-contract types). No framework code. Bundles the CLI via the per-platform `@skill-test/cli-*` packages (see `sdks/typescript/platforms`), declared as `optionalDependencies` so `pnpm add` pulls only the matching host's binary; the runner resolves it, falling back to `$SKILLTEST_BIN`/`PATH`. Depends on `oneharness-cli` (bounded to the same release line as the Python SDK — see above) so the default provider's `oneharness` comes with the install; the runner resolves the **native** binary in the host's `@oneharness/cli-*` package (execing it directly, never the `oneharness-cli` node launcher) and points the CLI at it via `SKILLTEST_ONEHARNESS_BIN` (a config `provider.bin` or a caller-set var still wins), falling back to `oneharness` on `PATH` — `node_modules/.bin` need not be on `PATH`. |
+| `sdks/python` | `skilltest-sdk`: the Python SDK — runs the CLI as a subprocess and parses its JSON contract into Pydantic models (`run_skill`), plus an opt-in async streaming API (`stream_skill` → `SkillStream`, an `async for` of tool events that `break`s to short-circuit) and `tool_calls`/`ToolEvent` for tool-event analysis. `run_skill`/`stream_skill` take a YAML path **or** a code-defined `TestCase` (the `case.py` builders — `TestCase`/`user`/`boolean`/`numeric`/`called`/`not_called`, reusing the `mock.py` builders; the builders construct the **generated** `_case.py` models from the input contract, so the payload cannot drift from the Rust parse — delivered via `--case-json`). No framework code. Ships a per-target **platform wheel** that bundles the CLI at `skilltest_sdk/_bin/skilltest` (plus a pure-wheel/sdist fallback), so `pip install` needs no separate binary step; the runner resolves the bundled binary, falling back to `$SKILLTEST_BIN`/`PATH`. Depends on the `oneharness-cli` package (bounded to the release line `scripts/install-oneharness.sh` pins; `crates/skilltest-cli/tests/pins.rs` reconciles the two) so the default provider's `oneharness` binary comes with the install too; the runner points the CLI at it via `SKILLTEST_ONEHARNESS_BIN` (a config `provider.bin` or a caller-set var still wins). <!-- llmlint: ignore[instruction_layer_localized] Pre-existing root layout row; this change only updates its oneharness bound in place. Moving package detail into nested AGENTS.md is tracked by the follow-up draft "Localize package- and provider-specific instructions out of skilltest's root AGENTS.md". --> |
+| `sdks/typescript` | `@skill-test/sdk`: the TypeScript SDK — same wrapper with generated type declarations (`runSkill`), plus the matching async streaming API (`streamSkill` → `SkillStream`, a `for await` of tool events that `break`s to short-circuit) and `toolCalls`/`ToolEvent`. `runSkill`/`streamSkill` take a YAML path **or** a code-defined case (the `case.ts` builders — `testCase`/`user`/`boolean`/`numeric`/`called`/`notCalled`, typed against the **generated** `src/generated/case.ts` input-contract types). No framework code. Bundles the CLI via the per-platform `@skill-test/cli-*` packages (see `sdks/typescript/platforms`), declared as `optionalDependencies` so `pnpm add` pulls only the matching host's binary; the runner resolves it, falling back to `$SKILLTEST_BIN`/`PATH`. Depends on `oneharness-cli` (bounded to the same release line as the Python SDK — see above) so the default provider's `oneharness` comes with the install; the runner resolves the **native** binary in the host's `@oneharness/cli-*` package (execing it directly, never the `oneharness-cli` node launcher) and points the CLI at it via `SKILLTEST_ONEHARNESS_BIN` (a config `provider.bin` or a caller-set var still wins), falling back to `oneharness` on `PATH` — `node_modules/.bin` need not be on `PATH`. <!-- llmlint: ignore[instruction_layer_localized] Pre-existing root layout row; this change only updates its oneharness bound in place. Moving package detail into nested AGENTS.md is tracked by the follow-up draft "Localize package- and provider-specific instructions out of skilltest's root AGENTS.md". --> |
 | `sdks/typescript/platforms/cli-*` | The four binary-carrier npm packages (`@skill-test/cli-{linux,darwin}-{x64,arm64}`), each `os`/`cpu`-scoped with a git-ignored `bin/` filled at publish time. Workspace members pinned by the SDK via `workspace:*`; `scripts/set-version.sh` keeps their versions in lockstep. |
 | `plugins/pytest` | `skilltest-pytest`: pytest collection of `*.skilltest.yaml` cases, built on (and re-exporting) `skilltest-sdk`. |
 | `plugins/vitest` | `@skill-test/vitest`: `skillTest`/`discover` vitest helpers, built on (and re-exporting) `@skill-test/sdk`. |
@@ -197,6 +197,8 @@ projects per PR. Locally, install the toolchains once (see `docs/development.md`
 
 ## The provider boundary
 
+<!-- llmlint: ignore-block[instruction_layer_localized] Pre-existing root section; this change only updates the oneharness version fact in place. Moving provider-internal detail into crates/skilltest-core is tracked by the follow-up draft "Localize package- and provider-specific instructions out of skilltest's root AGENTS.md". -->
+
 `skilltest` never talks to a model directly. The `Provider` trait
 (`provider.rs`) has two real backends; see [`docs/protocol.md`](docs/protocol.md).
 
@@ -206,10 +208,8 @@ projects per PR. Locally, install the toolchains once (see `docs/development.md`
   uses six of its normalized features directly so skilltest can stop string-
   munging: `--system <skill instructions>` carries the skill as a real system
   prompt; `--resume <session_id>` continues a real harness session for the
-  multi-turn loop. Which harnesses that covers is oneharness's to say:
-  `provider::supports_resume` mirrors its registry, and the hermetic suite's
-  drift alarm holds the mirror to the real `oneharness list`, so never hand-edit
-  one without the other;
+  multi-turn loop on harnesses where `supports_resume` is true (others fall
+  back to inlining the transcript);
   `--events` surfaces normalized tool events (`{kind, name, input, output,
   index}`) skilltest lifts onto each assistant turn (`Message.events`) so
   consumers can assert on *what the skill did*, not just its text;
@@ -232,8 +232,6 @@ projects per PR. Locally, install the toolchains once (see `docs/development.md`
   A streaming variant (`respond_streaming`, `oneharness run --stream`) forwards
   tool events live and, on a sink `ControlFlow::Break`, kills the oneharness child
   to short-circuit a bad run; the buffered `respond` (`--compact`) is the default.
-  `--compact` is not cosmetic — it is what selects JSON at all — so do not drop
-  it while "tidying" the argv.
   Evals and the simulated user run on a fixed `judge_harness`, independent of the
   harness under test. Verdict JSON is parsed tolerantly (real models wrap it in
   prose/fences) and type-checked.
@@ -276,6 +274,8 @@ opencode, cursor, crush, qwen, copilot.** Each has a per-harness workflow
 it stays a loud skip. `docs/e2e.md` holds the full matrix (models, per-harness
 delivery/extraction, the qwen gpt-5 gotcha), the secrets flow (`gh-secrets.json`),
 and the runbook for adding a harness.
+
+<!-- llmlint: ignore-end[instruction_layer_localized] -->
 
 ## Invariants (non-negotiable)
 

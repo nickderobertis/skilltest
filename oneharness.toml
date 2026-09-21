@@ -28,6 +28,7 @@
 # under the repo, including the SDK tests that drive the bundled `oneharness-cli`.
 # skilltest's own provider always passes `--harness`, so the list below never
 # steers a skill run; only llmlint's unpinned runs are routed by it.
+# llmlint: ignore[contracts_have_one_source_or_a_drift_gate] oneharness's config schema is the source; `repo_oneharness_config_is_accepted_by_the_installed_binary` (`just test-oneharness`, run in CI's e2e-claude workflow) is the drift gate, kept out of `just check` because that gate deliberately does not require the oneharness binary.
 run_mode = "fallback"
 harnesses = ["codex", "claude-code"]
 

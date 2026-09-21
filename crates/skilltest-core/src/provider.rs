@@ -911,6 +911,9 @@ impl OneharnessProvider {
             "run",
             "--harness",
             args.harness,
+            // Not cosmetic: on oneharness 0.16 stdout is text unless `--compact`
+            // (or `--format json`) is given, so this is what selects the JSON
+            // report parsed below.
             "--compact",
             "--events",
             "--timeout",
@@ -1367,33 +1370,24 @@ impl Provider for OneharnessProvider {
     }
 }
 
-/// The harnesses oneharness's adapter table marks `supports_resume = true` —
-/// every harness in the v0.16 registry, which grew session continuation across
-/// the whole matrix (it was claude-code / opencode / cursor only on v0.3.x).
+/// The harnesses oneharness's registry marks `supports_resume = true` — the
+/// whole v0.16 matrix. Mirrored rather than probed so a run costs no extra
+/// subprocess; `supports_resume_matches_the_real_registry` (the hermetic
+/// oneharness suite) fails the moment the two disagree.
 ///
-/// Mirrored here rather than probed, so building a run costs no extra
-/// subprocess; `supports_resume_matches_the_real_registry` in
-/// `crates/skilltest-cli/tests/oneharness_integration.rs` drives the real
-/// `oneharness list --format json` and fails the moment the two disagree, so a
-/// registry that moves again is caught rather than silently mis-routed. That
-/// alarm is in the hermetic tier rather than the gate for the same reason the
-/// mock engine's is (AGENTS.md, "The provider boundary"): reconciling against
-/// oneharness needs the oneharness binary, which the gate deliberately does
-/// not require. `just test-oneharness` and CI's e2e workflows run it.
-///
-/// Saying `true` is safe even where a harness reports no session id headlessly
-/// (`session_capable: false` — goose, crush, copilot): the runner only passes
-/// `--resume` once oneharness has echoed a `session_id` for that run, so those
-/// harnesses keep falling back to the inlined transcript exactly as before. An
-/// unknown harness id is `false`, never an optimistic guess.
+/// `true` is safe where a harness reports no session id headlessly (goose,
+/// crush, copilot): `--resume` is only passed once oneharness has echoed a
+/// `session_id`, otherwise the transcript is inlined. An unknown id is `false`.
 #[must_use]
-// llmlint: ignore[invalid_states_unrepresentable] The harness-id domain is owned by oneharness, not skilltest: a `platforms:` entry is free-form user YAML and a newer oneharness can register an id this build has never heard of. Closing it into an enum here would reject a valid platform at parse time instead of routing it conservatively, which is exactly what the `false` arm exists to do — and this is a stable public signature both SDKs' callers depend on.
+// llmlint: ignore-block[contracts_have_one_source_or_a_drift_gate] oneharness's registry is the source; this mirror's drift gate is `supports_resume_matches_the_real_registry`, run by `just test-oneharness` in CI's e2e-claude workflow — kept out of `just check` because that gate deliberately does not require the oneharness binary.
+// llmlint: ignore[invalid_states_unrepresentable] Harness ids are an open domain owned by oneharness and read from free-form `platforms:` YAML; an enum would reject a valid newer id instead of routing it conservatively.
 pub fn supports_resume(harness: &str) -> bool {
     matches!(
         harness,
         "claude-code" | "codex" | "opencode" | "goose" | "qwen" | "crush" | "copilot" | "cursor"
     )
 }
+// llmlint: ignore-end[contracts_have_one_source_or_a_drift_gate]
 
 // ---------------------------------------------------------------------------
 // Run history helpers

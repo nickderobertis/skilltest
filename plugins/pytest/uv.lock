@@ -1,4 +1,4 @@
-version = 1
+version = 1  # llmlint: ignore[projects_stay_in_one_uv_workspace] Pre-existing per-package lock layout; this change only bumps oneharness-cli inside it. Consolidating into one root uv workspace is tracked by the follow-up draft "Resolve skilltest's Python packages through one root uv workspace lock".
 revision = 3
 requires-python = ">=3.12"
 
