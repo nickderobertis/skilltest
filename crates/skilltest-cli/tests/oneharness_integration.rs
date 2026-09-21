@@ -48,12 +48,12 @@ fn run_case(case: &str, extra: &[&str]) -> Output {
 }
 
 fn run_platform(case: &str, platform: &str, extra: &[&str]) -> Output {
-    run_platform_in(case, platform, extra, None)
+    run_platform_with_history_dir(case, platform, extra, None)
 }
 
 /// As [`run_platform`], with an optional `SKILLTEST_HISTORY_DIR` so a test can
 /// own the history store it asserts on instead of writing to the developer's.
-fn run_platform_in(
+fn run_platform_with_history_dir(
     case: &str,
     platform: &str,
     extra: &[&str],
@@ -445,7 +445,7 @@ fn history_recording_round_trips_through_real_oneharness() {
     // centralized store and the report offers the command that replays it. The
     // proof that the command is real (not just well-formed) is running it.
     let store = Scratch::new("history");
-    let out = run_platform_in(
+    let out = run_platform_with_history_dir(
         "spy_plain.yaml",
         "claude-code",
         &["--format", "json"],
@@ -522,7 +522,7 @@ fn history_off_offers_no_replay_command_through_real_oneharness() {
         ),
     )
     .expect("config written");
-    let out = run_platform_in(
+    let out = run_platform_with_history_dir(
         "spy_plain.yaml",
         "claude-code",
         &["--format", "json", "--config", config.to_str().unwrap()],
