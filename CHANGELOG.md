@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.11.0](https://github.com/nickderobertis/skilltest/compare/v0.10.3...v0.11.0) (2026-09-21)
+
+### Features
+
+* **oneharness:** bring the SDKs and the provider onto the current oneharness release ([#48](https://github.com/nickderobertis/skilltest/issues/48)) ([096b2c4](https://github.com/nickderobertis/skilltest/commit/096b2c4f38878ebaecc07d347a9ce529c1983b4a))
+
 ## [0.10.3](https://github.com/nickderobertis/skilltest/compare/v0.10.2...v0.10.3) (2026-09-20)
 
 ### Build System

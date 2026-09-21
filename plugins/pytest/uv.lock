@@ -1,4 +1,4 @@
-version = 1  # llmlint: ignore[projects_stay_in_one_uv_workspace] Each Python package is its own uv project and lock; skilltest-pytest consumes the SDK through a path source.
+version = 1
 revision = 3
 requires-python = ">=3.12"
 
@@ -201,7 +201,7 @@ wheels = [
 
 [[package]]
 name = "skilltest-pytest"
-version = "0.10.3"
+version = "0.11.0"
 source = { editable = "." }
 dependencies = [
     { name = "pytest" },
@@ -228,7 +228,7 @@ dev = [
 
 [[package]]
 name = "skilltest-sdk"
-version = "0.10.3"
+version = "0.11.0"
 source = { editable = "../../sdks/python" }
 dependencies = [
     { name = "oneharness-cli" },
