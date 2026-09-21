@@ -30,6 +30,10 @@
 # WITHOUT `--settings` (skilltest never mocks the judge), which
 # `JUDGE_SAW_SETTINGS` in the reply would expose if that ever regressed.
 #
+# A run carrying `--resume <id>` (skilltest threading a prior turn's
+# `session_id`) appends ` RESUMED:<id>` to the reply, so the integration suite
+# can see which turns continued a session rather than starting one.
+#
 # Output is Claude Code's `-p --output-format stream-json --verbose` shape
 # (what oneharness requests under `--events`): one assistant line per tool_use
 # (post-rewrite input, like the real transcript), one user line per
@@ -39,7 +43,7 @@
 
 set -euo pipefail
 
-prompt=""; settings=""; system=""
+prompt=""; settings=""; system=""; resume=""
 args=("$@")
 i=0
 while [ $i -lt ${#args[@]} ]; do
@@ -47,8 +51,15 @@ while [ $i -lt ${#args[@]} ]; do
         -p) prompt="${args[$((i + 1))]}"; i=$((i + 2)) ;;
         --settings) settings="${args[$((i + 1))]}"; i=$((i + 2)) ;;
         --append-system-prompt) system="${args[$((i + 1))]}"; i=$((i + 2)) ;;
+        --resume)
+            resume="${args[$((i + 1))]:-}"
+            if [ -z "$resume" ]; then
+                echo "fake-claude: --resume needs a session id; pass --resume <session-id> as echoed by the previous turn" >&2
+                exit 2
+            fi
+            i=$((i + 2)) ;;
         # Value-carrying flags we accept and ignore.
-        --model | --permission-mode | --resume | --json-schema | --output-format)
+        --model | --permission-mode | --json-schema | --output-format)
             i=$((i + 2)) ;;
         *) i=$((i + 1)) ;;
     esac
@@ -85,6 +96,7 @@ marker_text() { # marker_text <marker>: text after the marker, sans a trailing -
 }
 reply="$(marker_text 'fake-reply:')"
 [ -n "$reply" ] || reply="ok"
+[ -z "$resume" ] || reply="$reply RESUMED:$resume"
 
 surfaced=""
 index=0

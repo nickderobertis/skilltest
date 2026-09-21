@@ -1,0 +1,12 @@
+# Hermetic-oneharness resume: two assistant turns (no `done_when`, so the loop
+# runs to `max_turns`) on a resume-capable harness, so turn 2 threads turn 1's
+# session id. Asserted by resume_threads_session_id_through_real_oneharness.
+name: oh_resume_multiturn
+skill: ../../skills/greeter
+input: "I'd like to confirm my appointment, please."
+user:
+  persona: "You are a terse patient confirming an appointment."
+  max_turns: 2
+evals:
+  - type: boolean
+    criterion: "the assistant replied on each of its turns"

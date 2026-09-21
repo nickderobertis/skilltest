@@ -58,8 +58,8 @@ importers:
   sdks/typescript:
     dependencies:
       oneharness-cli:
-        specifier: ^0.3.7
-        version: 0.3.11
+        specifier: ^0.16.0
+        version: 0.16.0
     devDependencies:
       '@types/node':
         specifier: ^22.7.5
@@ -446,28 +446,28 @@ packages:
   '@octokit/types@16.0.0':
     resolution: {integrity: sha512-sKq+9r1Mm4efXW1FCk7hFSeJo4QKreL/tTbR0rz/qx/r1Oa2VV83LTA/H/MuCOX7uCIJmQVRKBcbmWoySjAnSg==}
 
-  '@oneharness/cli-darwin-arm64@0.3.11':
-    resolution: {integrity: sha512-1llN+qu1bSuLjmuVZyPpsWxkxzRB4GNTS+A5HAamjH8cNZ+AlNg8gxM9Gl0TPeSL3pioBD8QHPYRexdMl5f6lA==}
+  '@oneharness/cli-darwin-arm64@0.16.0':
+    resolution: {integrity: sha512-lUpUtbO8gZvWWs7R49+hmS3611eDwFg9eiXOmHkLW1RkwoX9GJsq+ny8B7VWYpKZWaxl7iNWtqMb+TJAmjVKkA==}
     cpu: [arm64]
     os: [darwin]
 
-  '@oneharness/cli-darwin-x64@0.3.11':
-    resolution: {integrity: sha512-v5ZJa8iKrgrVGDyhb7ZasM/lpDNUBtWEmVoncVp7q8RrnGihTa206RBAiTDdVAX3IfL2psRvMlTf4MhCFVThVQ==}
+  '@oneharness/cli-darwin-x64@0.16.0':
+    resolution: {integrity: sha512-vSVM8yY+73vubifT9uYbo3JcMCUf/acJQ+KExXup11CTe1f3UY9TX0QMQv83eSo11YZ1ax5Wi/NrRzlMShUeLg==}
     cpu: [x64]
     os: [darwin]
 
-  '@oneharness/cli-linux-arm64@0.3.11':
-    resolution: {integrity: sha512-rpyuPNRBdZpUbcCXtG6hb4mHTIzg3y6KMH2nIodtIw0TAOSTORZUbDIklyD+mYc0ExIDxiO7lFcfWr1KBHG4Xw==}
+  '@oneharness/cli-linux-arm64@0.16.0':
+    resolution: {integrity: sha512-PepliLvWhr40vGUy8kXYmlNWrVwP+dcRYvKq2fHwqc+zh2TbjrGqGnHkDU4wnPt5N0ic5DgQK86WO5PqJYbMfQ==}
     cpu: [arm64]
     os: [linux]
 
-  '@oneharness/cli-linux-x64@0.3.11':
-    resolution: {integrity: sha512-22F9pKbgPTUD3sdPd2qCiucpcmuQ6VNrWao7PLxSoJlF1RXInC1W249OvxO2+vd5Njkh9/qFKBjPPdH13YE07Q==}
+  '@oneharness/cli-linux-x64@0.16.0':
+    resolution: {integrity: sha512-Lbay+YpLOIpQiSCBv24FNXRwSFElJOHRroOy9BUMyfZ21RXndZ3L/4BtLmnsewTSTXGyGLtepU5ajx3hOFjfaA==}
     cpu: [x64]
     os: [linux]
 
-  '@oneharness/cli-win32-x64@0.3.11':
-    resolution: {integrity: sha512-GMi7NGVQvwV/zExfSU//DL0zCIy4nocKFYPHUxJ7kPq650p8ElsU8fc8Dwf3IXLvMo4KlpqHmnBQTCxpAIF8Iw==}
+  '@oneharness/cli-win32-x64@0.16.0':
+    resolution: {integrity: sha512-4BoP3iNE1pssvizLMu1pMMhPKE0TzucsfYOl/pLiL8hWp3L3z8TjC0TSpBqo0VBEKah+UPvUgIDWWyAPHgxx9g==}
     cpu: [x64]
     os: [win32]
 
@@ -1711,8 +1711,8 @@ packages:
   once@1.4.0:
     resolution: {integrity: sha512-lNaJgI+2Q5URQBkccEKHTQOPaXdUxnZZElQTZY0MFUAuaEqe1E+Nyvgdz/aIyNi6Z9MzO5dv1H8n58/GELp3+w==}
 
-  oneharness-cli@0.3.11:
-    resolution: {integrity: sha512-WZ2S381QtUMLzQ6oqKldvhjvuq8Uy7vSCGD0Mi3ldhUKyYkyruQmY3oPZE6X2fM6BCKGRLKpNJ9EqLIM7FIwXQ==}
+  oneharness-cli@0.16.0:
+    resolution: {integrity: sha512-o/V0e9eqm7Yv8Yfc3nIcXJQxg66c1t8xMyTCANTX3tO5alg6OOJ53wPaP+UpbyeLRtu3/gIqOrlW3T2Edwpt4Q==}
     engines: {node: '>=16'}
     hasBin: true
 
@@ -2617,19 +2617,19 @@ snapshots:
     dependencies:
       '@octokit/openapi-types': 27.0.0
 
-  '@oneharness/cli-darwin-arm64@0.3.11':
+  '@oneharness/cli-darwin-arm64@0.16.0':
     optional: true
 
-  '@oneharness/cli-darwin-x64@0.3.11':
+  '@oneharness/cli-darwin-x64@0.16.0':
     optional: true
 
-  '@oneharness/cli-linux-arm64@0.3.11':
+  '@oneharness/cli-linux-arm64@0.16.0':
     optional: true
 
-  '@oneharness/cli-linux-x64@0.3.11':
+  '@oneharness/cli-linux-x64@0.16.0':
     optional: true
 
-  '@oneharness/cli-win32-x64@0.3.11':
+  '@oneharness/cli-win32-x64@0.16.0':
     optional: true
 
   '@pnpm/config.env-replace@1.1.0': {}
@@ -3818,13 +3818,13 @@ snapshots:
     dependencies:
       wrappy: 1.0.2
 
-  oneharness-cli@0.3.11:
+  oneharness-cli@0.16.0:
     optionalDependencies:
-      '@oneharness/cli-darwin-arm64': 0.3.11
-      '@oneharness/cli-darwin-x64': 0.3.11
-      '@oneharness/cli-linux-arm64': 0.3.11
-      '@oneharness/cli-linux-x64': 0.3.11
-      '@oneharness/cli-win32-x64': 0.3.11
+      '@oneharness/cli-darwin-arm64': 0.16.0
+      '@oneharness/cli-darwin-x64': 0.16.0
+      '@oneharness/cli-linux-arm64': 0.16.0
+      '@oneharness/cli-linux-x64': 0.16.0
+      '@oneharness/cli-win32-x64': 0.16.0
 
   onetime@5.1.2:
     dependencies:

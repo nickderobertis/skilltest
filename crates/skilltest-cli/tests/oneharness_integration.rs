@@ -17,11 +17,14 @@
 //! `just test-oneharness`. CI's e2e workflows run this before the live phases
 //! — it is the drift alarm between skilltest's mirrored decision engine
 //! (`mock::decide`, proven in the gate) and oneharness's hook-side one.
+//!
+// llmlint: ignore-file[shell_test_tiers_stay_split] This file is the host-tool tier, and `tests/AGENTS.md` fixes the split: `just test-oneharness` and the `e2e-*` workflows are its only entry points, and `just check` never reaches it.
 
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
 use serde_json::Value;
+use skilltest_core::supports_resume;
 
 fn skilltest() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_skilltest"))
@@ -35,8 +38,26 @@ fn shim() -> PathBuf {
     fixtures().join("fake-claude.sh")
 }
 
+/// The oneharness binary under test: `$SKILLTEST_ONEHARNESS_BIN`, else
+/// `oneharness` on PATH. It reaches a shell in the history replay, so it is
+/// held to [`assert_shell_safe`] here, where it enters the suite.
 fn oneharness_bin() -> String {
-    std::env::var("SKILLTEST_ONEHARNESS_BIN").unwrap_or_else(|_| "oneharness".into())
+    let bin = std::env::var("SKILLTEST_ONEHARNESS_BIN").unwrap_or_else(|_| "oneharness".into());
+    assert_shell_safe("SKILLTEST_ONEHARNESS_BIN", &bin);
+    bin
+}
+
+/// Refuse a value that a shell would read as more than one plain word: only
+/// ASCII letters, digits and `/._+-` pass.
+fn assert_shell_safe(what: &str, value: &str) {
+    assert!(
+        !value.is_empty()
+            && value
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || "/._+-".contains(c)),
+        "{what} must be a plain path (ASCII letters, digits, `/._+-`) to be replayed \
+         through a shell; got `{value}` — point it at a path without spaces or shell syntax"
+    );
 }
 
 /// Run a case through the built CLI against real oneharness + the shim.
@@ -45,8 +66,19 @@ fn run_case(case: &str, extra: &[&str]) -> Output {
 }
 
 fn run_platform(case: &str, platform: &str, extra: &[&str]) -> Output {
-    Command::new(skilltest())
-        .arg("run")
+    run_platform_with_history_dir(case, platform, extra, None)
+}
+
+/// As [`run_platform`], with an optional `SKILLTEST_HISTORY_DIR` so a test can
+/// own the history store it asserts on instead of writing to the developer's.
+fn run_platform_with_history_dir(
+    case: &str,
+    platform: &str,
+    extra: &[&str],
+    history_dir: Option<&std::path::Path>,
+) -> Output {
+    let mut cmd = Command::new(skilltest());
+    cmd.arg("run")
         .arg(fixtures().join("cases").join(case))
         .args(["--oneharness-bin", &oneharness_bin()])
         .args(["--platform", platform])
@@ -57,9 +89,35 @@ fn run_platform(case: &str, platform: &str, extra: &[&str]) -> Output {
         .args(extra)
         // The shim stands in for the claude CLI; oneharness resolves the
         // harness binary from this env override exactly like a user's.
-        .env("ONEHARNESS_BIN_CLAUDE_CODE", shim())
-        .output()
-        .expect("skilltest run executes")
+        .env("ONEHARNESS_BIN_CLAUDE_CODE", shim());
+    if let Some(dir) = history_dir {
+        cmd.env("SKILLTEST_HISTORY_DIR", dir);
+    }
+    cmd.output().expect("skilltest run executes")
+}
+
+/// A private scratch directory removed when the test drops it.
+struct Scratch(PathBuf);
+
+impl Scratch {
+    fn new(tag: &str) -> Scratch {
+        let dir = std::env::temp_dir().join(format!(
+            "skilltest-ohit-{tag}-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or_default()
+        ));
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        Scratch(dir)
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
 }
 
 fn report(output: &Output) -> Value {
@@ -301,4 +359,242 @@ fn streaming_with_mocks_through_real_oneharness() {
     let records = report["runs"][0]["mock_calls"].as_array().unwrap();
     assert_eq!(records[0]["action"], "stub");
     assert_eq!(records[0]["mock"], "push");
+}
+
+#[test]
+#[ignore = "needs oneharness on PATH (just install-oneharness); run via just test-oneharness"]
+fn supports_resume_matches_the_real_registry() {
+    // skilltest mirrors oneharness's `supports_resume` column rather than
+    // probing it per run, so this is the drift alarm: ask the installed binary
+    // what it registers and hold the mirror to it, id by id. A release that
+    // adds a harness (or withdraws resume from one) fails here instead of
+    // silently routing a resumable harness down the inline-transcript path.
+    let out = Command::new(oneharness_bin())
+        .args(["list", "--format", "json"])
+        .output()
+        .expect("oneharness list executes");
+    assert!(
+        out.status.success(),
+        "oneharness list failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let registry: Value = serde_json::from_slice(&out.stdout).expect("list emits JSON");
+    let harnesses = registry["harnesses"]
+        .as_array()
+        .expect("the registry lists harnesses");
+    assert!(!harnesses.is_empty(), "registry: {registry:#}");
+    for harness in harnesses {
+        let id = harness["id"].as_str().expect("every entry has an id");
+        // Strictly a bool: a missing or re-typed column is a registry contract
+        // change skilltest must be told about, not read as "no resume".
+        let registered = harness["supports_resume"]
+            .as_bool()
+            .unwrap_or_else(|| panic!("{id} has no boolean supports_resume: {harness:#}"));
+        assert_eq!(
+            supports_resume(id),
+            registered,
+            "skilltest::supports_resume({id}) disagrees with the installed \
+             oneharness registry; update provider::supports_resume"
+        );
+    }
+}
+
+#[test]
+#[ignore = "needs oneharness on PATH (just install-oneharness); run via just test-oneharness"]
+fn resume_threads_session_id_through_real_oneharness() {
+    // Two assistant turns on a resume-capable harness: turn 1 has no session to
+    // continue, turn 2 carries the `session_id` the shim echoed. The shim
+    // appends ` RESUMED:<id>` whenever oneharness handed it `--resume`, so the
+    // transcript itself says which turn continued a session.
+    let out = run_case("resume_multiturn.yaml", &["--format", "json"]);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report = report(&out);
+    let messages = report["runs"][0]["transcript"]["messages"]
+        .as_array()
+        .expect("a transcript");
+    let assistant: Vec<&str> = messages
+        .iter()
+        .filter(|m| m["role"] == "assistant")
+        .map(|m| m["content"].as_str().unwrap_or_default())
+        .collect();
+    assert_eq!(assistant.len(), 2, "messages: {messages:#?}");
+    assert!(
+        !assistant[0].contains("RESUMED:"),
+        "the opening turn has no session to continue: {}",
+        assistant[0]
+    );
+    assert!(
+        assistant[1].contains("RESUMED:fake-claude-1"),
+        "turn 2 must resume the session the harness reported: {}",
+        assistant[1]
+    );
+}
+
+#[test]
+#[ignore = "host-tool tier (the shim this suite drives); run via just test-oneharness"]
+fn shim_refuses_resume_without_a_session_id() {
+    // The shim stands in for claude-code at oneharness's argv boundary: a bare
+    // or empty `--resume` must fail loudly rather than "resume" a blank session,
+    // or the resume journey above could pass on an id oneharness never sent.
+    for tail in [&["--resume"][..], &["--resume", ""][..]] {
+        let out = Command::new(shim())
+            .args(["-p", "hello", "--append-system-prompt", "skill"])
+            .args(tail)
+            .output()
+            .expect("the shim runs");
+        assert_eq!(out.status.code(), Some(2), "argv tail {tail:?}");
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains("--resume needs a session id"),
+            "stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+}
+
+#[test]
+#[ignore = "needs oneharness on PATH (just install-oneharness); run via just test-oneharness"]
+fn history_recording_round_trips_through_real_oneharness() {
+    // Recording is on by default, so a plain run writes a session into the
+    // centralized store and the report offers the command that replays it. The
+    // proof that the command is real (not just well-formed) is running it.
+    let store = Scratch::new("history");
+    let out = run_platform_with_history_dir(
+        "spy_plain.yaml",
+        "claude-code",
+        &["--format", "json"],
+        Some(&store.0),
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report = report(&out);
+    let command = report["runs"][0]["history_command"]
+        .as_str()
+        .expect("a recorded run offers a history_command");
+    // Validate the whole command before running it, so a shell never sees a
+    // shape this test did not expect: `<bin> history show <name> --history-dir
+    // <store>`, with the session name skilltest derives from the case. The
+    // binary and store are held to `assert_shell_safe`; the session name is the
+    // part a prefix/suffix check leaves unread, so every character of it is
+    // checked against the lowercase-ascii/digit/`-` slug `history_session_name`
+    // promises. Together they make the string safe to hand to `sh -c` below.
+    let expected_prefix = format!("{} history show skilltest-claude-code-", oneharness_bin());
+    assert_shell_safe("the history store path", &store.0.display().to_string());
+    let expected_suffix = format!(" --history-dir {}", store.0.display());
+    let name_tail = command
+        .strip_prefix(&expected_prefix)
+        .and_then(|rest| rest.strip_suffix(&expected_suffix))
+        .unwrap_or_else(|| {
+            panic!("expected `{expected_prefix}<name>{expected_suffix}`, got: {command}")
+        });
+    assert!(
+        !name_tail.is_empty()
+            && name_tail
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'),
+        "the session name must be the shell-safe slug skilltest promises, \
+         got `{name_tail}` in: {command}"
+    );
+
+    // Replay it exactly as a user would read it off the report — running the
+    // string verbatim is the point: it is what a reader copies out of the
+    // report, so anything less would not prove the offer is real.
+    let replay = Command::new("sh")
+        .args(["-c", command])
+        .output()
+        .expect("the history command executes");
+    assert!(
+        replay.status.success(),
+        "`{command}` failed: {}",
+        String::from_utf8_lossy(&replay.stderr)
+    );
+    let recorded = String::from_utf8_lossy(&replay.stdout);
+    assert!(
+        recorded.contains("claude-code") && recorded.contains("Deployment finished"),
+        "the replayed session carries the run: {recorded}"
+    );
+}
+
+#[test]
+#[ignore = "needs oneharness on PATH (just install-oneharness); run via just test-oneharness"]
+fn history_off_offers_no_replay_command_through_real_oneharness() {
+    // The recovery side of the same seam: with recording disabled no `--history`
+    // flag is passed, oneharness echoes no `history_file`, and skilltest must
+    // offer no command rather than one that would resolve to nothing.
+    let store = Scratch::new("nohistory");
+    let config = store.0.join("skilltest.yaml");
+    std::fs::write(
+        &config,
+        format!(
+            "provider:\n  kind: oneharness\n  bin: {}\n  judge_harness: claude-code\n  \
+             timeout_secs: 60\n  history: false\nplatforms: [claude-code]\nmodels: [fake-model]\n\
+             judge_model: fake-model\n",
+            oneharness_bin()
+        ),
+    )
+    .expect("config written");
+    let out = run_platform_with_history_dir(
+        "spy_plain.yaml",
+        "claude-code",
+        &["--format", "json", "--config", config.to_str().unwrap()],
+        Some(&store.0),
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report = report(&out);
+    assert!(
+        report["runs"][0]["history_command"].is_null(),
+        "report: {report:#}"
+    );
+    assert!(
+        std::fs::read_dir(&store.0)
+            .expect("store dir")
+            .flatten()
+            .all(|e| e.file_name() == "skilltest.yaml"),
+        "nothing was recorded into {}",
+        store.0.display()
+    );
+}
+
+#[test]
+#[ignore = "needs oneharness on PATH (just install-oneharness); run via just test-oneharness"]
+fn repo_oneharness_config_is_accepted_by_the_installed_binary() {
+    // Every oneharness run started under this tree discovers the root
+    // `oneharness.toml`, and oneharness refuses a top-level key it does not
+    // know. So the committed file must parse on the targeted line, and the
+    // routing must come from it rather than a default or an env override.
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let out = Command::new(oneharness_bin())
+        .args(["config", "--format", "json"])
+        .current_dir(&repo_root)
+        .output()
+        .expect("oneharness config executes");
+    assert!(
+        out.status.success(),
+        "the installed oneharness rejected the repo's oneharness.toml: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let effective: Value = serde_json::from_slice(&out.stdout).expect("config emits JSON");
+    assert_eq!(
+        effective["run_mode"]["value"], "fallback",
+        "config: {effective:#}"
+    );
+    let source = effective["run_mode"]["source"].as_str().unwrap_or_default();
+    assert!(
+        source.ends_with("oneharness.toml"),
+        "run_mode must come from the committed file, not a default or an env \
+         override; source: {source}"
+    );
 }

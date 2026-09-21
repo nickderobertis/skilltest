@@ -17,26 +17,26 @@
 
 set -euo pipefail
 
-# Pinned to the version skilltest's OneharnessProvider targets. v0.2.1 first
-# delivered `--system` to every harness (so codex/goose could be driven, not just
-# claude-code) and fixed the codex bypass flags; v0.2.37 extracts OpenCode's final
-# text from its JSONL (`text_source: json:opencode-parts`, so transcripts carry
-# clean text instead of raw stdout). v0.3.6 adds `--events` (normalized tool-call
-# events skilltest lifts onto each turn) and `--stream` (NDJSON events for the
-# streaming/short-circuit API); v0.3.7 the mock/spy seam (`oneharness mock`,
-# `run --mock-rules`/`--spy-file`); v0.3.8 opt-in run history (`run --history
-# --history-dir <DIR> --history-name <NAME>`, a `history_file` in the report, and
-# the `oneharness history list/show/clear` verbs) — skilltest records each skill
-# run to a centralized dir so past runs are reviewable. Note v0.3.0 normalized
-# `--mode` approval modes (breaking): skilltest passes no `--mode`, so
-# oneharness's default applies — configure approval (e.g. `bypass`) via
-# oneharness's own config. Bump here when skilltest adopts a newer oneharness.
-default_version="v0.3.8"
+# The targeted oneharness release, and the one place it is authored. The
+# `just install-oneharness` default and both SDKs' `oneharness-cli` bounds
+# restate it; `oneharness_pin_is_lockstep_across_installer_recipe_and_both_sdks`
+# (crates/skilltest-cli/tests/pins.rs) reconciles all four, so bump it here and
+# let that test name whatever else has to move. What this line has to satisfy
+# lives in docs/protocol.md (the argv and report surface the provider drives).
+#
+# Upgrading past a release that changed the history store: `oneharness history
+# migrate` rewrites an older store in place — skilltest never does it for you.
+default_version="v0.16.0"
 version="${1:-$default_version}"
 repo="nickderobertis/oneharness"
 dest="${ONEHARNESS_INSTALL_DIR:-$HOME/.local/bin}"
 
 fail() { printf 'install-oneharness: %s\n' "$1" >&2; exit 1; }
+
+# The version becomes a release tag and an asset filename, so it is validated
+# here rather than wherever it first fails to resolve.
+[[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+    || fail "version must be tag-shaped (vMAJOR.MINOR.PATCH), got \`$version\` — e.g. $default_version"
 
 command -v gh >/dev/null 2>&1 \
     || fail "needs the GitHub CLI (\`gh\`). Install it, or build oneharness from source: cargo install --git https://github.com/$repo --tag $version --locked"
