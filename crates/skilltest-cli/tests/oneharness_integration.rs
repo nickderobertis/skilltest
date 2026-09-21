@@ -38,8 +38,26 @@ fn shim() -> PathBuf {
     fixtures().join("fake-claude.sh")
 }
 
+/// The oneharness binary under test: `$SKILLTEST_ONEHARNESS_BIN`, else
+/// `oneharness` on PATH. It reaches a shell in the history replay, so it is
+/// held to [`assert_shell_safe`] here, where it enters the suite.
 fn oneharness_bin() -> String {
-    std::env::var("SKILLTEST_ONEHARNESS_BIN").unwrap_or_else(|_| "oneharness".into())
+    let bin = std::env::var("SKILLTEST_ONEHARNESS_BIN").unwrap_or_else(|_| "oneharness".into());
+    assert_shell_safe("SKILLTEST_ONEHARNESS_BIN", &bin);
+    bin
+}
+
+/// Refuse a value that a shell would read as more than one plain word: only
+/// ASCII letters, digits and `/._+-` pass.
+fn assert_shell_safe(what: &str, value: &str) {
+    assert!(
+        !value.is_empty()
+            && value
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || "/._+-".contains(c)),
+        "{what} must be a plain path (ASCII letters, digits, `/._+-`) to be replayed \
+         through a shell; got `{value}` — point it at a path without spaces or shell syntax"
+    );
 }
 
 /// Run a case through the built CLI against real oneharness + the shim.
@@ -464,11 +482,12 @@ fn history_recording_round_trips_through_real_oneharness() {
     // Validate the whole command before running it, so a shell never sees a
     // shape this test did not expect: `<bin> history show <name> --history-dir
     // <store>`, with the session name skilltest derives from the case. The
-    // session name is the one part a prefix/suffix check leaves unread, so every
-    // character of it is checked against the lowercase-ascii/digit/`-` slug
-    // `history_session_name` promises — that promise is what makes the string
-    // safe to hand to `sh -c` below, so this pins it rather than assuming it.
+    // binary and store are held to `assert_shell_safe`; the session name is the
+    // part a prefix/suffix check leaves unread, so every character of it is
+    // checked against the lowercase-ascii/digit/`-` slug `history_session_name`
+    // promises. Together they make the string safe to hand to `sh -c` below.
     let expected_prefix = format!("{} history show skilltest-claude-code-", oneharness_bin());
+    assert_shell_safe("the history store path", &store.0.display().to_string());
     let expected_suffix = format!(" --history-dir {}", store.0.display());
     let name_tail = command
         .strip_prefix(&expected_prefix)

@@ -119,4 +119,26 @@ fn documented_oneharness_version_matches_the_installer_pin() {
         );
     }
 }
+/// The installer holds a version argument to the same tag shape as its pin,
+/// refusing it before any download: the refusal names the bad input and the
+/// shape to use instead, and nothing is installed.
+#[test]
+fn installer_refuses_a_malformed_version_before_downloading() {
+    let dest = std::env::temp_dir().join(format!("skilltest-pins-install-{}", std::process::id()));
+    for bad in ["0.16.0", "v0.16", "v0.16.0-rc1", "latest"] {
+        let out = std::process::Command::new("bash")
+            .arg(repo_file("scripts/install-oneharness.sh"))
+            .arg(bad)
+            .env("ONEHARNESS_INSTALL_DIR", &dest)
+            .output()
+            .expect("bash runs the installer");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(1), "`{bad}`: stderr: {stderr}");
+        assert!(
+            stderr.contains(&format!("got `{bad}`")) && stderr.contains("vMAJOR.MINOR.PATCH"),
+            "`{bad}` must be refused by name with the expected shape; stderr: {stderr}"
+        );
+        assert!(!dest.exists(), "`{bad}` must install nothing");
+    }
+}
 // llmlint: ignore-end[code_lands_in_the_domain_that_owns_it]
