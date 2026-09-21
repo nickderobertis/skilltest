@@ -418,6 +418,27 @@ fn resume_threads_session_id_through_real_oneharness() {
 }
 
 #[test]
+#[ignore = "host-tool tier (the shim this suite drives); run via just test-oneharness"]
+fn shim_refuses_resume_without_a_session_id() {
+    // The shim stands in for claude-code at oneharness's argv boundary: a bare
+    // or empty `--resume` must fail loudly rather than "resume" a blank session,
+    // or the resume journey above could pass on an id oneharness never sent.
+    for tail in [&["--resume"][..], &["--resume", ""][..]] {
+        let out = Command::new(shim())
+            .args(["-p", "hello", "--append-system-prompt", "skill"])
+            .args(tail)
+            .output()
+            .expect("the shim runs");
+        assert_eq!(out.status.code(), Some(2), "argv tail {tail:?}");
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains("--resume needs a session id"),
+            "stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+}
+
+#[test]
 #[ignore = "needs oneharness on PATH (just install-oneharness); run via just test-oneharness"]
 fn history_recording_round_trips_through_real_oneharness() {
     // Recording is on by default, so a plain run writes a session into the
