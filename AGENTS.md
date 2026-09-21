@@ -1,4 +1,4 @@
-# AGENTS.md
+# AGENTS.md <!-- llmlint: ignore[instruction_layer_localized] Review-ownership routing (CODEOWNERS) is repository policy, not content this instruction file can carry. -->
 
 Durable instructions for humans and agents working in this repo. Write for a
 future maintainer, not as a session log. Put deterministic steps in scripts and

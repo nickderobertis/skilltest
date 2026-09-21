@@ -54,7 +54,7 @@ while [ $i -lt ${#args[@]} ]; do
         --resume)
             resume="${args[$((i + 1))]:-}"
             if [ -z "$resume" ]; then
-                echo "fake-claude: --resume needs a session id" >&2
+                echo "fake-claude: --resume needs a session id; pass --resume <session-id> as echoed by the previous turn" >&2
                 exit 2
             fi
             i=$((i + 2)) ;;
