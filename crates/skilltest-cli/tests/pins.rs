@@ -83,17 +83,39 @@ fn oneharness_pin_is_lockstep_across_installer_recipe_and_both_sdks() {
 #[test]
 fn documented_oneharness_version_matches_the_installer_pin() {
     let (bare, _major, _minor, _patch) = installer_default_version();
-    let want = format!("v{bare}");
-    for doc in [
-        "AGENTS.md",
-        "README.md",
-        "docs/protocol.md",
-        "crates/skilltest-core/src/provider.rs",
+    // Each doc's one target-version declaration, by the text that introduces
+    // it — so an unrelated historical mention cannot satisfy the check.
+    for (doc, anchor) in [
+        (
+            "AGENTS.md",
+            "[`oneharness`](https://github.com/nickderobertis/oneharness) **v",
+        ),
+        ("README.md", "the default **oneharness** provider (v"),
+        (
+            "docs/protocol.md",
+            "[`oneharness`](https://github.com/nickderobertis/oneharness) (v",
+        ),
+        (
+            "crates/skilltest-core/src/provider.rs",
+            "`oneharness` CLI (targets **v",
+        ),
     ] {
-        assert!(
-            read_repo_file(doc).contains(&want),
-            "{doc} must name the targeted oneharness release ({want}); \
-             scripts/install-oneharness.sh is the authority"
+        let text = read_repo_file(doc);
+        let declarations: Vec<&str> = text
+            .match_indices(anchor)
+            .map(|(at, _)| {
+                let rest = &text[at + anchor.len()..];
+                let len = rest
+                    .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+                    .unwrap_or(rest.len());
+                rest[..len].trim_end_matches('.')
+            })
+            .collect();
+        assert_eq!(
+            declarations,
+            [bare.as_str()],
+            "{doc} must declare the targeted oneharness release exactly once, as v{bare} \
+             after `{anchor}`; scripts/install-oneharness.sh is the authority"
         );
     }
 }

@@ -198,6 +198,7 @@ projects per PR. Locally, install the toolchains once (see `docs/development.md`
 ## The provider boundary
 
 <!-- llmlint: ignore-block[instruction_layer_localized] The provider boundary spans core, CLI, SDKs and CI, so it lives at the root. -->
+<!-- llmlint: ignore-block[agents_md_durable_and_terse] This is the root summary of which oneharness features skilltest depends on and why; docs/protocol.md holds the wire detail. -->
 
 `skilltest` never talks to a model directly. The `Provider` trait
 (`provider.rs`) has two real backends; see [`docs/protocol.md`](docs/protocol.md).
@@ -276,6 +277,7 @@ delivery/extraction, the qwen gpt-5 gotcha), the secrets flow (`gh-secrets.json`
 and the runbook for adding a harness.
 
 <!-- llmlint: ignore-end[instruction_layer_localized] -->
+<!-- llmlint: ignore-end[agents_md_durable_and_terse] -->
 
 ## Invariants (non-negotiable)
 
