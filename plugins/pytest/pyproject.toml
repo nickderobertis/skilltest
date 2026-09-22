@@ -24,8 +24,12 @@ dev = [
     "ty>=0.0.1a1",
 ]
 
+# Development only: resolve the pinned dependency above to the SDK member of the
+# repo's uv workspace (root `pyproject.toml`), so both packages share one
+# resolution and one lockfile. hatchling ignores this table, so the published
+# dist still carries the exact `skilltest-sdk==<version>` pin from [project].
 [tool.uv.sources]
-skilltest-sdk = { path = "../../sdks/python", editable = true }
+skilltest-sdk = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

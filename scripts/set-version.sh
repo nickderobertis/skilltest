@@ -10,11 +10,12 @@
 #
 #   scripts/set-version.sh 0.4.1
 #
-# Needs cargo, uv, and pnpm on PATH (it refreshes Cargo.lock, both uv.locks, and
-# pnpm-lock.yaml). Touches: Cargo.toml (+ the internal skilltest-core pin), both
-# pyproject.toml (+ pytest's exact skilltest-sdk pin), both package.json, the four
-# @skill-test/cli-* platform package.json, and the four lockfiles. The SDK's and
-# vitest's `workspace:*` deps and pytest's editable [tool.uv.sources] are left alone.
+# Needs cargo, uv, and pnpm on PATH (it refreshes Cargo.lock, the root uv.lock —
+# one lock for the whole uv workspace — and pnpm-lock.yaml). Touches: Cargo.toml
+# (+ the internal skilltest-core pin), both pyproject.toml (+ pytest's exact
+# skilltest-sdk pin), both package.json, the four @skill-test/cli-* platform
+# package.json, and the three lockfiles. The SDK's and vitest's `workspace:*`
+# deps and pytest's `{ workspace = true }` [tool.uv.sources] are left alone.
 set -euo pipefail
 
 VERSION="${1:-}"
@@ -45,19 +46,17 @@ run() { # <description> <command...>
   fi
 }
 
-uv_lock_in() { ( cd "$1" && uv lock --quiet ); }
-
 # --- Rust: [workspace.package].version + the internal skilltest-core pin, then lock --
 perl -i -pe 's/^version = "[^"]*"/version = "'"$VERSION"'"/' Cargo.toml
 perl -i -pe 's{(skilltest-core = \{ path = "crates/skilltest-core", version = ")[^"]*(")}{${1}'"$VERSION"'${2}}' Cargo.toml
 run "refresh Cargo.lock" cargo update --quiet -p skilltest-core -p skilltest-cli
 
-# --- Python: both project versions + pytest's exact skilltest-sdk pin, then locks ----
+# --- Python: both member versions + pytest's exact skilltest-sdk pin, then the lock -
 perl -i -pe 's/^version = "[^"]*"/version = "'"$VERSION"'"/' sdks/python/pyproject.toml
 perl -i -pe 's/^version = "[^"]*"/version = "'"$VERSION"'"/' plugins/pytest/pyproject.toml
 perl -i -pe 's/"skilltest-sdk[^"]*"/"skilltest-sdk=='"$VERSION"'"/' plugins/pytest/pyproject.toml
-run "refresh sdks/python/uv.lock" uv_lock_in sdks/python
-run "refresh plugins/pytest/uv.lock" uv_lock_in plugins/pytest
+# One uv workspace, one lockfile at the repo root: locking once covers both members.
+run "refresh uv.lock" uv lock --quiet
 
 # --- TypeScript: SDK + framework + the four optional platform packages, then lock ----
 # The platform packages (@skill-test/cli-<os>-<arch>) carry the binary; the SDK

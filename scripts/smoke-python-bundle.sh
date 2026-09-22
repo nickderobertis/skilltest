@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Bundle smoke (Python): prove a published-shape `skilltest-sdk` wheel runs the
-# CLI **bundled inside it**. Build the platform wheel, install it + the pytest
-# plugin into a fresh venv, and run a case through the plugin with SKILLTEST_BIN
-# unset and no `skilltest` on PATH — so a pass can only come from the bundle.
+# CLI **bundled inside it**. Build the platform wheel and the plugin's own wheel,
+# install both into a fresh venv, and run a case through the plugin with
+# SKILLTEST_BIN unset and no `skilltest` on PATH — so a pass can only come from
+# the bundle. Each package is built and installed as its own distribution: the
+# uv workspace they share is a development-time resolution, never a publish one.
 #
 #   scripts/smoke-python-bundle.sh <rust-target> <cli-binary> <fake-provider>
 #
@@ -46,16 +48,48 @@ if [ -z "$wheel" ]; then
   exit 1
 fi
 
-# 2. Fresh venv: the wheel (skilltest-sdk + bundled binary) and pytest, then the
-#    plugin with --no-deps so it reuses the installed wheel, never a source SDK.
+# 2. The plugin's own publish-shape wheel, built from its uv-workspace member.
+#    Its metadata must still carry the exact `skilltest-sdk==<version>` pin: the
+#    workspace source in plugins/pytest/pyproject.toml resolves the SDK for
+#    development only, and a wheel that shipped that instead of the pin would
+#    install with no SDK at all.
+( cd "$repo/plugins/pytest" && uv build --wheel --out-dir "$work/dist" >/dev/null )
+plugin_wheel="$(ls "$work"/dist/skilltest_pytest-*.whl | head -1)"
+if [ -z "$plugin_wheel" ]; then
+  echo "error: no skilltest-pytest wheel produced" >&2
+  exit 1
+fi
+
+# 3. Fresh venv: the SDK wheel (binary bundled) + pytest, then the plugin wheel
+#    with --no-deps so the SDK in play can only be the installed wheel, never
+#    the workspace member on disk.
 uv venv --python 3.12 "$work/venv" >/dev/null
 uv pip install --python "$work/venv" "$wheel" pytest >/dev/null
-uv pip install --python "$work/venv" --no-deps "$repo/plugins/pytest" >/dev/null
 
-# 3. Run a self-contained case (its own skill, no conftest above it) through the
+if ! pin="$("$work/venv/bin/python" - "$plugin_wheel" <<'PYEOF'
+import re, sys, zipfile
+
+with zipfile.ZipFile(sys.argv[1]) as zf:
+    (name,) = [n for n in zf.namelist() if n.endswith(".dist-info/METADATA")]
+    metadata = zf.read(name).decode()
+pins = re.findall(r"(?m)^Requires-Dist: (skilltest-sdk==.+)$", metadata)
+if not pins:
+    sys.exit(1)
+print(pins[0])
+PYEOF
+)"; then
+  echo "error: the skilltest-pytest wheel declares no exact skilltest-sdk pin" >&2
+  echo "hint: [project].dependencies in plugins/pytest/pyproject.toml must keep" >&2
+  echo "      \"skilltest-sdk==<version>\"; [tool.uv.sources] is development-only." >&2
+  exit 1
+fi
+
+uv pip install --python "$work/venv" --no-deps "$plugin_wheel" >/dev/null
+
+# 4. Run a self-contained case (its own skill, no conftest above it) through the
 #    plugin. SKILLTEST_BIN unset + provider pinned to the deterministic fake.
 cp -r tests/fixtures/smoke "$work/cases"
 env -u SKILLTEST_BIN SKILLTEST_PROVIDER="$provider" \
   "$work/venv/bin/python" -m pytest "$work/cases" -p skilltest_pytest -o addopts="" -q
 
-echo "python bundle smoke ($target): ok"
+echo "python bundle smoke ($target): ok (plugin pins $pin)"

@@ -1,0 +1,12 @@
+# uv workspace root for the repo's Python packages.
+#
+# Virtual root (no `[project]`): nothing is published from here — the two members
+# keep their own names, versions, build backends and publish recipes. What the
+# workspace buys is one resolution and one `uv.lock` for both, so the plugin and
+# the SDK it depends on can never drift apart in development.
+#
+# Rust and TypeScript have their own workspace roots (`Cargo.toml`,
+# `pnpm-workspace.yaml`); this is the Python one. nx still drives each package
+# through its own `project.json`.
+[tool.uv.workspace]
+members = ["sdks/python", "plugins/pytest"]
