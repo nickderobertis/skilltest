@@ -51,11 +51,10 @@ perl -i -pe 's/^version = "[^"]*"/version = "'"$VERSION"'"/' Cargo.toml
 perl -i -pe 's{(skilltest-core = \{ path = "crates/skilltest-core", version = ")[^"]*(")}{${1}'"$VERSION"'${2}}' Cargo.toml
 run "refresh Cargo.lock" cargo update --quiet -p skilltest-core -p skilltest-cli
 
-# --- Python: both member versions + pytest's exact skilltest-sdk pin, then the lock -
+# --- Python: both project versions + pytest's exact skilltest-sdk pin, then the lock --
 perl -i -pe 's/^version = "[^"]*"/version = "'"$VERSION"'"/' sdks/python/pyproject.toml
 perl -i -pe 's/^version = "[^"]*"/version = "'"$VERSION"'"/' plugins/pytest/pyproject.toml
 perl -i -pe 's/"skilltest-sdk[^"]*"/"skilltest-sdk=='"$VERSION"'"/' plugins/pytest/pyproject.toml
-# One uv workspace, one lockfile at the repo root: locking once covers both members.
 run "refresh uv.lock" uv lock --quiet
 
 # --- TypeScript: SDK + framework + the four optional platform packages, then lock ----

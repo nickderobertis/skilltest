@@ -54,9 +54,10 @@ fi
 #    development only, and a wheel that shipped that instead of the pin would
 #    install with no SDK at all.
 ( cd "$repo/plugins/pytest" && uv build --wheel --out-dir "$work/dist" >/dev/null )
-plugin_wheel="$(ls "$work"/dist/skilltest_pytest-*.whl | head -1)"
+plugin_wheel="$(ls "$work"/dist/skilltest_pytest-*.whl 2>/dev/null | head -1 || true)"
 if [ -z "$plugin_wheel" ]; then
   echo "error: no skilltest-pytest wheel produced" >&2
+  echo "hint: run \`uv build --wheel\` in plugins/pytest to see the build failure." >&2
   exit 1
 fi
 
