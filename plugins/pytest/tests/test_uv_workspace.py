@@ -95,3 +95,55 @@ def test_a_requirement_added_to_either_member_makes_the_one_lock_stale(
 
     drifted = uv_lock_check(scratch)
     assert drifted.returncode != 0, drifted.stdout
+
+
+def test_set_version_moves_both_members_and_the_one_lock(tmp_path: Path) -> None:
+    """The release path keeps the single lock current.
+
+    `scripts/set-version.sh` is what semantic-release runs to write the lockstep
+    version, and one `uv lock` at the root is now all it runs for Python. Drive
+    the real script over a copy of the tracked tree and require the bump to land
+    in both members *and* in the one lock — `uv lock --check` afterwards is the
+    assertion that the refresh covered both, not just the member locked last.
+    """
+    scratch = tmp_path / "repo"
+    tracked = subprocess.run(
+        ["git", "ls-files", "-z"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split("\0")
+    for name in filter(None, tracked):
+        destination = scratch / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(REPO_ROOT / name, destination)
+
+    bumped = subprocess.run(
+        ["bash", "scripts/set-version.sh", RELEASE_VERSION],
+        cwd=scratch,
+        capture_output=True,
+        text=True,
+    )
+    assert bumped.returncode == 0, bumped.stderr
+
+    for member in MEMBERS:
+        manifest = tomllib.loads((scratch / member / "pyproject.toml").read_text())
+        assert manifest["project"]["version"] == RELEASE_VERSION, member
+        assert not (scratch / member / "uv.lock").exists(), member
+
+    plugin = tomllib.loads((scratch / "plugins/pytest/pyproject.toml").read_text())
+    assert f"skilltest-sdk=={RELEASE_VERSION}" in plugin["project"]["dependencies"]
+
+    locked = tomllib.loads((scratch / "uv.lock").read_text())
+    members = {
+        p["name"]: p["version"] for p in locked["package"] if p["name"].startswith("skilltest-")
+    }
+    assert members == {"skilltest-sdk": RELEASE_VERSION, "skilltest-pytest": RELEASE_VERSION}
+
+    checked = uv_lock_check(scratch)
+    assert checked.returncode == 0, checked.stderr
+
+
+# A version no release will ever cut, so a leak out of the scratch copy is obvious.
+RELEASE_VERSION = "9.9.9"
