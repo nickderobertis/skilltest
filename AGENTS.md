@@ -402,6 +402,8 @@ registry hiccup must not block the binary release, or vice versa.
   in the CLI, not the core.
 - Python packages: Python 3.12+, `uv`, `ruff`, `ty`, `pytest`. Public API is
   re-exported from each package's `__init__.py`; everything else is internal.
+  `skilltest-pytest` consumes `skilltest-sdk` via a `[tool.uv.sources]` path
+  source in dev and a version range when published.
 - TS packages: `strict` TypeScript, `biome` (one root config) for lint+format,
   `vitest`, a `pnpm` workspace rooted at the repo. Public API is each package's
   `src/index.ts`. `@skill-test/vitest` consumes `@skill-test/sdk` as a
