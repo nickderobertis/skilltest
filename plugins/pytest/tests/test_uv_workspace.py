@@ -103,9 +103,7 @@ def test_a_requirement_added_to_either_member_makes_the_one_lock_stale(
     assert drifted.returncode != 0, drifted.stdout
 
 
-# An llmlint directive is read from a single line, so this one runs past the
-# 100-column limit and suppresses E501 on itself to stay whole.
-# llmlint: ignore[shell_test_tiers_stay_split, test_tiers_split_by_project_not_by_marker, expensive_tests_stay_behind_their_own_edge, external_service_suite_stays_out_of_the_affected_tier] no workspace- or scripts-owned project (the reason `pins.rs` records); 4.9s against the local cargo/uv/pnpm caches `just bootstrap` fills, reaching no service beyond them.  # noqa: E501
+# llmlint: ignore[shell_test_tiers_stay_split, test_tiers_split_by_project_not_by_marker, expensive_tests_stay_behind_their_own_edge, external_service_suite_stays_out_of_the_affected_tier] no workspace- or scripts-owned project (the reason `pins.rs` records); 4.9s against the local cargo/uv/pnpm caches `just bootstrap` fills, reaching no service beyond them; an llmlint directive is read from one line, hence the E501 escape on it.  # noqa: E501
 def test_set_version_moves_both_members_and_the_one_lock(tmp_path: Path) -> None:
     """The release path keeps the single lock current.
 

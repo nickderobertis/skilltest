@@ -84,7 +84,6 @@ fn files_set_version_writes() -> BTreeSet<String> {
     written
 }
 
-/// Expand a `dir/*/name` glob (the only shape the script uses) against the tree.
 // llmlint: ignore[code_lands_in_the_domain_that_owns_it] Exists only for the parse above and is meaningless apart from it, so it stays beside it.
 fn expand_one_star(glob: &str) -> Vec<String> {
     let (prefix, suffix) = glob.split_once("/*/").expect("a dir/*/name glob");

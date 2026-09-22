@@ -383,9 +383,7 @@ registry hiccup must not block the binary release, or vice versa.
   public`: pnpm rewrites `@skill-test/vitest`'s `workspace:*` dependency to the
   real version, and `--access public` is required for scoped packages (also set
   via `publishConfig`). PyPI builds from `[project]` metadata, so the
-  workspace `[tool.uv.sources]` entry in `skilltest-pytest` never reaches the
-  wheel — the published dist carries the exact `skilltest-sdk==X.Y.Z` pin, which
-  `scripts/smoke-python-bundle.sh` reads back out of the built wheel.
+  `[tool.uv.sources]` entry in `skilltest-pytest` never reaches the wheel.
 
 ## Keeping the allowlist current
 
@@ -402,8 +400,7 @@ registry hiccup must not block the binary release, or vice versa.
   in the CLI, not the core.
 - Python packages: Python 3.12+, `uv`, `ruff`, `ty`, `pytest`. Public API is
   re-exported from each package's `__init__.py`; everything else is internal.
-  `skilltest-pytest` consumes `skilltest-sdk` via a `[tool.uv.sources]` path
-  source in dev and a version range when published.
+  `skilltest-pytest` consumes `skilltest-sdk` from the uv workspace in dev and by exact pin when published. <!-- llmlint: ignore[instruction_layer_localized] This list is the repo-wide comparison of the three stacks' toolchains and dependency rules side by side, the same way the layout table above is the repo-wide map of every package; moving one language's line into a nested file would break the comparison the section exists for. -->
 - TS packages: `strict` TypeScript, `biome` (one root config) for lint+format,
   `vitest`, a `pnpm` workspace rooted at the repo. Public API is each package's
   `src/index.ts`. `@skill-test/vitest` consumes `@skill-test/sdk` as a
