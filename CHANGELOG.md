@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.11.1](https://github.com/nickderobertis/skilltest/compare/v0.11.0...v0.11.1) (2026-09-22)
+
+### Build System
+
+* **python:** put the SDK and the pytest plugin in one uv workspace ([#52](https://github.com/nickderobertis/skilltest/issues/52)) ([d953a33](https://github.com/nickderobertis/skilltest/commit/d953a33c40ac20a3d442ee70c0f98a76c519391e))
+
 ## [0.11.0](https://github.com/nickderobertis/skilltest/compare/v0.10.3...v0.11.0) (2026-09-21)
 
 ### Features

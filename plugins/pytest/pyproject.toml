@@ -1,6 +1,6 @@
 [project]
 name = "skilltest-pytest"
-version = "0.11.0"
+version = "0.11.1"
 description = "pytest integration for skilltest: auto-collect *.skilltest.yaml cases as pytest tests, built on skilltest-sdk."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -11,7 +11,7 @@ authors = [{ name = "Nick DeRobertis" }]
 # (PEP 561). Held to the built wheel by tests/test_wheel_typed.py.
 classifiers = ["Typing :: Typed"]
 dependencies = [
-    "skilltest-sdk==0.11.0",
+    "skilltest-sdk==0.11.1",
     "pytest>=8",
 ]
 
