@@ -3,6 +3,14 @@
   "name": "skilltest-sdk",
   "projectType": "library",
   "implicitDependencies": ["skilltest-cli"],
+  "namedInputs": {
+    "default": [
+      "{projectRoot}/**/*",
+      "sharedGlobals",
+      "{workspaceRoot}/pyproject.toml",
+      "{workspaceRoot}/uv.lock"
+    ]
+  },
   "targets": {
     "lint": {
       "executor": "nx:run-commands",

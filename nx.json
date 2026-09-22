@@ -14,8 +14,6 @@
       "{workspaceRoot}/biome.json",
       "{workspaceRoot}/pnpm-workspace.yaml",
       "{workspaceRoot}/pnpm-lock.yaml",
-      "{workspaceRoot}/pyproject.toml",
-      "{workspaceRoot}/uv.lock",
       "{workspaceRoot}/schemas/**/*",
       "{workspaceRoot}/tests/fixtures/**/*"
     ]

@@ -21,10 +21,12 @@ fn repo_file(rel: &str) -> PathBuf {
         .join(rel)
 }
 
+// llmlint: ignore[code_lands_in_the_domain_that_owns_it] Reads through `repo_file` above, for that same reason: both files this gate reconciles sit at the repo root, and no release-owned project exists to hold them.
 fn read_repo_file(rel: &str) -> String {
     std::fs::read_to_string(repo_file(rel)).unwrap_or_else(|e| panic!("{rel} is readable: {e}"))
 }
 
+// llmlint: ignore[code_lands_in_the_domain_that_owns_it] `.releaserc.json` carries the published CLI's own version; `pins.rs` already parses cross-language manifests from this project for want of a release-owned one.
 fn release_assets() -> BTreeSet<String> {
     let config: serde_json::Value = serde_json::from_str(&read_repo_file(".releaserc.json"))
         .expect(".releaserc.json is valid JSON");
@@ -53,6 +55,7 @@ fn release_assets() -> BTreeSet<String> {
 /// argument of each `perl -i -pe` rewrite (the file it edits in place), the
 /// platform manifests its one `for` loop globs, and the lockfile each
 /// `run "refresh <path>"` step regenerates.
+// llmlint: ignore[code_lands_in_the_domain_that_owns_it] `scripts/set-version.sh` writes this crate's version too, and the repo keeps script parsing here: `pins.rs` reads `scripts/install-oneharness.sh` the same way.
 fn files_set_version_writes() -> BTreeSet<String> {
     let script = read_repo_file("scripts/set-version.sh");
     let mut written = BTreeSet::new();
@@ -82,6 +85,7 @@ fn files_set_version_writes() -> BTreeSet<String> {
 }
 
 /// Expand a `dir/*/name` glob (the only shape the script uses) against the tree.
+// llmlint: ignore[code_lands_in_the_domain_that_owns_it] Exists only for the parse above and is meaningless apart from it, so it stays beside it.
 fn expand_one_star(glob: &str) -> Vec<String> {
     let (prefix, suffix) = glob.split_once("/*/").expect("a dir/*/name glob");
     let mut matches: Vec<String> = std::fs::read_dir(repo_file(prefix))
