@@ -11,10 +11,17 @@ These tests drive the real `uv` the way `just bootstrap` and
 `scripts/set-version.sh` do, from the tree as it stands. The failure path is
 drift itself: adding a requirement to *either* member must leave the single root
 lock out of date — which is only true if that one lock really covers both.
+
+Placement: no nx project owns the uv workspace — `pins.rs` records the same for
+the repo's scripts ("No scripts-owned project exists") — and this is the member
+whose SDK dependency the workspace resolves, so the checks run in its tier. The
+repo already proves host-tool behavior in a member's own tier: `test_wheel_typed
+.py` in both packages drives `uv build` and `scripts/gen-contract.sh`. The
+per-site directives below record that, and the cost: ~8s for the module, 4.9s of
+it the release-path test, reaching the local cargo/uv/pnpm caches `just
+bootstrap` fills and no service beyond them.
 """
 
-# An llmlint directive has to be one line, hence the E501 suppression on it.
-# llmlint: ignore-file[shell_test_tiers_stay_split, code_lands_in_the_domain_that_owns_it] The uv workspace belongs to no nx project of its own, and its only members are sdks/python and plugins/pytest — this one is the member whose SDK dependency the workspace resolves, so the checks sit in its tier. The repo already proves host-tool behavior in a member's own tier (test_wheel_typed.py in both packages drives `uv build` and scripts/gen-contract.sh); these add a few seconds and run whenever the workspace files change, since the root pyproject.toml and uv.lock are nx sharedGlobals.  # noqa: E501
 from __future__ import annotations
 
 import shutil
@@ -29,6 +36,7 @@ REPO_ROOT = PROJECT.parents[1]
 MEMBERS = ("sdks/python", "plugins/pytest")
 
 
+# llmlint: ignore[code_lands_in_the_domain_that_owns_it] the workspace resolves this member's dep
 def uv_lock_check(project_root: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["uv", "lock", "--check"],
@@ -38,6 +46,8 @@ def uv_lock_check(project_root: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
+# llmlint: ignore[shell_test_tiers_stay_split] no workspace-owned project; the member's own tier
+# llmlint: ignore[test_tiers_split_by_project_not_by_marker] unconditional in the project's own tier
 def test_one_lockfile_covers_both_python_packages() -> None:
     assert (REPO_ROOT / "uv.lock").is_file(), "the workspace lock must live at the repo root"
     for member in MEMBERS:
@@ -54,6 +64,8 @@ def test_one_lockfile_covers_both_python_packages() -> None:
     assert checked.returncode == 0, checked.stderr
 
 
+# llmlint: ignore[shell_test_tiers_stay_split] no workspace-owned project; the member's own tier
+# llmlint: ignore[test_tiers_split_by_project_not_by_marker] unconditional in the project's own tier
 def test_plugin_resolves_the_sdk_to_the_workspace_member() -> None:
     """A dev run of the plugin imports the SDK *from this tree*, not a release:
     editing `sdks/python` is immediately what `plugins/pytest` runs against."""
@@ -72,6 +84,8 @@ def test_plugin_resolves_the_sdk_to_the_workspace_member() -> None:
 IMPORT_SDK = "import skilltest_sdk; print(skilltest_sdk.__file__)"
 
 
+# llmlint: ignore[shell_test_tiers_stay_split] no workspace-owned project; the member's own tier
+# llmlint: ignore[test_tiers_split_by_project_not_by_marker] unconditional in the project's own tier
 @pytest.mark.parametrize("member", MEMBERS)
 def test_a_requirement_added_to_either_member_makes_the_one_lock_stale(
     member: str, tmp_path: Path
@@ -98,6 +112,10 @@ def test_a_requirement_added_to_either_member_makes_the_one_lock_stale(
     assert drifted.returncode != 0, drifted.stdout
 
 
+# llmlint: ignore[shell_test_tiers_stay_split] no workspace-owned project; the member's own tier
+# llmlint: ignore[test_tiers_split_by_project_not_by_marker] unconditional in the project's own tier
+# llmlint: ignore[expensive_tests_stay_behind_their_own_edge] 4.9s, local caches only, no service
+# llmlint: ignore[external_service_suite_stays_out_of_the_affected_tier] local caches, no service
 def test_set_version_moves_both_members_and_the_one_lock(tmp_path: Path) -> None:
     """The release path keeps the single lock current.
 

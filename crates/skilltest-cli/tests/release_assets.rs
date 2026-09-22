@@ -14,8 +14,7 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
-// llmlint: ignore-block[shell_test_tiers_stay_split] No scripts-owned project exists (the same reason `pins.rs` records beside its installer gate), and these two tests spawn nothing: they read two repo files and finish in ~0.01s. `just coverage` runs the whole Rust workspace on every `just check`, so they run whenever the release files change.
-// llmlint: ignore-block[code_lands_in_the_domain_that_owns_it] Reading repo-root release files from the CLI project follows `pins.rs` and the contract check in `tests/e2e.rs`, which already read cross-language files from here; the version these two files restate is the published CLI's own, and no scripts- or release-owned project exists to hold the reconciliation.
+// llmlint: ignore[code_lands_in_the_domain_that_owns_it] Every read below goes through this one helper. Reading repo-root release files from the CLI project follows `pins.rs` and the contract check in `tests/e2e.rs`, which already read cross-language files from here; the version these files restate is the published CLI's own, and no scripts- or release-owned project exists to hold the reconciliation.
 fn repo_file(rel: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
@@ -98,6 +97,7 @@ fn expand_one_star(glob: &str) -> Vec<String> {
 
 /// A file the script rewrites but the release commit does not stage keeps its
 /// old version in git while the tag says otherwise.
+// llmlint: ignore[shell_test_tiers_stay_split] No scripts-owned project exists — the same reason `pins.rs` records beside its installer gate — and this test spawns nothing: it reads two repo files and finishes in ~0.01s, inside a tier `just coverage` runs in full on every `just check`.
 #[test]
 fn every_file_set_version_writes_is_staged_by_the_release_commit() {
     let assets = release_assets();
@@ -112,6 +112,7 @@ fn every_file_set_version_writes_is_staged_by_the_release_commit() {
 
 /// And the reverse: an asset that no longer exists (a lockfile that moved, say)
 /// is dead configuration that silently stages nothing.
+// llmlint: ignore[shell_test_tiers_stay_split] No scripts-owned project exists — the same reason `pins.rs` records beside its installer gate — and this test spawns nothing: it reads two repo files and finishes in ~0.01s, inside a tier `just coverage` runs in full on every `just check`.
 #[test]
 fn every_release_asset_exists_in_the_tree() {
     for asset in release_assets() {
@@ -121,5 +122,3 @@ fn every_release_asset_exists_in_the_tree() {
         );
     }
 }
-// llmlint: ignore-end[code_lands_in_the_domain_that_owns_it]
-// llmlint: ignore-end[shell_test_tiers_stay_split]
