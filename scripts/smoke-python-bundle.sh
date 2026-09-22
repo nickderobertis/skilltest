@@ -32,8 +32,8 @@ repo="$PWD"
 
 if [ ! -f "$cli" ] || [ ! -f "$provider" ]; then
   echo "error: cli or provider not found: $cli / $provider" >&2
-  echo "hint: build them first: cargo build -p skilltest-cli --bin skilltest && \\" >&2
-  echo "      cargo build -p skilltest-cli --bin skilltest-fake-provider --features fake-provider" >&2
+  echo "hint: build them first with \`just build\` — the CLI target enables the" >&2
+  echo "      fake-provider feature, so it produces both binaries." >&2
   exit 2
 fi
 if command -v skilltest >/dev/null 2>&1; then

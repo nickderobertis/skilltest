@@ -30,14 +30,18 @@ REPO_ROOT = PROJECT.parents[1]
 MEMBERS = ("sdks/python", "plugins/pytest")
 
 
+# The module's single boundary onto the local tools these tests drive.
+# llmlint: ignore[code_lands_in_the_domain_that_owns_it] no nx project owns the uv workspace
+def run_tool(
+    command: list[str], cwd: Path, *, check: bool = False
+) -> subprocess.CompletedProcess[str]:
+    # llmlint: ignore[async_typed_clients_at_boundaries] `uv`, `git` and `set-version.sh` are child processes, not services a client could hold: each is read once it exits, so nothing overlaps.  # noqa: E501
+    return subprocess.run(command, cwd=cwd, capture_output=True, text=True, check=check)
+
+
 # llmlint: ignore[code_lands_in_the_domain_that_owns_it] the workspace resolves this member's dep
 def uv_lock_check(project_root: Path) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["uv", "lock", "--check"],
-        cwd=project_root,
-        capture_output=True,
-        text=True,
-    )
+    return run_tool(["uv", "lock", "--check"], project_root)
 
 
 # llmlint: ignore[shell_test_tiers_stay_split] no workspace-owned project; the member's own tier
@@ -61,11 +65,8 @@ def test_one_lockfile_covers_both_python_packages() -> None:
 def test_plugin_resolves_the_sdk_to_the_workspace_member() -> None:
     """A dev run of the plugin imports the SDK *from this tree*, not a release:
     editing `sdks/python` is immediately what `plugins/pytest` runs against."""
-    run = subprocess.run(
-        ["uv", "run", "--directory", str(PROJECT), "python", "-c", IMPORT_SDK],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
+    run = run_tool(
+        ["uv", "run", "--directory", str(PROJECT), "python", "-c", IMPORT_SDK], REPO_ROOT
     )
     assert run.returncode == 0, run.stderr
 
@@ -114,24 +115,13 @@ def test_set_version_moves_both_members_and_the_one_lock(tmp_path: Path) -> None
     assertion that the refresh covered both, not just the member locked last.
     """
     scratch = tmp_path / "repo"
-    tracked = subprocess.run(
-        ["git", "ls-files", "-z"],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout.split("\0")
+    tracked = run_tool(["git", "ls-files", "-z"], REPO_ROOT, check=True).stdout.split("\0")
     for name in filter(None, tracked):
         destination = scratch / name
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy(REPO_ROOT / name, destination)
 
-    bumped = subprocess.run(
-        ["bash", "scripts/set-version.sh", RELEASE_VERSION],
-        cwd=scratch,
-        capture_output=True,
-        text=True,
-    )
+    bumped = run_tool(["bash", "scripts/set-version.sh", RELEASE_VERSION], scratch)
     assert bumped.returncode == 0, bumped.stderr
 
     for member in MEMBERS:
