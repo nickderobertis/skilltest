@@ -12,14 +12,8 @@ These tests drive the real `uv` the way `just bootstrap` and
 drift itself: adding a requirement to *either* member must leave the single root
 lock out of date — which is only true if that one lock really covers both.
 
-Placement: no nx project owns the uv workspace — `pins.rs` records the same for
-the repo's scripts ("No scripts-owned project exists") — and this is the member
-whose SDK dependency the workspace resolves, so the checks run in its tier. The
-repo already proves host-tool behavior in a member's own tier: `test_wheel_typed
-.py` in both packages drives `uv build` and `scripts/gen-contract.sh`. The
-per-site directives below record that, and the cost: ~8s for the module, 4.9s of
-it the release-path test, reaching the local cargo/uv/pnpm caches `just
-bootstrap` fills and no service beyond them.
+Placement: no nx project owns the uv workspace, so these run in the member
+whose SDK dependency it resolves; each site below carries its reason.
 """
 
 from __future__ import annotations

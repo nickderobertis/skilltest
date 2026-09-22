@@ -47,7 +47,7 @@ trap 'rm -rf "$work"' EXIT
 
 # 1. Platform wheel with the binary bundled.
 bash scripts/build-python-wheel.sh "$target" "$cli" "$work/dist" >/dev/null
-wheel="$(ls "$work"/dist/skilltest_sdk-*.whl | head -1)"
+wheel="$(ls "$work"/dist/skilltest_sdk-*.whl 2>/dev/null | head -1 || true)"
 if [ -z "$wheel" ]; then
   echo "error: no wheel produced for $target" >&2
   echo "hint: run \`scripts/build-python-wheel.sh $target $cli\` to see the build failure." >&2
