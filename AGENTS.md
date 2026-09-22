@@ -165,9 +165,9 @@ CLI, both SDKs, and both framework packages. The one workspace-level exception
 is the contract drift gate (`just contract-check`), which spans every stack and
 always runs as part of `just check`.
 
-- `just bootstrap` — set up from a clean clone (root `pnpm install` for nx and
-  the whole TS workspace, `cargo fetch`, then a root `uv sync` for the uv
-  workspace — both Python packages, one lockfile).
+- `just bootstrap` — set up from a clean clone. Every stack installs from its
+  own workspace root, so each language has one dependency tree, not one per
+  package.
 - `just check` — the contract drift gate plus the full quality gate (format,
   lint, type check, unit + e2e) over the **affected** projects. Must pass
   before any commit or PR.
@@ -402,8 +402,6 @@ registry hiccup must not block the binary release, or vice versa.
   in the CLI, not the core.
 - Python packages: Python 3.12+, `uv`, `ruff`, `ty`, `pytest`. Public API is
   re-exported from each package's `__init__.py`; everything else is internal.
-  `skilltest-pytest` consumes `skilltest-sdk` through the uv workspace in dev
-  and its exact pin when published.
 - TS packages: `strict` TypeScript, `biome` (one root config) for lint+format,
   `vitest`, a `pnpm` workspace rooted at the repo. Public API is each package's
   `src/index.ts`. `@skill-test/vitest` consumes `@skill-test/sdk` as a
