@@ -20,6 +20,8 @@ cli_arg="${2:-}"
 provider_arg="${3:-}"
 if [ -z "$target" ] || [ -z "$cli_arg" ] || [ -z "$provider_arg" ]; then
   echo "error: usage: smoke-python-bundle.sh <rust-target> <cli-binary> <fake-provider>" >&2
+  echo "hint: against a local debug build, run: scripts/smoke-python-bundle.sh \\" >&2
+  echo "      x86_64-unknown-linux-gnu target/debug/skilltest target/debug/skilltest-fake-provider" >&2
   exit 2
 fi
 cli="$(abspath "$cli_arg")"
@@ -30,10 +32,13 @@ repo="$PWD"
 
 if [ ! -f "$cli" ] || [ ! -f "$provider" ]; then
   echo "error: cli or provider not found: $cli / $provider" >&2
+  echo "hint: build them first: cargo build -p skilltest-cli --bin skilltest && \\" >&2
+  echo "      cargo build -p skilltest-cli --bin skilltest-fake-provider --features fake-provider" >&2
   exit 2
 fi
 if command -v skilltest >/dev/null 2>&1; then
   echo "error: a 'skilltest' is on PATH — the smoke could not prove the bundle is used" >&2
+  echo "hint: uninstall it, or re-run with a PATH that excludes $(command -v skilltest)." >&2
   exit 1
 fi
 
@@ -45,6 +50,7 @@ bash scripts/build-python-wheel.sh "$target" "$cli" "$work/dist" >/dev/null
 wheel="$(ls "$work"/dist/skilltest_sdk-*.whl | head -1)"
 if [ -z "$wheel" ]; then
   echo "error: no wheel produced for $target" >&2
+  echo "hint: run \`scripts/build-python-wheel.sh $target $cli\` to see the build failure." >&2
   exit 1
 fi
 
@@ -53,7 +59,12 @@ fi
 #    workspace source in plugins/pytest/pyproject.toml resolves the SDK for
 #    development only, and a wheel that shipped that instead of the pin would
 #    install with no SDK at all.
-( cd "$repo/plugins/pytest" && uv build --wheel --out-dir "$work/dist" >/dev/null )
+if ! build_output="$( cd "$repo/plugins/pytest" && uv build --wheel --out-dir "$work/dist" 2>&1 )"; then
+  echo "error: building the skilltest-pytest wheel failed" >&2
+  echo "$build_output" >&2
+  echo "hint: run \`uv build --wheel\` in plugins/pytest to reproduce it." >&2
+  exit 1
+fi
 plugin_wheel="$(ls "$work"/dist/skilltest_pytest-*.whl 2>/dev/null | head -1 || true)"
 if [ -z "$plugin_wheel" ]; then
   echo "error: no skilltest-pytest wheel produced" >&2
