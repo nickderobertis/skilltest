@@ -14,7 +14,7 @@ lock out of date — which is only true if that one lock really covers both.
 """
 
 # An llmlint directive has to be one line, hence the E501 suppression on it.
-# llmlint: ignore-file[shell_test_tiers_stay_split] The uv workspace belongs to no nx project of its own, and its only members are sdks/python and plugins/pytest — this one is the member whose SDK dependency the workspace resolves, so the checks sit in its tier. The repo already proves host-tool behavior in a member's own tier (test_wheel_typed.py in both packages drives `uv build` and scripts/gen-contract.sh); these add a few seconds and run whenever the workspace files change, since the root pyproject.toml and uv.lock are nx sharedGlobals.  # noqa: E501
+# llmlint: ignore-file[shell_test_tiers_stay_split, code_lands_in_the_domain_that_owns_it] The uv workspace belongs to no nx project of its own, and its only members are sdks/python and plugins/pytest — this one is the member whose SDK dependency the workspace resolves, so the checks sit in its tier. The repo already proves host-tool behavior in a member's own tier (test_wheel_typed.py in both packages drives `uv build` and scripts/gen-contract.sh); these add a few seconds and run whenever the workspace files change, since the root pyproject.toml and uv.lock are nx sharedGlobals.  # noqa: E501
 from __future__ import annotations
 
 import shutil
@@ -30,7 +30,6 @@ MEMBERS = ("sdks/python", "plugins/pytest")
 
 
 def uv_lock_check(project_root: Path) -> subprocess.CompletedProcess[str]:
-    """`uv lock --check`: does the lockfile match the members' requirements?"""
     return subprocess.run(
         ["uv", "lock", "--check"],
         cwd=project_root,

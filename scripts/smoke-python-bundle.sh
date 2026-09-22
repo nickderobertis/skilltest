@@ -54,9 +54,8 @@ if [ -z "$wheel" ]; then
   exit 1
 fi
 
-# 2. The plugin's own publish-shape wheel, built from its uv-workspace member.
-#    Its metadata must still carry the exact `skilltest-sdk==<version>` pin: the
-#    workspace source in plugins/pytest/pyproject.toml resolves the SDK for
+# 2. The plugin's own wheel must carry the exact `skilltest-sdk==<version>` pin:
+#    the workspace source in plugins/pytest/pyproject.toml resolves the SDK for
 #    development only, and a wheel that shipped that instead of the pin would
 #    install with no SDK at all.
 if ! build_output="$( cd "$repo/plugins/pytest" && uv build --wheel --out-dir "$work/dist" 2>&1 )"; then

@@ -14,6 +14,7 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
+// llmlint: ignore-block[shell_test_tiers_stay_split] No scripts-owned project exists (the same reason `pins.rs` records beside its installer gate), and these two tests spawn nothing: they read two repo files and finish in ~0.01s. `just coverage` runs the whole Rust workspace on every `just check`, so they run whenever the release files change.
 // llmlint: ignore-block[code_lands_in_the_domain_that_owns_it] Reading repo-root release files from the CLI project follows `pins.rs` and the contract check in `tests/e2e.rs`, which already read cross-language files from here; the version these two files restate is the published CLI's own, and no scripts- or release-owned project exists to hold the reconciliation.
 fn repo_file(rel: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -25,7 +26,6 @@ fn read_repo_file(rel: &str) -> String {
     std::fs::read_to_string(repo_file(rel)).unwrap_or_else(|e| panic!("{rel} is readable: {e}"))
 }
 
-/// The paths `.releaserc.json` hands to `@semantic-release/git` as `assets`.
 fn release_assets() -> BTreeSet<String> {
     let config: serde_json::Value = serde_json::from_str(&read_repo_file(".releaserc.json"))
         .expect(".releaserc.json is valid JSON");
@@ -122,3 +122,4 @@ fn every_release_asset_exists_in_the_tree() {
     }
 }
 // llmlint: ignore-end[code_lands_in_the_domain_that_owns_it]
+// llmlint: ignore-end[shell_test_tiers_stay_split]
