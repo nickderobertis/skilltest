@@ -41,7 +41,6 @@ def uv_lock_check(project_root: Path) -> subprocess.CompletedProcess[str]:
 
 
 # llmlint: ignore[shell_test_tiers_stay_split] no workspace-owned project; the member's own tier
-# llmlint: ignore[test_tiers_split_by_project_not_by_marker] unconditional in the project's own tier
 def test_one_lockfile_covers_both_python_packages() -> None:
     assert (REPO_ROOT / "uv.lock").is_file(), "the workspace lock must live at the repo root"
     for member in MEMBERS:
@@ -59,7 +58,6 @@ def test_one_lockfile_covers_both_python_packages() -> None:
 
 
 # llmlint: ignore[shell_test_tiers_stay_split] no workspace-owned project; the member's own tier
-# llmlint: ignore[test_tiers_split_by_project_not_by_marker] unconditional in the project's own tier
 def test_plugin_resolves_the_sdk_to_the_workspace_member() -> None:
     """A dev run of the plugin imports the SDK *from this tree*, not a release:
     editing `sdks/python` is immediately what `plugins/pytest` runs against."""
@@ -78,9 +76,8 @@ def test_plugin_resolves_the_sdk_to_the_workspace_member() -> None:
 IMPORT_SDK = "import skilltest_sdk; print(skilltest_sdk.__file__)"
 
 
-# llmlint: ignore[shell_test_tiers_stay_split] no workspace-owned project; the member's own tier
-# llmlint: ignore[test_tiers_split_by_project_not_by_marker] unconditional in the project's own tier
 @pytest.mark.parametrize("member", MEMBERS)
+# llmlint: ignore[shell_test_tiers_stay_split] no workspace-owned project; the member's own tier
 def test_a_requirement_added_to_either_member_makes_the_one_lock_stale(
     member: str, tmp_path: Path
 ) -> None:
@@ -106,10 +103,7 @@ def test_a_requirement_added_to_either_member_makes_the_one_lock_stale(
     assert drifted.returncode != 0, drifted.stdout
 
 
-# llmlint: ignore[shell_test_tiers_stay_split] no workspace-owned project; the member's own tier
-# llmlint: ignore[test_tiers_split_by_project_not_by_marker] unconditional in the project's own tier
-# llmlint: ignore[expensive_tests_stay_behind_their_own_edge] 4.9s, local caches only, no service
-# llmlint: ignore[external_service_suite_stays_out_of_the_affected_tier] local caches, no service
+# llmlint: ignore[shell_test_tiers_stay_split, test_tiers_split_by_project_not_by_marker, expensive_tests_stay_behind_their_own_edge, external_service_suite_stays_out_of_the_affected_tier] no workspace- or scripts-owned project (the reason `pins.rs` records); 4.9s against the local cargo/uv/pnpm caches `just bootstrap` fills, reaching no service beyond them.  # noqa: E501
 def test_set_version_moves_both_members_and_the_one_lock(tmp_path: Path) -> None:
     """The release path keeps the single lock current.
 
