@@ -45,7 +45,6 @@ fi
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-# 1. Platform wheel with the binary bundled.
 bash scripts/build-python-wheel.sh "$target" "$cli" "$work/dist" >/dev/null
 wheel="$(ls "$work"/dist/skilltest_sdk-*.whl 2>/dev/null | head -1 || true)"
 if [ -z "$wheel" ]; then
@@ -54,10 +53,10 @@ if [ -z "$wheel" ]; then
   exit 1
 fi
 
-# 2. The plugin's own wheel must carry the exact `skilltest-sdk==<version>` pin:
-#    the workspace source in plugins/pytest/pyproject.toml resolves the SDK for
-#    development only, and a wheel that shipped that instead of the pin would
-#    install with no SDK at all.
+# The plugin's own wheel must carry the exact `skilltest-sdk==<version>` pin: the
+# workspace source in plugins/pytest/pyproject.toml resolves the SDK for
+# development only, and a wheel that shipped that instead of the pin would
+# install with no SDK at all.
 if ! build_output="$( cd "$repo/plugins/pytest" && uv build --wheel --out-dir "$work/dist" 2>&1 )"; then
   echo "error: building the skilltest-pytest wheel failed" >&2
   echo "$build_output" >&2
@@ -71,9 +70,6 @@ if [ -z "$plugin_wheel" ]; then
   exit 1
 fi
 
-# 3. Fresh venv: the SDK wheel (binary bundled) + pytest, then the plugin wheel
-#    with --no-deps so the SDK in play can only be the installed wheel, never
-#    the workspace member on disk.
 uv venv --python 3.12 "$work/venv" >/dev/null
 uv pip install --python "$work/venv" "$wheel" pytest >/dev/null
 
@@ -95,10 +91,12 @@ PYEOF
   exit 1
 fi
 
+# --no-deps: the SDK in play can then only be the wheel installed above, never
+# the workspace member on disk.
 uv pip install --python "$work/venv" --no-deps "$plugin_wheel" >/dev/null
 
-# 4. Run a self-contained case (its own skill, no conftest above it) through the
-#    plugin. SKILLTEST_BIN unset + provider pinned to the deterministic fake.
+# The case is self-contained — its own skill, no conftest above it — and runs
+# with SKILLTEST_BIN unset, so only the bundled binary can satisfy it.
 cp -r tests/fixtures/smoke "$work/cases"
 env -u SKILLTEST_BIN SKILLTEST_PROVIDER="$provider" \
   "$work/venv/bin/python" -m pytest "$work/cases" -p skilltest_pytest -o addopts="" -q
