@@ -25,12 +25,12 @@ default:
     @just --list
 
 # Set up the project from a clean clone: install nx + per-stack dependencies.
-# The root `pnpm install` covers nx and the whole TS workspace (both packages).
+# The root `pnpm install` covers nx and the whole TS workspace (both packages);
+# the root `uv sync` covers the uv workspace (both Python packages, one lock).
 bootstrap:
     pnpm install
     cargo fetch
-    cd sdks/python && uv sync
-    cd plugins/pytest && uv sync
+    uv sync
 
 # Full quality gate over the affected projects (format, lint, type check, unit +
 # e2e), plus the contract drift gate and the Rust coverage gate. Fails on any
@@ -117,8 +117,7 @@ audit:
 upgrade:
     pnpm -r update --latest
     cargo update
-    cd sdks/python && uv lock --upgrade && uv sync
-    cd plugins/pytest && uv lock --upgrade && uv sync
+    uv lock --upgrade && uv sync
     @just check-all
 
 # --- Terminal screenshots (informational; never part of `check` or CI's gate) -

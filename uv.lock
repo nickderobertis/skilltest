@@ -6,6 +6,12 @@ resolution-markers = [
     "python_full_version < '3.14'",
 ]
 
+[manifest]
+members = [
+    "skilltest-pytest",
+    "skilltest-sdk",
+]
+
 [[package]]
 name = "annotated-types"
 version = "0.7.0"
@@ -493,9 +499,36 @@ wheels = [
 ]
 
 [[package]]
+name = "skilltest-pytest"
+version = "0.11.0"
+source = { editable = "plugins/pytest" }
+dependencies = [
+    { name = "pytest" },
+    { name = "skilltest-sdk" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "ruff" },
+    { name = "ty" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pytest", specifier = ">=8" },
+    { name = "skilltest-sdk", editable = "sdks/python" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "ruff", specifier = ">=0.6" },
+    { name = "ty", specifier = ">=0.0.1a1" },
+]
+
+[[package]]
 name = "skilltest-sdk"
 version = "0.11.0"
-source = { editable = "." }
+source = { editable = "sdks/python" }
 dependencies = [
     { name = "oneharness-cli" },
     { name = "pydantic" },

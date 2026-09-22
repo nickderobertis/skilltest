@@ -1,4 +1,4 @@
-[project]  # llmlint: ignore[projects_stay_in_one_uv_workspace] Each Python package is its own uv project and lock; skilltest-pytest consumes the SDK through a path source.
+[project]
 name = "skilltest-sdk"
 version = "0.11.0"
 description = "Python SDK for the skilltest CLI: run AI-skill tests and natural-language evals from Python, with a typed report contract."
