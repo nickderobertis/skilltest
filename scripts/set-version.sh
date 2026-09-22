@@ -51,7 +51,8 @@ perl -i -pe 's/^version = "[^"]*"/version = "'"$VERSION"'"/' Cargo.toml
 perl -i -pe 's{(skilltest-core = \{ path = "crates/skilltest-core", version = ")[^"]*(")}{${1}'"$VERSION"'${2}}' Cargo.toml
 run "refresh Cargo.lock" cargo update --quiet -p skilltest-core -p skilltest-cli
 
-# --- Python: both project versions + pytest's exact skilltest-sdk pin, then the lock --
+# --- Python: pytest's pin must move with the versions, or the published plugin
+# resolves the previous SDK. One workspace, so a single lock refresh covers both.
 perl -i -pe 's/^version = "[^"]*"/version = "'"$VERSION"'"/' sdks/python/pyproject.toml
 perl -i -pe 's/^version = "[^"]*"/version = "'"$VERSION"'"/' plugins/pytest/pyproject.toml
 perl -i -pe 's/"skilltest-sdk[^"]*"/"skilltest-sdk=='"$VERSION"'"/' plugins/pytest/pyproject.toml
