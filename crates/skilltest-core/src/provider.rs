@@ -598,8 +598,9 @@ impl Provider for CommandProvider {
 /// Two things about that line shape the argv below. `oneharness run` prints a
 /// human-readable report unless a JSON format is asked for, so every buffered
 /// call passes `--compact` (which selects compact JSON on its own); the
-/// streaming call passes `--stream`, whose NDJSON protocol is independent of
-/// `--format`. And its registry reports `supports_resume` for every harness,
+/// streaming call passes `--stream --format json`, naming the NDJSON protocol it
+/// parses rather than relying on the stream's default format, which oneharness
+/// is moving to readable text. And its registry reports `supports_resume` for every harness,
 /// which is what [`supports_resume`] mirrors.
 ///
 /// Wires six real oneharness features:
@@ -1047,15 +1048,20 @@ impl OneharnessProvider {
     ) -> Result<RunOutcome> {
         let timeout = self.timeout_secs.to_string();
         let mut cmd = Command::new(&self.bin);
-        // `--stream` emits NDJSON: one `{"type":"event",…}` line per tool event
-        // as observed, then a terminal `{"type":"result","report":{…}}`. It
-        // implies `--events`; no `--compact` (the stream is line-oriented) and no
+        // `--stream --format json` emits NDJSON: one `{"type":"event",…}` line
+        // per tool event as observed, then a terminal
+        // `{"type":"result","report":{…}}`. The format is explicit because
+        // oneharness is making readable text the default `--stream` format, and
+        // this parser only speaks the JSON protocol. `--stream` implies
+        // `--events`; no `--compact` (the stream is line-oriented) and no
         // `--mode` (oneharness's default applies — see `run`).
         cmd.args([
             "run",
             "--harness",
             args.harness,
             "--stream",
+            "--format",
+            "json",
             "--events",
             "--timeout",
             &timeout,
@@ -3325,12 +3331,14 @@ mod tests {
             assert!(args.iter().any(|a| a == "--compact"), "got: {args:?}");
             assert!(!args.iter().any(|a| a == "--mode"), "got: {args:?}");
             assert!(!args.iter().any(|a| a == "--stream"), "got: {args:?}");
+            assert!(!args.iter().any(|a| a == "--format"), "got: {args:?}");
         }
 
         #[test]
         fn oneharness_stream_run_passes_stream_and_omits_mode() {
-            // The streaming path uses `--stream --events` and — like the buffered
-            // path — passes no `--mode`.
+            // The streaming path uses `--stream --format json --events` (the
+            // format named, not defaulted) and — like the buffered path —
+            // passes no `--mode`.
             let bin = script(
                 "oh-args-stream",
                 "d=$(dirname \"$0\"); printf '%s\\n' \"$@\" > \"$d/args\"\n\
@@ -3355,6 +3363,10 @@ mod tests {
                 .map(str::to_string)
                 .collect();
             assert!(args.iter().any(|a| a == "--stream"), "got: {args:?}");
+            assert!(
+                args.windows(2).any(|w| w == ["--format", "json"]),
+                "the stream format is explicit: {args:?}"
+            );
             assert!(args.iter().any(|a| a == "--events"), "got: {args:?}");
             assert!(!args.iter().any(|a| a == "--mode"), "got: {args:?}");
             assert!(!args.iter().any(|a| a == "--compact"), "got: {args:?}");

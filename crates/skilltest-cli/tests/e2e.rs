@@ -1114,3 +1114,90 @@ fn oneharness_history_can_be_disabled_via_config() {
         "history was disabled, so no command should be surfaced"
     );
 }
+
+/// A fake `oneharness` that appends each invocation's argv (one arg per line,
+/// then a `--` separator) to `<dir>/argv` and answers in the shape that argv
+/// asks for: the `run --stream` NDJSON protocol when streaming, the buffered
+/// report for the skill run, and a JSON verdict for judge runs.
+#[cfg(unix)]
+fn argv_recording_oneharness(tag: &str) -> (PathBuf, PathBuf) {
+    let (oh, history) = fake_oneharness(tag);
+    let body = "#!/bin/sh\n\
+        d=$(dirname \"$0\")\n\
+        printf '%s\\n' \"$@\" -- >> \"$d/argv\"\n\
+        args=\"$*\"\n\
+        cat >/dev/null\n\
+        case \"$args\" in\n\
+          *--stream*) printf '%s\\n' '{\"type\":\"event\",\"event\":{\"kind\":\"tool_call\",\"name\":\"Read\",\"input\":{},\"index\":0}}' \
+            '{\"type\":\"result\",\"report\":{\"results\":[{\"status\":\"ok\",\"text\":\"Hello, Dr. Smith!\"}]}}' ;;\n\
+          *--history*) printf '%s\\n' '{\"results\":[{\"status\":\"ok\",\"text\":\"Hello, Dr. Smith!\"}]}' ;;\n\
+          *) printf '%s\\n' '{\"results\":[{\"status\":\"ok\",\"text\":\"{\\\"value\\\": true, \\\"reason\\\": \\\"names her\\\"}\"}]}' ;;\n\
+        esac\n";
+    std::fs::write(&oh, body).unwrap();
+    (oh, history)
+}
+
+/// The recorded argv of every skill run (the ones carrying `--history`; judge
+/// runs never record history), one `Vec` per invocation.
+#[cfg(unix)]
+fn skill_run_argvs(oh: &std::path::Path) -> Vec<Vec<String>> {
+    let log = std::fs::read_to_string(oh.parent().unwrap().join("argv")).unwrap();
+    log.split("\n--\n")
+        .map(|inv| inv.lines().map(str::to_string).collect::<Vec<_>>())
+        .filter(|argv| argv.iter().any(|a| a == "--history"))
+        .collect()
+}
+
+#[cfg(unix)]
+#[test]
+fn oneharness_stream_asks_for_json_and_buffered_argv_is_unchanged() {
+    // oneharness is making readable text the default `--stream` format, so the
+    // streaming skill run must name `--format json` for the NDJSON it parses;
+    // the buffered run keeps selecting JSON through `--compact` alone.
+    let (oh, history) = argv_recording_oneharness("stream-argv");
+    let out = run_via_fake_oneharness(&oh, &history, &["--format", "json-stream"]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let lines: Vec<Value> = stdout
+        .lines()
+        .map(|l| serde_json::from_str(l).expect("each line is JSON"))
+        .collect();
+    let event = lines
+        .iter()
+        .find(|l| l["type"] == "event")
+        .expect("the streamed tool event is forwarded");
+    assert_eq!(event["event"]["name"], "Read", "event: {event}");
+    let result = lines.last().expect("a terminal line");
+    assert_eq!(result["type"], "result", "last line: {result}");
+    assert_eq!(result["report"]["passed"], true, "report: {result}");
+
+    let streamed = skill_run_argvs(&oh);
+    assert_eq!(streamed.len(), 1, "one streamed skill run: {streamed:?}");
+    let argv = &streamed[0];
+    assert!(argv.iter().any(|a| a == "--stream"), "argv: {argv:?}");
+    assert!(
+        argv.windows(2).any(|w| w == ["--format", "json"]),
+        "the streaming run names its format: {argv:?}"
+    );
+
+    // The buffered path: same case, plain JSON output → no `--stream`, and the
+    // argv has no `--format` beside its `--compact`.
+    let (oh, history) = argv_recording_oneharness("buffered-argv");
+    let out = run_via_fake_oneharness(&oh, &history, &["--format", "json"]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(json(&out)["passed"], true);
+    let buffered = skill_run_argvs(&oh);
+    assert_eq!(buffered.len(), 1, "one buffered skill run: {buffered:?}");
+    let argv = &buffered[0];
+    assert!(argv.iter().any(|a| a == "--compact"), "argv: {argv:?}");
+    assert!(!argv.iter().any(|a| a == "--stream"), "argv: {argv:?}");
+    assert!(!argv.iter().any(|a| a == "--format"), "argv: {argv:?}");
+}
