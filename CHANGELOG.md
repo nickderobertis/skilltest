@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.11.2](https://github.com/nickderobertis/skilltest/compare/v0.11.1...v0.11.2) (2026-09-29)
+
+### Bug Fixes
+
+* **provider:** ask oneharness for its NDJSON stream with an explicit --format json ([#54](https://github.com/nickderobertis/skilltest/issues/54)) ([ef48bef](https://github.com/nickderobertis/skilltest/commit/ef48bef537de8369fc768c6edc21d0127ae310cb))
+
 ## [0.11.1](https://github.com/nickderobertis/skilltest/compare/v0.11.0...v0.11.1) (2026-09-22)
 
 ### Build System
