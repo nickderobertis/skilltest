@@ -1,19 +1,10 @@
 #!/usr/bin/env bash
 # llmlint: ignore-file[new_code_lands_in_a_project] tests scripts/release-probe.sh, repo-level release glue that belongs to no Nx package; run workspace-wide from `just check` (AGENTS.md: scripts/*.sh are orchestrator-independent glue).
-# Offline behavioral test of scripts/release-probe.sh, the onevcs release probe
-# release-targets.toml names.
-#
-# The one thing the probe must never do is report a question it could not
-# answer as the answer "no release yet": a consumer reads that as a fact about
-# the registry and stops waiting. So every path that cannot produce a version is
-# driven through the real script and asserted non-zero with a reason on stderr
-# and NOTHING on stdout; and the two answers a caller acts on — a version, and
-# empty output for a registry 404 — are driven for every declared target in its
-# own registry's response shape, so a probe that refused everything cannot pass.
-#
-# Offline by construction: `curl` is a double on PATH that records each call and
-# answers as a case tells it to, through files only it reads. The probe itself
-# runs under `env -i` with nothing but PATH and HOME, exactly as onevcs spawns it.
+# Offline test of scripts/release-probe.sh. Every declared target must answer a
+# version and a 404's empty answer; anything uncertain must exit non-zero with
+# a reason and no stdout, because a caller reads empty output as "not released".
+# curl is a double on PATH; the probe runs under `env -i` with PATH and HOME,
+# as onevcs spawns it.
 #
 # Quiet on success, one line. On failure it prints what the probe said.
 set -euo pipefail
@@ -31,7 +22,10 @@ trap 'rm -rf "$work" || echo "check-release-probe: could not remove $work; delet
 
 fail() {
   echo "check-release-probe: $1" >&2
-  [ -s "$work/err" ] && { echo "  the probe's stderr:" >&2; cat "$work/err" >&2; }
+  if [ -s "$work/err" ]; then
+    echo "  the probe's stderr:" >&2
+    cat "$work/err" >&2 || echo "  (unreadable: $work/err)" >&2
+  fi
   exit 1
 }
 
@@ -61,7 +55,7 @@ put() {
 # it exits with a message naming that rather than inventing a 200.
 stub="$work/stub"
 reached="$stub/reached"
-mkdir -p "$work/bin" "$stub" || fail "could not create the curl double's directories under $work"
+mkdir -p "$work/bin" "$stub" || fail "could not create the curl double's directories under $work; check that \$TMPDIR (or /tmp) is writable and has space, then rerun"
 put "$work/bin/curl" '%s\n' "#!/usr/bin/env bash
 set -euo pipefail
 printf 'curl %s\\n' \"\$*\" >>'$reached' || { echo 'curl double: could not log this call' >&2; exit 98; }
@@ -79,19 +73,19 @@ fi
 [ -f '$stub/status' ] && [ -f '$stub/body' ] || { echo 'curl double: this case never called answer()' >&2; exit 99; }
 if [ -n \"\$out\" ]; then cat '$stub/body' >\"\$out\" || { echo 'curl double: could not write the response' >&2; exit 97; }; fi
 cat '$stub/status' || { echo 'curl double: could not read the status' >&2; exit 97; }"
-chmod +x "$work/bin/curl" || fail "could not make the curl double executable"
+chmod +x "$work/bin/curl" || fail "could not make the curl double executable; check that $work is not on a noexec filesystem (set \$TMPDIR elsewhere) and rerun"
 
 # $1 = HTTP status, $2 = body (printf %b escapes). Clears any transport failure
 # a prior case set.
 answer() {
-  rm -f "$stub/transport-fails" || fail "could not clear $stub/transport-fails"
+  rm -f "$stub/transport-fails" || fail "could not clear $stub/transport-fails; check that \$TMPDIR (or /tmp) is writable and has space, then rerun"
   put "$stub/status" '%s' "$1"
   put "$stub/body" '%b' "$2"
 }
 
 # A PATH with only what the probe needs before it reads a registry, so a case
 # can take away curl or both JSON readers without taking away the shell.
-mkdir -p "$work/minbin" || fail "could not create $work/minbin"
+mkdir -p "$work/minbin" || fail "could not create $work/minbin; check that \$TMPDIR (or /tmp) is writable and has space, then rerun"
 for tool in bash dirname sed awk grep tr head mktemp rm cat; do
   path="$(tool_path "$tool")" ||
     fail "no $tool on this host, so the restricted-PATH cases cannot be built; install $tool (coreutils on Linux and macOS) and rerun"
@@ -153,7 +147,7 @@ assert_answered() {
   fi
 }
 
-# --- Every declared target: both answers, in its registry's own shape --------
+# Every declared target: both answers, in its registry's own shape
 declared="$(awk '
   /^[[:space:]]*\[/ { inside = ($0 == "[[target]]"); next }
   inside && /^id = "[^"]+"$/ { v = $0; sub(/^id = "/, "", v); sub(/"$/, "", v); print v; inside = 0 }
@@ -194,7 +188,7 @@ while read -r id; do
   assert_answered "$id never released (registry 404)" "" "$stub_path" "$id"
 done < <(printf '%s\n' "$declared")
 
-# --- Refused before any registry is read --------------------------------------
+# Refused before any registry is read
 assert_declined_offline "no identifier at all" "takes exactly one registry-qualified identifier"
 assert_declined_offline "two identifiers" "takes exactly one registry-qualified identifier" \
   crate:skilltest-core crate:skilltest-cli
@@ -273,7 +267,7 @@ assert_not_answered "a declared id on an unknown registry" \
 [ ! -s "$reached" ] ||
   fail "a fixture refusal read the network; move that refusal in scripts/release-probe.sh above the curl call, where every other declaration check sits"
 
-# --- Everything a registry read can do other than answer ----------------------
+# Everything a registry read can do other than answer
 assert_not_answered "a host with no curl" \
   "curl is required" "$work/minbin" scripts/release-probe.sh pypi:skilltest-sdk
 put "$stub/transport-fails" ''
@@ -293,7 +287,7 @@ assert_not_answered "a response with no version" \
 answer 200 '{"dist-tags":{"latest":""}}'
 assert_not_answered "a response with an empty version" \
   "without a version at" "$stub_path" scripts/release-probe.sh npm:@skill-test/sdk
-for bad in 'latest' '1latest' '1..' '1' '1.2' '1.2.3rc1' '1.2.3-foo.' '1.2.3-' 'see the release notes' '1.2.3\\n' '1.2.3\\nand more'; do
+for bad in 'latest' '1latest' '1..' '1' '1.2' '1.2.3rc1' '01.2.3' '1.2.3-01' '1.2.3-foo.' '1.2.3-' 'see the release notes' '1.2.3\\n' '1.2.3\\nand more'; do
   answer 200 '{"crate":{"max_stable_version":"'"$bad"'"}}'
   assert_not_answered "a response serving '$bad' as the version" \
     "version a caller can use" "$stub_path" scripts/release-probe.sh crate:skilltest-core
@@ -302,7 +296,21 @@ answer 200 '{"info":{"version":"0.11.2"}}'
 assert_not_answered "a host with neither JSON reader" \
   "neither jq nor python3" "$work/minbin:$work/bin" scripts/release-probe.sh pypi:skilltest-sdk
 
-# --- Registry specifics --------------------------------------------------------
+# A host whose scratch space cannot be created or cleaned: the first is
+# unanswered with a next action, the second leaves the answer intact and only
+# warns, so a full /tmp never turns a release into "no release yet".
+mkdir -p "$work/badtmp" "$work/badrm" || fail "could not create the mktemp/rm doubles' directories; check that \$TMPDIR (or /tmp) is writable and has space, then rerun"
+put "$work/badtmp/mktemp" '#!/bin/sh\necho "mktemp: No space left on device" >&2\nexit 1\n'
+put "$work/badrm/rm" '#!/bin/sh\n%s "$@"\necho "rm: Permission denied" >&2\nexit 1\n' "$(tool_path rm)"
+chmod +x "$work/badtmp/mktemp" "$work/badrm/rm" || fail "could not make the mktemp/rm doubles executable; check that $work is not on a noexec filesystem"
+answer 200 '{"info":{"version":"0.11.2"}}'
+assert_not_answered "a host where mktemp fails" \
+  "could not create a scratch directory" "$work/badtmp:$stub_path" scripts/release-probe.sh pypi:skilltest-sdk
+assert_answered "a host where cleanup fails" "0.11.2" "$work/badrm:$stub_path" pypi:skilltest-sdk
+grep -Fq "could not remove" "$work/err" ||
+  fail "a failed cleanup was silent; scripts/release-probe.sh's EXIT trap must say which scratch directory to delete by hand"
+
+# Registry specifics
 # crates.io serves a prerelease as max_version while max_stable_version holds
 # what a dependent may take, so the path order is load-bearing.
 answer 200 '{"crate":{"max_stable_version":"0.11.2","max_version":"0.12.0-rc.1"}}'
@@ -352,7 +360,7 @@ done
 [ "$readers" -gt 0 ] ||
   fail "this host has neither jq nor python3, so no reader could be exercised; install one (the probe needs it too) and rerun"
 
-# --- One schema version across the declaration and both of its readers --------
+# One schema version across the declaration and both of its readers
 declared_version="$(sed -n 's/^schema_version = \([0-9]*\)$/\1/p' release-targets.toml)" ||
   fail "could not read release-targets.toml; restore it from git"
 for reader in scripts/release-probe.sh scripts/check-release-targets.sh; do

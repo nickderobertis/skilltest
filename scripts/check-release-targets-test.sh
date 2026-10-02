@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
 # llmlint: ignore-file[new_code_lands_in_a_project] tests scripts/check-release-targets.sh, repo-level release glue that belongs to no Nx package; run workspace-wide from `just check` (AGENTS.md: scripts/*.sh are orchestrator-independent glue).
-# Behavioral test of scripts/check-release-targets.sh, the release-target drift
-# gate. A gate nobody has watched fail is not known to work, and what this one
-# guards against is an inventory going stale in silence — so it is driven against
-# a staged copy of everything it reads, once per way the declaration and
-# publish.yml can drift apart in each direction, and must go red naming the
-# drift. It must also be green on the unmodified copy, or every red is noise.
+# Test of scripts/check-release-targets.sh on a staged copy of what it reads: it
+# must be green unmodified, or no red means anything, and red naming the drift
+# on each way the declaration and publish.yml can disagree, since a gate nobody
+# has watched fail is not known to work.
 #
 # Quiet on success, one line. On failure it prints what the gate said.
 set -euo pipefail
@@ -22,7 +20,10 @@ trap 'rm -rf "$work" || echo "check-release-targets-test: could not remove $work
 
 fail() {
   echo "check-release-targets-test: $1" >&2
-  [ -s "$work/out" ] && { echo "  what the gate said:" >&2; cat "$work/out" >&2; }
+  if [ -s "$work/out" ]; then
+    echo "  what the gate said:" >&2
+    cat "$work/out" >&2 || echo "  (unreadable: $work/out)" >&2
+  fi
   exit 1
 }
 
@@ -87,7 +88,7 @@ run_gate || fail "the gate is red on an unmodified copy of this tree, so no red 
 
 stage
 awk 'BEGIN { RS = ""; ORS = "\n\n" } !/id = "pypi:skilltest-pytest"/' \
-  "$work/repo/release-targets.toml" >"$work/next" || fail "could not drop the pytest target from the staged declaration"
+  "$work/repo/release-targets.toml" >"$work/next" || fail "could not drop the pytest target from the staged declaration; check that $work is writable and has space, then rerun"
 replace release-targets.toml
 expect_red "a published PyPI project lost its target" \
   "publishes 'pypi:skilltest-pytest' (from plugins/pytest/pyproject.toml) and release-targets.toml declares no target"
@@ -144,7 +145,7 @@ awk 'BEGIN { RS = ""; ORS = "\n\n" }
   /\[\[target\]\]/ && ++n == 1 { held = $0; next }
   { print }
   n == 2 && held != "" { print held; held = "" }
-' "$work/repo/release-targets.toml" >"$work/next" || fail "could not swap the two crate targets in the staged declaration"
+' "$work/repo/release-targets.toml" >"$work/next" || fail "could not swap the two crate targets in the staged declaration; check that $work is writable and has space, then rerun"
 replace release-targets.toml
 expect_red "the targets were listed out of publication order" \
   "in a different order than"

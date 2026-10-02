@@ -62,6 +62,7 @@ identifier="$1"
 # version for something no consumer may wait on — so a table header always ends
 # the block above it, and a [[target]] that somehow carried no id can never
 # reach into the entry below for one.
+# llmlint: ignore-block[boundary_inputs_validated] This is an allowlist read, not the declaration's validation: onevcs validates release-targets.toml in full (`onevcs release declaration`) before it ever spawns this probe, and the probe must run standalone under `env -i` with no TOML library, so it accepts only the exact `schema_version = N` and `id = "..."` lines it can place and refuses everything else as unanswered.
 declared_version="$(sed -n 's/^schema_version = \([0-9]*\)$/\1/p' "$declarations")" ||
   unanswered "could not read $declarations; check its permissions and retry"
 [ "$declared_version" = "$DECLARATION_SCHEMA_VERSION" ] ||
@@ -80,6 +81,7 @@ case $'\n'"$declared"$'\n' in
   *$'\n!duplicate\n'*) unanswered "$declarations writes id twice in one [[target]]; keep the one that names the artifact and run 'onevcs release declaration .' to validate the rest" ;;
 esac
 [ -n "$declared" ] || unanswered "$declarations declares no release targets; restore its [[target]] entries"
+# llmlint: ignore-end[boundary_inputs_validated]
 
 if ! printf '%s\n' "$declared" | grep -Fxq -- "$identifier"; then
   usage_error "'$identifier' is not a release target of this repository, so nothing can be said about it — this is not an answer of 'no release yet'. Declared: $(printf '%s' "$declared" | tr '\n' ' ')"
@@ -98,7 +100,10 @@ name="${identifier#*:}"
 # an `N!` epoch, a lowercase local label), never semver's `-rc.1`. Requiring
 # that shape is what separates a version from a word served in its place:
 # `latest` carries nothing a caller can order, nor do `1latest` or `1..`.
-semver='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
+# semver.org's own grammar: no leading zero in a numeric core or prerelease part.
+num='(0|[1-9][0-9]*)'
+pre="($num|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
+semver="^$num\\.$num\\.$num(-$pre(\\.$pre)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?\$"
 pep440='^([0-9]+!)?[0-9]+(\.[0-9]+)*((a|b|rc)[0-9]+)?(\.post[0-9]+)?(\.dev[0-9]+)?(\+[a-z0-9]+(\.[a-z0-9]+)*)?$'
 # llmlint: ignore-block[contracts_have_one_source_or_a_drift_gate] The authority for each URL and field is the live registry, which publishes no schema the offline gate could read (AGENTS.md: no network or non-determinism in `just check`); `just release-probe-live` (scripts/release-probe-live.sh) is the reconciliation, driving this exact case against crates.io, PyPI and npm.
 case "$registry" in
@@ -157,7 +162,7 @@ if ! status="$(curl --silent --show-error --location \
   --header 'Accept: application/vnd.npm.install-v1+json, application/json' \
   --user-agent 'skilltest-release-probe (https://github.com/nickderobertis/skilltest)' \
   "$url" 2>"$work/curl-error")"; then
-  cat "$work/curl-error" >&2
+  cat "$work/curl-error" >&2 || printf 'release-probe: (curl error output unreadable)\n' >&2
   unanswered "could not reach $url for '$identifier'; retry when the registry is reachable"
 fi
 
@@ -209,7 +214,7 @@ else
 fi
 
 if [ "$version" = "__unreadable__" ]; then
-  cat "$work/read-error" >&2
+  cat "$work/read-error" >&2 || printf 'release-probe: (reader error output unreadable)\n' >&2
   unanswered "could not parse the $registry response for '$identifier'; fetch $url yourself and, if it is still JSON, report the reader error above — otherwise that registry's API moved and this probe needs its new URL"
 fi
 

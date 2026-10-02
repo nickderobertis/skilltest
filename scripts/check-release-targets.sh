@@ -5,17 +5,8 @@
 #
 # A consumer sequencing work across repositories reads release-targets.toml to
 # learn which skilltest artifact to wait on, and a target nobody declared grants
-# that consumer no hold at all — silently. So the published set is DERIVED here
-# from the release configuration rather than transcribed:
-#
-#   crate — each `publish_crate <name>` call in publish.yml's crates job, with
-#           the crates/*/Cargo.toml whose [package] name it is.
-#   pypi  — each `pyproject_version <dir>` call in its pypi job, named by that
-#           dir's pyproject.toml [project] name and cross-checked against the
-#           `on_pypi <name>` skip guard beside it.
-#   npm   — each `publish_pkg <dir>` call in its npm job, named by that dir's
-#           package.json; plus the per-platform packages its `for target in`
-#           loop stages, mapped to a directory by scripts/stage-npm-binary.sh.
+# that consumer no hold at all — silently. So the published set is DERIVED from
+# publish.yml's publish calls and the manifests they read, never transcribed.
 #
 # A per-platform package is a `covers` entry of the target whose release ships
 # it, never a target of its own, and it must also be pinned in that target's
@@ -46,15 +37,18 @@ fail() {
   fails=$((fails + 1))
 }
 
-# The first `name = "..."` inside a TOML section, or empty when the file cannot
-# be read — every caller fails on empty, naming the manifest. $1 = file, $2 = section.
+# The `name = "..."` of a TOML section, or empty when the file cannot be read or
+# the section names itself twice — every caller fails on empty, naming the
+# manifest. $1 = file, $2 = section.
 toml_section_name() {
   awk -v section="[$2]" '
     $0 == section { inside = 1; next }
     inside && /^\[/ { exit }
-    inside && /^name *= *"[^"]+"/ {
-      sub(/^name *= *"/, ""); sub(/".*$/, ""); print; exit
+    inside && /^name *=/ {
+      if (++names > 1 || $0 !~ /^name *= *"[^"]+" *$/) { found = ""; bad = 1; exit }
+      found = $0; sub(/^name *= *"/, "", found); sub(/" *$/, "", found)
     }
+    END { if (!bad && found != "") print found }
   ' "$1" 2>/dev/null || true
 }
 
