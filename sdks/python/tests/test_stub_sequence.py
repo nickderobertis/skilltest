@@ -90,9 +90,9 @@ def test_responses_compile_to_the_yaml_sequence_form() -> None:
         ({"responses": []}, "at least one response"),
         ({"responses": "ab"}, "needs a sequence"),
         ({"responses": ["a", ""]}, "response 1 must not be empty"),
-        ({"responses": [{"output": "a", "exit_cod": 2}]}, "unknown key"),
-        ({"responses": [{"exit_code": 2}]}, "string `output`"),
-        ({"responses": [{"output": "a", "exit_code": "2"}]}, "integer `exit_code`"),
+        ({"responses": [{"output": "a", "exit_cod": 2}]}, "(?s)exit_cod.*Extra inputs"),
+        ({"responses": [{"exit_code": 2}]}, "(?s)output.*Field required"),
+        ({"responses": [{"output": "a", "exit_code": "2"}]}, "(?s)exit_code.*valid integer"),
         ({"responses": [3]}, "output string"),
     ],
 )

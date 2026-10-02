@@ -81,6 +81,7 @@ describe("ordered stub responses", () => {
     [{ responses: [{ exitCode: 2 }] }, "string `output`"],
     [{ responses: [{ output: "a", exitCode: 1.5 }] }, "integer `exitCode`"],
     [{ responses: [3] }, "output string"],
+    [{ output: "a", exitCode: "2" }, "integer `exitCode`"],
   ])("refuses %j at construction", (options, message) => {
     // Typed callers cannot even write most of these; JavaScript callers can.
     const build = stub as (options: object) => unknown;

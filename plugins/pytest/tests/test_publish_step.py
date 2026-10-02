@@ -50,7 +50,7 @@ def built_dists(root: Path) -> set[Path]:
 
 # Not a marker-deselected tier: this runs unconditionally in the project's `test-e2e`
 # target, which is its whole test tier by design; a pure build reaches no external service.
-# llmlint: ignore[test_tiers_split_by_project_not_by_marker] unconditional in the project's own tier
+# llmlint: ignore[test_tiers_split_by_project_not_by_marker, shell_test_tiers_stay_split] no nx project owns publish.yml (as for the uv workspace in test_uv_workspace.py); the step replayed builds this member, so it runs in this member's own tier, unconditionally  # noqa: E501
 def test_publish_step_uploads_exactly_what_its_build_wrote(tmp_path: Path) -> None:
     step = publish_step()
     assert "uv publish " in step, step

@@ -380,6 +380,28 @@ fn concurrent_runs_count_their_own_stub_sequences_through_the_real_hook() {
 
 #[test]
 #[ignore = "needs oneharness on PATH (just install-oneharness); run via just test-oneharness"]
+fn one_item_stub_sequence_is_a_plain_stub_through_the_real_hook() {
+    // A one-item list compiles to oneharness's own stub: every call gets that
+    // response and its exit code, and the hook itself logs `stub`.
+    let decls: Vec<skilltest_core::MockDecl> = serde_yaml::from_str(
+        "- name: status\n  match: { contains: jobctl }\n  stub: [{ output: steady, exit_code: 2 }]\n",
+    )
+    .unwrap();
+    let set = skilltest_core::MockSet::build(&[], &decls, false).unwrap();
+    let scratch = Scratch::new("stubone");
+    let (rules, spy) = (scratch.0.join("rules.json"), scratch.0.join("spy.jsonl"));
+    std::fs::write(&rules, set.rules().unwrap().to_string()).unwrap();
+    for _ in 0..2 {
+        assert_eq!(hook_then_shell(&rules, &spy), ("steady".to_string(), 2));
+    }
+    let records =
+        skilltest_core::mock::parse_spy_log(&std::fs::read_to_string(&spy).unwrap()).unwrap();
+    assert_eq!(records.len(), 2);
+    assert!(records.iter().all(|r| r.action == "stub"));
+}
+
+#[test]
+#[ignore = "needs oneharness on PATH (just install-oneharness); run via just test-oneharness"]
 fn spy_flag_records_all_calls_through_real_oneharness() {
     // --spy with no mocks: oneharness installs the pure observer hook
     // (`--spy-file` alone) and every scripted call comes back as `allow`.

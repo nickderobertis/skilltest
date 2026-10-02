@@ -42,8 +42,9 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
+from ._case import StubOutput
 from .errors import SkilltestUsageError
 
 if TYPE_CHECKING:
@@ -510,43 +511,40 @@ def stub(
 
 def _compile_responses(
     responses: Sequence[str | Mapping[str, str | int]],
-) -> list[str | dict[str, str | int]]:
-    """Check a `stub` sequence and render it in the case schema's form. Loud
-    on anything the CLI would refuse, so the fault surfaces at construction."""
+) -> list[str | dict[str, Any]]:
+    """Check a `stub` sequence and render it in the case schema's form, each
+    map item through the generated `StubOutput` model (strict, so `"2"` is not
+    an exit code). Loud on anything the CLI would refuse, so the fault
+    surfaces at construction."""
     if isinstance(responses, str) or not isinstance(responses, Sequence):
         raise SkilltestUsageError(
             f"stub(responses=...) needs a sequence of responses (got {responses!r})"
         )
     if not responses:
         raise SkilltestUsageError("stub(responses=...) needs at least one response")
-    compiled: list[str | dict[str, str | int]] = []
+    compiled: list[str | dict[str, Any]] = []
     for i, item in enumerate(responses):
-        if isinstance(item, str):
-            if not item:
+        match item:
+            case "":
                 raise SkilltestUsageError(
                     f"stub response {i} must not be empty (use deny() to block a call)"
                 )
-            compiled.append(item)
-            continue
-        if not isinstance(item, Mapping):
-            raise SkilltestUsageError(
-                f"stub response {i} must be an output string or "
-                f'{{"output": ..., "exit_code": ...}} (got {item!r})'
-            )
-        unknown = sorted(set(item) - {"output", "exit_code"})
-        if unknown:
-            raise SkilltestUsageError(
-                f"stub response {i} has unknown key(s) {unknown}; use `output` and `exit_code`"
-            )
-        out = item.get("output")
-        code = item.get("exit_code", 0)
-        if not isinstance(out, str):
-            raise SkilltestUsageError(f"stub response {i} needs a string `output` (got {out!r})")
-        if not isinstance(code, int) or isinstance(code, bool):
-            raise SkilltestUsageError(
-                f"stub response {i} needs an integer `exit_code` (got {code!r})"
-            )
-        compiled.append({"output": out, "exit_code": code})
+            case str():
+                compiled.append(item)
+            case Mapping():
+                try:
+                    response = StubOutput.model_validate(dict(item), strict=True)
+                except ValidationError as err:
+                    raise SkilltestUsageError(
+                        f'stub response {i} is not a valid {{"output": ..., "exit_code": ...}}: '
+                        f"{err}"
+                    ) from err
+                compiled.append(response.model_dump(exclude_none=True))
+            case _:
+                raise SkilltestUsageError(
+                    f"stub response {i} must be an output string or "
+                    f'{{"output": ..., "exit_code": ...}} (got {item!r})'
+                )
     return compiled
 
 

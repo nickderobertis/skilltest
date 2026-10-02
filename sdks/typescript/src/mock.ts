@@ -425,6 +425,9 @@ export interface StubResponsesOptions {
  * the last item again.
  */
 export function stub(options: MatchOptions & (StubOutputOptions | StubResponsesOptions)): ToolMock {
+  // Widened to `unknown` on purpose: the types already keep a TypeScript caller
+  // to one form, but a JavaScript caller can pass anything, so every field is
+  // checked at runtime below before it reaches the declaration.
   const { output, exitCode, responses, ...criteria } = options as MatchOptions & {
     output?: unknown;
     exitCode?: unknown;
@@ -444,9 +447,21 @@ export function stub(options: MatchOptions & (StubOutputOptions | StubResponsesO
     );
   }
   return new ToolMock(
-    { stub: { output, exit_code: typeof exitCode === "number" ? exitCode : 0 } },
+    {
+      stub: { output, exit_code: checkedExitCode(exitCode, "stub() needs an integer `exitCode`") },
+    },
     criteria,
   );
+}
+
+/** An exit code as the case schema takes it: absent means 0, and anything
+ * but an integer is refused rather than silently replaced. */
+function checkedExitCode(exitCode: unknown, message: string): number {
+  if (exitCode === undefined) return 0;
+  if (typeof exitCode !== "number" || !Number.isInteger(exitCode)) {
+    throw new SkilltestUsageError(message);
+  }
+  return exitCode;
 }
 
 /** Check a stub sequence and render it in the case schema's form. Loud on
@@ -475,14 +490,16 @@ function compileResponses(responses: unknown): [StubResponse, ...StubResponse[]]
         `stub response ${i} has unknown key(s) ${unknown.join(", ")}; use \`output\` and \`exitCode\``,
       );
     }
-    const { output, exitCode = 0 } = item as { output?: unknown; exitCode?: unknown };
+    // Only `output` and `exitCode` remain after the key check above; read
+    // them as `unknown` so each is type-checked before use.
+    const { output, exitCode } = item as { output?: unknown; exitCode?: unknown };
     if (typeof output !== "string") {
       throw new SkilltestUsageError(`stub response ${i} needs a string \`output\``);
     }
-    if (typeof exitCode !== "number" || !Number.isInteger(exitCode)) {
-      throw new SkilltestUsageError(`stub response ${i} needs an integer \`exitCode\``);
-    }
-    return { output, exit_code: exitCode };
+    return {
+      output,
+      exit_code: checkedExitCode(exitCode, `stub response ${i} needs an integer \`exitCode\``),
+    };
   });
   const [first, ...rest] = compiled;
   if (first === undefined) {

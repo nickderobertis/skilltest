@@ -946,7 +946,6 @@ fn stub_sequence_answers_successive_calls_in_order_across_turns() {
     );
     let report = json(&out);
     assert_sequence_run(&report["runs"][0]);
-    // The called eval counted all four intercepted calls.
     assert_eq!(report["runs"][0]["evals"][0]["detail"]["count"], 4);
 }
 
@@ -982,6 +981,40 @@ fn stub_sequence_counts_restart_for_every_run() {
         for run in runs {
             assert_sequence_run(run);
         }
+    }
+}
+
+#[test]
+fn one_item_stub_sequence_answers_every_call_like_a_single_stub() {
+    // A one-item list is the single-stub form: no counter, oneharness's own
+    // stateless stub, the same response and exit code on every call.
+    let dir = unique_dir("mock-oneitem");
+    let case_path = dir.join("one.yaml");
+    std::fs::write(
+        &case_path,
+        format!(
+            "name: one\nskill: {}\ninput: go\nuser:\n  persona: \"say: again\"\n  max_turns: 2\n\
+             mocks:\n  - name: status\n    match: {{ contains: jobctl }}\n    \
+             stub: [{{ output: steady, exit_code: 2 }}]\nevals:\n  - type: called\n    \
+             mock: status\n    times: 4\n",
+            fixtures().join("skills/poller").display()
+        ),
+    )
+    .unwrap();
+    let out = run_case(case_path, &["--format", "json"]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let run = &json(&out)["runs"][0];
+    let records = run["mock_calls"].as_array().unwrap();
+    assert!(records.iter().all(|r| r["action"] == "stub"), "{records:?}");
+    let events = sequence_events(run);
+    assert_eq!(events.len(), 4);
+    for (command, output) in events {
+        assert_eq!(command, "printf '%s\\n' 'steady'; exit 2");
+        assert_eq!(output, "steady\n");
     }
 }
 

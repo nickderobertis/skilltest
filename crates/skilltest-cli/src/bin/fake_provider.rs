@@ -142,7 +142,9 @@ fn respond(request: &Value) -> Value {
     }
 }
 
-/// Whether a rewritten input is a compiled stub sequence.
+/// Whether a rewritten input is a compiled stub sequence. The hook hands a
+/// sequence over as a plain `rewrite`, so its command's leading marker is the
+/// only thing telling it apart from a general rewrite, which must not run.
 fn is_stub_sequence(input: &Value) -> bool {
     input
         .get("command")
@@ -150,7 +152,9 @@ fn is_stub_sequence(input: &Value) -> bool {
         .is_some_and(|c| c.starts_with(STUB_SEQUENCE_MARKER))
 }
 
-/// Execute a rewritten shell command and return its stdout.
+/// Run a stub sequence's command once; its stdout is this call's response.
+/// The exit code is dropped, as the normalized `tool_call` event has no field
+/// for it.
 fn run_shell(input: &Value) -> String {
     let command = input.get("command").and_then(Value::as_str).unwrap_or("");
     match std::process::Command::new("sh")
