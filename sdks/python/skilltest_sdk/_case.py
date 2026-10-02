@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 from typing import Any, Literal
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, RootModel
 
 
 class DenyMessage(BaseModel):
@@ -105,6 +105,14 @@ class StubOutput(BaseModel):
     output: str
 
 
+class StubSpec1(RootModel[list[str | StubOutput]]):
+    root: list[str | StubOutput] = Field(
+        ...,
+        description="Ordered responses for successive intercepted calls; the last repeats.",
+        min_length=1,
+    )
+
+
 class MockMatch(BaseModel):
     """
     What a mock/spy declaration matches on. At least one criterion is required;
@@ -197,7 +205,7 @@ class MockDecl(BaseModel):
         None,
         description="Substitute raw input fields (a JSON object) — the low-level escape\nhatch, and the way to mock file reads (rewrite `file_path` to a\nfixture).",
     )
-    stub: str | StubOutput | None = Field(
+    stub: str | StubOutput | StubSpec1 | None = Field(
         None,
         description="Fake a shell call's result: the real command never runs and the model\nreceives this output as the tool's genuine result.",
     )

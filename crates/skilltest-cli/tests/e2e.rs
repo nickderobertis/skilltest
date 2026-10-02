@@ -869,6 +869,151 @@ fn mock_stub_intercepts_and_call_evals_pass() {
     assert_eq!(evals[3]["detail"]["negated"], true);
 }
 
+fn sequence_case() -> PathBuf {
+    fixtures().join("sequence/mock_stub_sequence.yaml")
+}
+
+/// The stub-sequence run's per-call `(command, output)` events, in call order
+/// across every assistant turn.
+fn sequence_events(run: &Value) -> Vec<(String, String)> {
+    run["transcript"]["messages"]
+        .as_array()
+        .expect("transcript")
+        .iter()
+        .filter(|m| m["role"] == "assistant")
+        .flat_map(|m| m["events"].as_array().cloned().unwrap_or_default())
+        .map(|e| {
+            (
+                e["input"]["command"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string(),
+                e["output"].as_str().unwrap_or_default().to_string(),
+            )
+        })
+        .collect()
+}
+
+/// Assert one run of the stub-sequence case answered in order across both
+/// turns, recorded each call as the declared stub, and cleaned its counter up.
+fn assert_sequence_run(run: &Value) {
+    assert_eq!(run["passed"], Value::Bool(true), "run: {run:#}");
+    assert_eq!(run["turns"], 2);
+    let records = run["mock_calls"].as_array().expect("mock_calls");
+    assert_eq!(records.len(), 4, "two calls per turn: {records:?}");
+    for record in records {
+        assert_eq!(record["action"], "stub");
+        assert_eq!(record["mock"], "status");
+        assert_eq!(record["input"]["command"], "jobctl status build-42");
+    }
+    let events = sequence_events(run);
+    let outputs: Vec<&str> = events.iter().map(|(_, o)| o.trim_end()).collect();
+    assert_eq!(
+        outputs,
+        [
+            "build-42: queued",
+            "build-42: failed (retrying)",
+            "build-42: passed",
+            "build-42: passed",
+        ],
+        "the count spans the conversation and the last response repeats"
+    );
+    // Post-rewrite reality: the counter command ran; once the run is over its
+    // per-run counter directory is gone.
+    let command = &events[0].0;
+    assert!(
+        command.starts_with(skilltest_core::mock::STUB_SEQUENCE_MARKER),
+        "{command}"
+    );
+    let dir = command
+        .split("d='")
+        .nth(1)
+        .and_then(|rest| rest.split('\'').next())
+        .expect("the command names its counter dir");
+    assert!(
+        !std::path::Path::new(dir).exists(),
+        "the counter dir outlived its run: {dir}"
+    );
+}
+
+#[test]
+fn stub_sequence_answers_successive_calls_in_order_across_turns() {
+    let out = run_case(sequence_case(), &["--format", "json"]);
+    assert!(
+        out.status.success(),
+        "expected exit 0; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report = json(&out);
+    assert_sequence_run(&report["runs"][0]);
+    // The called eval counted all four intercepted calls.
+    assert_eq!(report["runs"][0]["evals"][0]["detail"]["count"], 4);
+}
+
+#[test]
+fn stub_sequence_counts_restart_for_every_run() {
+    // Two platforms are two runs of the case in one process, and two processes
+    // started together run concurrently: every run counts its own calls from
+    // the first response.
+    let spawn = || {
+        Command::new(skilltest())
+            .arg("run")
+            .arg(sequence_case())
+            .arg("--provider")
+            .arg(fake_provider())
+            .args(["--platform", "demo", "--platform", "other"])
+            .args(["--model", "fake", "--format", "json"])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("skilltest run spawns")
+    };
+    let children = [spawn(), spawn()];
+    for child in children {
+        let out = child.wait_with_output().expect("skilltest run finishes");
+        assert!(
+            out.status.success(),
+            "stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let report = json(&out);
+        let runs = report["runs"].as_array().expect("runs");
+        assert_eq!(runs.len(), 2);
+        for run in runs {
+            assert_sequence_run(run);
+        }
+    }
+}
+
+#[test]
+fn malformed_stub_sequences_are_usage_errors_before_any_run() {
+    let dir = unique_dir("mock-badsequence");
+    let skill = fixtures().join("skills/poller");
+    for (tag, stub, expect) in [
+        ("empty", "[]", "at least one response"),
+        (
+            "typo",
+            "[ok, { output: boom, exit_cod: 2 }]",
+            "did not match any variant",
+        ),
+    ] {
+        let case_path = dir.join(format!("{tag}.yaml"));
+        std::fs::write(
+            &case_path,
+            format!(
+                "name: {tag}\nskill: {}\ninput: go\nmocks:\n  - match: {{ tool: bash }}\n    \
+                 stub: {stub}\nevals:\n  - type: boolean\n    criterion: anything\n",
+                skill.display()
+            ),
+        )
+        .unwrap();
+        let out = run_case(case_path, &["--format", "json"]);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(2), "{tag}: {stderr}");
+        assert!(stderr.contains(expect), "{tag}: {stderr}");
+    }
+}
+
 #[test]
 fn mock_violation_fails_not_called_and_reports_the_call() {
     let out = run_case(case("mock_violation.yaml"), &["--format", "json"]);

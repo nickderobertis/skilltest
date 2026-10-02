@@ -19,7 +19,9 @@
 //!     show post-rewrite reality (a stub's `printf`, a rewrite's input), and a
 //!     stub's canned output / a deny's message is appended to the reply text as
 //!     `[<tool>] <text>` — the deterministic stand-in for "the model saw the
-//!     mocked result".
+//!     mocked result". A stub sequence arrives as a rewrite to a counter
+//!     command, which is executed through `sh` exactly as a harness's shell
+//!     tool would, so successive calls in a run get successive responses.
 //!   * `user` — replies with the text after a `say:` marker in the persona (or
 //!     `"continue"`). Never stops on its own.
 //!   * `judge` — scores against the concatenated assistant text. Backtick-quoted
@@ -31,7 +33,7 @@
 use std::io::Read;
 
 use serde_json::{json, Value};
-use skilltest_core::mock::{decide, stub_command, AppliedAction};
+use skilltest_core::mock::{decide, stub_command, AppliedAction, STUB_SEQUENCE_MARKER};
 
 fn main() {
     let mut input = String::new();
@@ -111,6 +113,14 @@ fn respond(request: &Value) -> Value {
                 ));
                 surfaced.push(format!("[{name}] {output}"));
             }
+            Some((_, AppliedAction::Rewrite { input })) if is_stub_sequence(input) => {
+                // A stub sequence: run the compiled command as the harness's
+                // shell would, so the run's counter advances for real and the
+                // model receives this call's response.
+                let output = run_shell(input);
+                events.push(event(index, name, input.clone(), Some(output.clone())));
+                surfaced.push(format!("[{name}] {}", output.trim_end()));
+            }
             Some((_, AppliedAction::Rewrite { input })) => {
                 events.push(event(index, name, input.clone(), None));
                 surfaced.push(format!("[{name}] input rewritten to {input}"));
@@ -129,6 +139,26 @@ fn respond(request: &Value) -> Value {
         json!({ "message": message, "done": false, "mock_calls": records })
     } else {
         json!({ "message": message, "done": false, "events": events, "mock_calls": records })
+    }
+}
+
+/// Whether a rewritten input is a compiled stub sequence.
+fn is_stub_sequence(input: &Value) -> bool {
+    input
+        .get("command")
+        .and_then(Value::as_str)
+        .is_some_and(|c| c.starts_with(STUB_SEQUENCE_MARKER))
+}
+
+/// Execute a rewritten shell command and return its stdout.
+fn run_shell(input: &Value) -> String {
+    let command = input.get("command").and_then(Value::as_str).unwrap_or("");
+    match std::process::Command::new("sh")
+        .args(["-c", command])
+        .output()
+    {
+        Ok(out) => String::from_utf8_lossy(&out.stdout).into_owned(),
+        Err(err) => emit_error(&format!("could not run a stub sequence through sh: {err}")),
     }
 }
 

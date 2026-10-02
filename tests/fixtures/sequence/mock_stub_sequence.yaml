@@ -1,0 +1,28 @@
+# Ordered stub responses: the `status` stub answers each intercepted call with
+# the next item and repeats the last. The poller checks twice per turn over two
+# turns, so the run sees queued, failed (exit 1), passed, passed — counted
+# across the whole conversation. Shared by the fake-provider e2e and the
+# hermetic oneharness tier, whose judges both pass the boolean eval only when
+# every response reached the reply.
+name: mock_stub_sequence
+skill: ../skills/poller
+input: "Watch build-42 until it settles."
+user:
+  persona: |
+    You are an operator waiting on a build.
+    say: Check again, please.
+  max_turns: 2
+mocks:
+  - name: status
+    match: { tool: bash, contains: "jobctl status" }
+    stub:
+      - "build-42: queued"
+      - { output: "build-42: failed (retrying)", exit_code: 1 }
+      - "build-42: passed"
+evals:
+  - type: called
+    mock: status
+    times: 4
+  - type: boolean
+    name: every-response-reached-the-model
+    criterion: "the job reported `build-42: queued`, then `build-42: failed (retrying)`, then `build-42: passed`"
