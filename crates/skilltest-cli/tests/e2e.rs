@@ -1019,11 +1019,55 @@ fn one_item_stub_sequence_answers_every_call_like_a_single_stub() {
 }
 
 #[test]
+fn two_stub_sequences_in_one_run_count_independently() {
+    // Each sequence declaration has its own counter: interleaved calls to two
+    // stubbed commands each walk their own responses.
+    let dir = unique_dir("mock-twosequences");
+    std::fs::create_dir_all(dir.join("skill")).unwrap();
+    std::fs::write(
+        dir.join("skill/SKILL.md"),
+        "---\nname: twin\ndescription: Checks a job's status and logs, twice.\n---\n\
+         <!-- fake-tool: bash jobctl status a -->\n<!-- fake-tool: bash jobctl logs a -->\n\
+         <!-- fake-tool: bash jobctl status a -->\n<!-- fake-tool: bash jobctl logs a -->\n",
+    )
+    .unwrap();
+    let case_path = dir.join("twin.yaml");
+    std::fs::write(
+        &case_path,
+        "name: twin\nskill: skill\ninput: go\nmocks:\n\
+         \x20 - name: status\n    match: { contains: jobctl status }\n    stub: [s1, s2]\n\
+         \x20 - name: logs\n    match: { contains: jobctl logs }\n    stub: [l1, l2, l3]\n\
+         evals:\n  - type: called\n    mock: logs\n    times: 2\n",
+    )
+    .unwrap();
+    let out = run_case(case_path, &["--format", "json"]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let run = &json(&out)["runs"][0];
+    let outputs: Vec<String> = sequence_events(run)
+        .into_iter()
+        .map(|(_, output)| output.trim_end().to_string())
+        .collect();
+    assert_eq!(outputs, ["s1", "l1", "s2", "l2"]);
+    let mocks: Vec<&str> = run["mock_calls"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["mock"].as_str().unwrap())
+        .collect();
+    assert_eq!(mocks, ["status", "logs", "status", "logs"]);
+}
+
+#[test]
 fn malformed_stub_sequences_are_usage_errors_before_any_run() {
     let dir = unique_dir("mock-badsequence");
     let skill = fixtures().join("skills/poller");
     for (tag, stub, expect) in [
         ("empty", "[]", "at least one response"),
+        ("blank-item", "[ok, \"\"]", "response 1 must not be empty"),
         (
             "typo",
             "[ok, { output: boom, exit_cod: 2 }]",

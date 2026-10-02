@@ -96,6 +96,8 @@ def test_responses_compile_to_the_yaml_sequence_form() -> None:
         ({"responses": [3]}, "output string"),
     ],
 )
+# `Any`: these keyword combinations break stub()'s declared types on purpose, to
+# reach the runtime checks an untyped caller would hit.
 def test_malformed_stubs_are_refused_at_construction(kwargs: dict[str, Any], message: str) -> None:
     with pytest.raises(SkilltestUsageError, match=message):
         stub("jobctl status", **kwargs)
