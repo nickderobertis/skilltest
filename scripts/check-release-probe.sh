@@ -151,7 +151,6 @@ assert_answered() {
   fi
 }
 
-# Every declared target: both answers, in its registry's own shape
 declared="$(awk '
   /^[[:space:]]*\[/ { inside = ($0 == "[[target]]"); next }
   inside && /^id = "[^"]+"$/ { v = $0; sub(/^id = "/, "", v); sub(/"$/, "", v); print v; inside = 0 }
@@ -194,7 +193,6 @@ while read -r id; do
 done < <(printf '%s\n' "$declared")
 # llmlint: ignore-end[contracts_have_one_source_or_a_drift_gate]
 
-# Refused before any registry is read
 assert_declined_offline "no identifier at all" "takes exactly one registry-qualified identifier"
 assert_declined_offline "two identifiers" "takes exactly one registry-qualified identifier" \
   crate:skilltest-core crate:skilltest-cli
@@ -273,7 +271,6 @@ assert_not_answered "a declared id on an unknown registry" \
 [ ! -s "$reached" ] ||
   fail "a fixture refusal read the network; move that refusal in scripts/release-probe.sh above the curl call, where every other declaration check sits"
 
-# Everything a registry read can do other than answer
 assert_not_answered "a host with no curl" \
   "curl is required" "$work/minbin" scripts/release-probe.sh pypi:skilltest-sdk
 put "$stub/transport-fails" ''
@@ -377,10 +374,10 @@ run_live() {
 answer 200 '{"crate":{"max_stable_version":"0.11.2"},"info":{"version":"0.11.2"},"dist-tags":{"latest":"0.11.2"}}'
 run_live "$stub_path" scripts/release-probe-live.sh ||
   fail "scripts/release-probe-live.sh went red with every registry answering 0.11.2; fix its classification of a version answer"
-for id in $declared; do
+while IFS= read -r id; do
   grep -Fq -- "$id=0.11.2" "$work/out" ||
     fail "scripts/release-probe-live.sh did not report $id=0.11.2 ('$(cat "$work/out")'); it must probe every declared [[target]]"
-done
+done <<<"$declared"
 answer 404 '{}'
 if run_live "$stub_path" scripts/release-probe-live.sh; then
   fail "scripts/release-probe-live.sh stayed green with every registry answering 404; an empty answer for a released target must fail it"
@@ -401,7 +398,6 @@ fi
 grep -Fq "yielded no [[target]] ids" "$work/err" ||
   fail "scripts/release-probe-live.sh refused an empty declaration without saying so; restore that message"
 
-# One schema version across the declaration and both of its readers
 declared_version="$(sed -n 's/^schema_version = \([0-9]*\)$/\1/p' release-targets.toml)" ||
   fail "could not read release-targets.toml; restore it from git"
 for reader in scripts/release-probe.sh scripts/check-release-targets.sh; do

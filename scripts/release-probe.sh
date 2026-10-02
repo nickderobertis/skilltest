@@ -128,12 +128,7 @@ case "$registry" in
 esac
 # llmlint: ignore-end[contracts_have_one_source_or_a_drift_gate]
 
-# The declaration is a file this probe reads, so the name it carries is an input
-# like any other — and this one becomes a path segment of a registry URL.
-# Membership in the declaration says the id was written down, not that its name
-# is a package name: a name carrying a separator, a query or nothing at all
-# would ask the registry a different question than the one declared, and its
-# answer would be published as that target's version.
+# Being declared does not make a name safe as a registry URL path segment.
 [[ $name =~ $name_syntax ]] ||
   usage_error "'$name' in '$identifier' is not a $registry package name (expected $name_syntax), so no artifact that registry serves is being named; fix that id in $declarations"
 
