@@ -1,0 +1,101 @@
+# What this repository releases, and the name each registry serves it under.
+#
+# Written against the canonical release-target schema that nickderobertis/onevcs
+# defines in its `docs/contract.md` and reads with `onevcs release declaration`.
+# scripts/check-release-targets.sh derives what .github/workflows/publish.yml
+# really publishes and holds this file to it in both directions; it runs in
+# `just check`.
+#
+# Every id is `<registry>:<name>`, and the qualification is load-bearing:
+# skilltest publishes a Rust crate, a Python SDK and a TypeScript SDK from one
+# repository, so a bare name says which registry serves it only by luck.
+#
+# **The six short names are a contract.** A consuming plan's `consumes` map and a
+# host's `releases.yml` name a target by them, and neither can read this file to
+# learn that one moved — so they are renamed, added or dropped deliberately or
+# not at all. Targets are listed in publish.yml's publication order.
+#
+# All six publish at the one lockstep version semantic-release writes into every
+# manifest (scripts/set-version.sh), from the `v*` tag it pushes. They are still
+# separate targets because each is what a different dependent names: a Rust
+# dependent the crates, a Python one the SDK or its pytest plugin, a Node one the
+# SDK or its vitest plugin.
+#
+# **What publish.yml and release.yml ship that is deliberately not declared.**
+#
+# - The GitHub Release archives. release.yml uploads `skilltest-<rust-target>.tar.gz`
+#   and its `.sha256` per target for scripts/install.sh. They belong to no
+#   registry, so no `<registry>:<name>` names one: they cannot be a target or a
+#   `covers` entry, and they are not `[[retired]]` either, which records something
+#   no longer published while these ship on every release. A consumer that
+#   installs them is nearest served by `cli-crate`: the same `v*` tag fires
+#   release.yml and publish.yml, though neither waits for the other, so that
+#   target's version says which archive exists and not that it has uploaded.
+# - The `skilltest-sdk` distribution files. scripts/build-python-dist.sh builds a
+#   platform wheel per target bundling the CLI, a pure wheel and an sdist, and
+#   publish.yml uploads all of them under the one PyPI project `skilltest-sdk` at
+#   one version. They are builds of `pypi:skilltest-sdk`, not names of their own,
+#   so that target answers for every one of them.
+# - The four `@skill-test/cli-<os>-<arch>` npm packages. They ARE registry names,
+#   so they are `covers` entries of `node-sdk` rather than undeclared: nothing
+#   depends on one by name, they exist so `@skill-test/sdk` can resolve the host's
+#   binary at its own exact version through its optionalDependencies, and
+#   publish.yml publishes them immediately before it.
+#
+# `schema_version = 3` is what a producer writes today; nothing here declares
+# `adoption_instructions`, the key version 3 adds, so every consumer applies its
+# own default.
+schema_version = 3
+probe = "scripts/release-probe.sh"
+
+# The reusable library: config, skill model, provider protocol, evals, runner and
+# the JSON contract's Rust types. Published first; skilltest-cli pins it.
+[[target]]
+id = "crate:skilltest-core"
+name = "core"
+what = "The skilltest library — skill and test-case models, the provider protocol, evals, the runner and the report contract — as a Rust dependent takes it."
+published_by = ".github/workflows/publish.yml — the crates job, first publish_crate call, under crates/skilltest-core/Cargo.toml's [package] name at the workspace version."
+manifest = "crates/skilltest-core/Cargo.toml"
+
+# The crate is `skilltest-cli`; the binary it installs is `skilltest`.
+[[target]]
+id = "crate:skilltest-cli"
+name = "cli-crate"
+what = "The `skilltest` binary as `cargo install skilltest-cli` builds it, compiled against the skilltest-core version it pins."
+published_by = ".github/workflows/publish.yml — the crates job, second publish_crate call, under crates/skilltest-cli/Cargo.toml's [package] name at the workspace version."
+manifest = "crates/skilltest-cli/Cargo.toml"
+
+[[target]]
+id = "pypi:skilltest-sdk"
+name = "python-sdk"
+what = "The Python SDK, imported as `skilltest_sdk`, with the skilltest CLI bundled in its platform wheels so `pip install skilltest-sdk` needs no separate binary."
+published_by = ".github/workflows/publish.yml — the pypi job, from the wheels and sdist scripts/build-python-dist.sh builds, under sdks/python/pyproject.toml's [project] name and version."
+manifest = "sdks/python/pyproject.toml"
+
+[[target]]
+id = "pypi:skilltest-pytest"
+name = "pytest-plugin"
+what = "The pytest plugin that collects `*.skilltest.yaml` cases, built on the `pypi:skilltest-sdk` release it pins by exact version."
+published_by = ".github/workflows/publish.yml — the pypi job, after skilltest-sdk, built by uv build under plugins/pytest/pyproject.toml's [project] name and version."
+manifest = "plugins/pytest/pyproject.toml"
+
+# The per-platform carriers are covered, not declared: see the header.
+[[target]]
+id = "npm:@skill-test/sdk"
+name = "node-sdk"
+what = "The TypeScript SDK, imported as `@skill-test/sdk`, which resolves the host's bundled skilltest CLI from the per-platform packages it covers."
+published_by = ".github/workflows/publish.yml — the npm job, publish_pkg sdks/typescript after the platform packages, under sdks/typescript/package.json's name and version."
+manifest = "sdks/typescript/package.json"
+covers = [
+  "npm:@skill-test/cli-linux-x64",
+  "npm:@skill-test/cli-linux-arm64",
+  "npm:@skill-test/cli-darwin-x64",
+  "npm:@skill-test/cli-darwin-arm64",
+]
+
+[[target]]
+id = "npm:@skill-test/vitest"
+name = "vitest-plugin"
+what = "The vitest helpers that register skilltest cases as vitest tests, built on the `npm:@skill-test/sdk` release it ships beside."
+published_by = ".github/workflows/publish.yml — the npm job, publish_pkg plugins/vitest after @skill-test/sdk, under plugins/vitest/package.json's name and version."
+manifest = "plugins/vitest/package.json"

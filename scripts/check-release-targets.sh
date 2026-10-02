@@ -1,0 +1,314 @@
+#!/usr/bin/env bash
+# Drift gate for release-targets.toml: what it declares against what this
+# repository really publishes.
+#
+# A consumer sequencing work across repositories reads release-targets.toml to
+# learn which skilltest artifact to wait on, and a target nobody declared grants
+# that consumer no hold at all — silently. So the published set is DERIVED here
+# from the release configuration rather than transcribed:
+#
+#   crate — each `publish_crate <name>` call in publish.yml's crates job, with
+#           the crates/*/Cargo.toml whose [package] name it is.
+#   pypi  — each `pyproject_version <dir>` call in its pypi job, named by that
+#           dir's pyproject.toml [project] name and cross-checked against the
+#           `on_pypi <name>` skip guard beside it.
+#   npm   — each `publish_pkg <dir>` call in its npm job, named by that dir's
+#           package.json; plus the per-platform packages its `for target in`
+#           loop stages, mapped to a directory by scripts/stage-npm-binary.sh.
+#
+# A per-platform package is a `covers` entry of the target whose release ships
+# it, never a target of its own, and it must also be pinned in that target's
+# optionalDependencies — the covers list is what a consumer reading the
+# declaration sees, the pin is what makes an install resolve the binary.
+#
+# Fails in both directions — a published name neither declared nor covered, and
+# a declared or covered name nothing publishes — naming each drift and its fix.
+# The full schema is `onevcs release declaration`'s to enforce; this reads the
+# declaration only as far as the comparison needs, and refuses any key or table
+# outside schema_version 3 so a typo is not read as an absent field.
+#
+# Quiet on success, one line.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+declarations="release-targets.toml"
+workflow=".github/workflows/publish.yml"
+stager="scripts/stage-npm-binary.sh"
+DECLARATION_SCHEMA_VERSION=3
+
+fails=0
+fail() {
+  printf 'release-target drift: %s\n' "$1" >&2
+  fails=$((fails + 1))
+}
+
+# The first `name = "..."` inside a TOML section. $1 = file, $2 = section.
+toml_section_name() {
+  awk -v section="[$2]" '
+    $0 == section { inside = 1; next }
+    inside && /^\[/ { exit }
+    inside && /^name *= *"[^"]+"/ {
+      sub(/^name *= *"/, ""); sub(/".*$/, ""); print; exit
+    }
+  ' "$1"
+}
+
+# A package.json's top-level name, read as JSON.
+json_name() {
+  jq -r '.name // ""' "$1"
+}
+
+# The jobs of publish.yml, one body each. $1 = job id.
+job_body() {
+  awk -v job="  $1:" '
+    $0 == job { inside = 1; next }
+    inside && /^  [A-Za-z0-9_-]+:$/ { exit }
+    inside { print }
+  ' "$workflow"
+}
+
+for required in "$declarations" "$workflow" "$stager"; do
+  [ -f "$required" ] || {
+    echo "check-release-targets: $required is missing; restore it from git — this gate derives the published set from it" >&2
+    exit 1
+  }
+done
+command -v jq >/dev/null 2>&1 || {
+  echo "check-release-targets: jq is required to read the npm manifests; install jq and retry" >&2
+  exit 1
+}
+
+# --- The declaration -------------------------------------------------------
+#
+# One record per field: <entry>\t<key>\t<value>, entry 0 being the top level and
+# `!` a refusal. A list yields one record per element.
+fields="$(awk '
+  function refuse(m) { printf "!\t%d\t%s\n", NR, m }
+  BEGIN { entry = 0; table = "top"; keys = " schema_version probe " }
+  { line = $0; sub(/[ \t\r]+$/, "", line) }
+  in_list {
+    if (line ~ /^\]$/) { in_list = 0; next }
+    if (match(line, /^[ \t]*"[^"]*",?$/)) {
+      v = line; sub(/^[ \t]*"/, "", v); sub(/",?$/, "", v)
+      printf "%d\t%s\t%s\n", entry, list_key, v; next
+    }
+    refuse("writes " list_key " with a line that is not one quoted id: " line); next
+  }
+  line ~ /^[ \t]*(#.*)?$/ { next }
+  line == "[[target]]" { entry = ++targets; table = "target"
+    keys = " id name what published_by manifest covers adoption_instructions "; next }
+  line == "[[retired]]" { entry = "r" ++retireds; table = "retired"; keys = " id why "; next }
+  line ~ /^\[/ { refuse("opens " line ", which schema_version 3 does not declare; the only tables are [[target]] and [[retired]]"); next }
+  !match(line, /^[a-z_]+ = /) { refuse("has a line that is not `key = value`: " line); next }
+  {
+    key = substr(line, 1, RLENGTH - 3); rest = substr(line, RLENGTH + 1)
+    if (index(keys, " " key " ") == 0) {
+      refuse("names \"" key "\" in a " table " entry, which schema_version 3 does not declare there; a misspelled key would otherwise read as an absent one"); next
+    }
+    if (rest == "[") { in_list = 1; list_key = key; next }
+    if (match(rest, /^\[.*\]$/)) {
+      body = substr(rest, 2, length(rest) - 2)
+      while (match(body, /"[^"]*"/)) {
+        printf "%d\t%s\t%s\n", entry, key, substr(body, RSTART + 1, RLENGTH - 2)
+        body = substr(body, RSTART + RLENGTH)
+      }
+      next
+    }
+    if (rest ~ /^"[^"]*"$/) { rest = substr(rest, 2, length(rest) - 2) }
+    printf "%d\t%s\t%s\n", entry, key, rest
+  }
+  END { if (in_list) refuse("leaves " list_key " open; close its list with ]")
+        printf "#\ttargets\t%d\n", targets + 0 }
+' "$declarations")"
+
+# $1 = entry, $2 = key. Every value it holds, one per line.
+values_of() {
+  printf '%s\n' "$fields" | awk -F'\t' -v e="$1" -v k="$2" '$1 == e && $2 == k { print $3 }'
+}
+
+while IFS=$'\t' read -r entry line message; do
+  [ "$entry" = "!" ] && fail "$declarations line $line $message"
+done < <(printf '%s\n' "$fields")
+
+version="$(values_of 0 schema_version)"
+[ "$version" = "$DECLARATION_SCHEMA_VERSION" ] ||
+  fail "$declarations declares schema_version '$version' and this gate reads $DECLARATION_SCHEMA_VERSION; write schema_version = $DECLARATION_SCHEMA_VERSION, or bring this gate and scripts/release-probe.sh up to the new version together"
+probe="$(values_of 0 probe)"
+[ "$probe" = "scripts/release-probe.sh" ] && [ -x "$probe" ] ||
+  fail "$declarations names probe '$probe'; it must be scripts/release-probe.sh, committed executable, which answers what a registry serves for each target"
+
+target_count="$(values_of '#' targets)"
+declared="" # one "<id>\t<name>\t<manifest>" per target, in declaration order
+covered=""  # one "<id>\t<covering target id>" per covers entry
+entry=1
+while [ "$entry" -le "$target_count" ]; do
+  id="$(values_of "$entry" id | head -n 1)"
+  name="$(values_of "$entry" name | head -n 1)"
+  manifest="$(values_of "$entry" manifest | head -n 1)"
+  [ -n "$id" ] && [ -n "$name" ] && [ -n "$manifest" ] ||
+    fail "$declarations [[target]] $entry ('$id') lacks an id, name or manifest; every target here carries all three, since the manifest is what pins its name to a real package"
+  declared="${declared}${id}	${name}	${manifest}
+"
+  while read -r c; do
+    [ -n "$c" ] && covered="${covered}${c}	${id}
+"
+  done < <(values_of "$entry" covers)
+  entry=$((entry + 1))
+done
+declared_ids="$(printf '%s' "$declared" | cut -f1)"
+covered_ids="$(printf '%s' "$covered" | cut -f1)"
+
+while read -r dup; do
+  [ -n "$dup" ] && fail "$declarations declares or covers '$dup' more than once; an artifact is one target or one covers entry, so drop the extra"
+done < <(printf '%s\n%s\n' "$declared_ids" "$covered_ids" | sed '/^$/d' | sort | uniq -d)
+while read -r dup; do
+  [ -n "$dup" ] && fail "$declarations gives the short name '$dup' to more than one target; a consumer's plan selects a target by that name"
+done < <(printf '%s' "$declared" | cut -f2 | sort | uniq -d)
+
+# --- What publish.yml publishes ---------------------------------------------
+published="" # one "<id>\t<manifest>" per target-shaped artifact, in publish order
+platforms="" # one "<id>\t<manifest>" per per-platform npm package
+
+crates_job="$(job_body crates)"
+while read -r crate; do
+  [ -n "$crate" ] || continue
+  manifest=""
+  for candidate in crates/*/Cargo.toml; do
+    [ "$(toml_section_name "$candidate" package)" = "$crate" ] && manifest="$candidate"
+  done
+  if [ -z "$manifest" ]; then
+    fail "$workflow publishes crate '$crate' but no crates/*/Cargo.toml has that [package] name; fix the publish_crate call or the manifest"
+    continue
+  fi
+  published="${published}crate:${crate}	${manifest}
+"
+done < <(printf '%s\n' "$crates_job" | sed -n 's/^ *publish_crate \([A-Za-z0-9_-]*\) *$/\1/p')
+
+pypi_job="$(job_body pypi)"
+pypi_guards="$(printf '%s\n' "$pypi_job" | sed -n 's/.*on_pypi \([A-Za-z0-9._-]*\) ".*/\1/p')"
+while read -r dir; do
+  [ -n "$dir" ] || continue
+  manifest="$dir/pyproject.toml"
+  name="$( [ -f "$manifest" ] && toml_section_name "$manifest" project || true)"
+  if [ -z "$name" ]; then
+    fail "$workflow publishes the Python project in '$dir' but $manifest has no [project] name; restore it or fix the pyproject_version call"
+    continue
+  fi
+  printf '%s\n' "$pypi_guards" | grep -Fxq -- "$name" ||
+    fail "$workflow publishes $manifest ('$name') but its on_pypi skip guard names a different project; make the on_pypi call name '$name'"
+  published="${published}pypi:${name}	${manifest}
+"
+done < <(printf '%s\n' "$pypi_job" | sed -n 's/.*pyproject_version \([^)]*\)).*/\1/p')
+
+npm_job="$(job_body npm)"
+printf '%s\n' "$npm_job" | grep -Fq "bash $stager" ||
+  fail "$workflow's npm job no longer stages platform packages through $stager, so the platform names below are derived from a script nothing runs; point this gate at whatever stages them now"
+targets="$(printf '%s\n' "$npm_job" | awk '
+  /for target in / { inside = 1; sub(/.*for target in /, "") }
+  inside { line = $0; done = sub(/; *do.*$/, "", line); gsub(/\\/, "", line); print line; if (done) exit }
+' | tr ' ' '\n' | sed '/^$/d')"
+[ -n "$targets" ] ||
+  fail "$workflow's npm job has no 'for target in ...' loop over the platform packages; point this gate's target extraction at its new shape"
+while read -r target; do
+  [ -n "$target" ] || continue
+  pkg="$(sed -n "s/^${target}) pkg=\"\\([^\"]*\\)\".*/\\1/p" "$stager")"
+  manifest="sdks/typescript/platforms/$pkg/package.json"
+  if [ -z "$pkg" ] || [ ! -f "$manifest" ]; then
+    fail "$workflow stages target '$target' but $stager maps it to no committed platform package; add its case arm and sdks/typescript/platforms/<pkg>/package.json"
+    continue
+  fi
+  platforms="${platforms}npm:$(json_name "$manifest")	${manifest}
+"
+done < <(printf '%s\n' "$targets")
+for manifest in sdks/typescript/platforms/*/package.json; do
+  [ -f "$manifest" ] || continue
+  printf '%s' "$platforms" | cut -f2 | grep -Fxq -- "$manifest" ||
+    fail "$manifest is committed but $workflow's npm job never stages it, so it is never published; add its rust target to that job's 'for target in' loop, or delete the package"
+done
+while read -r dir; do
+  [ -n "$dir" ] || continue
+  manifest="$dir/package.json"
+  name="$( [ -f "$manifest" ] && json_name "$manifest" || true)"
+  if [ -z "$name" ]; then
+    fail "$workflow publishes the npm package in '$dir' but $manifest has no name; restore it or fix the publish_pkg call"
+    continue
+  fi
+  published="${published}npm:${name}	${manifest}
+"
+done < <(printf '%s\n' "$npm_job" | sed -n 's/^ *publish_pkg \([^ ]*\).*$/\1/p')
+
+[ -n "$published" ] ||
+  fail "no published artifact could be derived from $workflow; its publish calls moved, so point this gate's extraction at their new shape"
+
+# --- Both directions ---------------------------------------------------------
+published_ids="$(printf '%s' "$published" | cut -f1)"
+platform_ids="$(printf '%s' "$platforms" | cut -f1)"
+
+while IFS=$'\t' read -r id manifest; do
+  [ -n "$id" ] || continue
+  if ! printf '%s\n' "$declared_ids" | grep -Fxq -- "$id"; then
+    fail "$workflow publishes '$id' (from $manifest) and $declarations declares no target for it, so a consumer waiting on it gets no hold; add a [[target]] with id = \"$id\" and manifest = \"$manifest\""
+    continue
+  fi
+  want="$(printf '%s' "$declared" | awk -F'\t' -v id="$id" '$1 == id { print $3 }')"
+  [ "$want" = "$manifest" ] ||
+    fail "$declarations gives '$id' manifest \"$want\" but $workflow publishes it from $manifest; set that target's manifest = \"$manifest\""
+done < <(printf '%s' "$published")
+
+while read -r id; do
+  [ -n "$id" ] || continue
+  printf '%s\n' "$published_ids" | grep -Fxq -- "$id" && continue
+  if printf '%s\n' "$platform_ids" | grep -Fxq -- "$id"; then
+    fail "$declarations declares per-platform package '$id' as a target; nothing depends on it by name, so move it into the covers list of the npm target whose optionalDependencies pin it"
+  else
+    fail "$declarations declares '$id', which $workflow does not publish; remove that [[target]], or restore whatever published it"
+  fi
+done < <(printf '%s\n' "$declared_ids")
+
+# Publication order: the declaration lists targets as publish.yml publishes them.
+if [ "$(printf '%s\n' "$declared_ids" | grep -Fxf <(printf '%s\n' "$published_ids") || true)" != \
+  "$(printf '%s\n' "$published_ids" | grep -Fxf <(printf '%s\n' "$declared_ids") || true)" ]; then
+  fail "$declarations lists its targets in a different order than $workflow publishes them ($(printf '%s' "$published_ids" | tr '\n' ' ')); reorder the [[target]] entries to match"
+fi
+
+while IFS=$'\t' read -r id manifest; do
+  [ -n "$id" ] || continue
+  owner="$(printf '%s' "$covered" | awk -F'\t' -v id="$id" '$1 == id { print $2; exit }')"
+  if [ -z "$owner" ]; then
+    fail "$workflow publishes per-platform package '$id' (from $manifest) and no target covers it; add \"$id\" to the covers list of npm:@skill-test/sdk, whose optionalDependencies resolve it"
+    continue
+  fi
+  owner_manifest="$(printf '%s' "$declared" | awk -F'\t' -v id="$owner" '$1 == id { print $3 }')"
+  case "$owner_manifest" in
+    *.json) pinned="$(jq -r --arg n "${id#npm:}" '.optionalDependencies[$n] // ""' "$owner_manifest" 2>/dev/null || true)" ;;
+    *) pinned="" ;;
+  esac
+  [ -n "$pinned" ] ||
+    fail "$declarations has $owner cover '$id', but ${owner_manifest:-its manifest} does not pin it in optionalDependencies, so an install never resolves it; add \"${id#npm:}\": \"workspace:*\" there, or move the covers entry to the target that does pin it"
+done < <(printf '%s' "$platforms")
+
+while IFS=$'\t' read -r id owner; do
+  [ -n "$id" ] || continue
+  printf '%s\n' "$platform_ids" | grep -Fxq -- "$id" ||
+    fail "$declarations has $owner cover '$id', which $workflow does not publish; drop it from that covers list, or restore whatever published it"
+done < <(printf '%s' "$covered")
+
+# Every platform package a declared npm manifest pins is one publish.yml ships.
+while IFS=$'\t' read -r id _ manifest; do
+  case "$id:$manifest" in
+    npm:*.json) ;;
+    *) continue ;;
+  esac
+  [ -f "$manifest" ] || continue
+  while read -r dep; do
+    [ -n "$dep" ] || continue
+    printf '%s\n' "$platform_ids" | grep -Fxq -- "npm:$dep" ||
+      fail "$manifest pins '$dep' in optionalDependencies but $workflow never publishes it, so installs of $id cannot resolve it; publish it from the npm job's platform loop or drop the pin"
+  done < <(jq -r '.optionalDependencies // {} | keys[]' "$manifest")
+done < <(printf '%s' "$declared")
+
+if [ "$fails" -ne 0 ]; then
+  printf 'check-release-targets: %d drift(s) between %s and %s\n' "$fails" "$declarations" "$workflow" >&2
+  exit 1
+fi
+echo "check-release-targets: every artifact publish.yml publishes is declared or covered, and nothing else is"
