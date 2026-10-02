@@ -166,9 +166,8 @@ projects** (diffed against the `main` base in `nx.json`). A TS-only change
 never spends time on the Rust or Python suites; a core change fans out to the
 CLI, both SDKs, and both framework packages. The two workspace-level exceptions
 are the contract drift gate (`just contract-check`) and the release-target gate
-(`just release-targets-check`): each spans every stack, so each always runs as
-part of `just check` — the latter even when only `release-targets.toml` or a
-workflow changed, which no nx project would mark affected.
+(`just release-targets-check`): they span every stack, so they always run as
+part of `just check` rather than when nx calls a project affected.
 
 - `just bootstrap` — set up from a clean clone. Every stack installs from its
   own workspace root, so each language has one dependency tree, not one per

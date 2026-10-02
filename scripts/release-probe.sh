@@ -51,17 +51,9 @@ identifier="$1"
 
 [ -f "$declarations" ] && [ -r "$declarations" ] || unanswered "cannot read $declarations, so no identifier can be recognised; run this from a complete checkout"
 
-# The declaration authorizes which registries this probe will read, so it is
-# read structurally: the version it was written for, then one id per [[target]]
-# block. A bare `id = "..."` line outside a block declares nothing.
-#
-# What the block boundary is for: only a [[target]] is a release target. A
-# [[retired]] entry records an artifact this repository does NOT publish any
-# more and carries an `id` of its own, and a target's `covers` list names
-# artifacts nothing depends on by name. Answering for either would report a
-# version for something no consumer may wait on — so a table header always ends
-# the block above it, and a [[target]] that somehow carried no id can never
-# reach into the entry below for one.
+# Only a [[target]]'s own id is answerable: a [[retired]] id or a `covers` entry
+# names something no consumer may wait on, so every table header ends the block
+# above it and an id outside a [[target]] declares nothing.
 # llmlint: ignore-block[boundary_inputs_validated] This is an allowlist read, not the declaration's validation: onevcs validates release-targets.toml in full (`onevcs release declaration`) before it ever spawns this probe, and the probe must run standalone under `env -i` with no TOML library, so it accepts only the exact `schema_version = N` and `id = "..."` lines it can place and refuses everything else as unanswered.
 declared_version="$(sed -n 's/^schema_version = \([0-9]*\)$/\1/p' "$declarations")" ||
   unanswered "could not read $declarations; check its permissions and retry"

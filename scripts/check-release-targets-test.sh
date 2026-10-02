@@ -130,7 +130,7 @@ expect_red "the npm job stopped staging a committed platform package" \
 
 stage
 jq 'del(.optionalDependencies["@skill-test/cli-linux-arm64"])' "$work/repo/sdks/typescript/package.json" \
-  >"$work/next" || fail "could not drop the arm64 pin from the staged SDK manifest"
+  >"$work/next" || fail "could not drop the arm64 pin from the staged SDK manifest; read jq's error above — fix sdks/typescript/package.json if it is not JSON, else $work's permissions or space"
 replace sdks/typescript/package.json
 expect_red "the SDK stopped pinning a covered platform package" \
   "does not pin it in optionalDependencies"
@@ -165,7 +165,7 @@ expect_red "a manifest was written as a list" "writes manifest as something othe
 
 stage
 jq '.optionalDependencies["@skill-test/cli-linux-x64"] = 1' "$work/repo/sdks/typescript/package.json" \
-  >"$work/next" || fail "could not rewrite the staged SDK manifest's x64 pin"
+  >"$work/next" || fail "could not rewrite the staged SDK manifest's x64 pin; read jq's error above — fix sdks/typescript/package.json if it is not JSON, else $work's permissions or space"
 replace sdks/typescript/package.json
 expect_red "the SDK pinned a platform package by a non-string spec" "is pinned by a non-string spec"
 

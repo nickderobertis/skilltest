@@ -49,30 +49,34 @@ put() {
   printf "$@" >"$path" || fail "could not write $path; check that $work is writable and has space"
 }
 
-# The curl double. What it answers is set per case through files in $stub,
+# The curl double. What it answers is set per case through files in $stub —
+# found from its own location, so no scratch path is spliced into its source —
 # never through the probe's environment, which carries only PATH and HOME. A
 # case that reaches it without having said what to answer is a harness bug, so
-# it exits with a message naming that rather than inventing a 200.
+# it exits naming that rather than inventing a 200.
 stub="$work/stub"
 reached="$stub/reached"
 mkdir -p "$work/bin" "$stub" || fail "could not create the curl double's directories under $work; check that \$TMPDIR (or /tmp) is writable and has space, then rerun"
-put "$work/bin/curl" '%s\n' "#!/usr/bin/env bash
+cat >"$work/bin/curl" <<'STUB' || fail "could not write the curl double under $work; check that \$TMPDIR (or /tmp) is writable and has space, then rerun"
+#!/usr/bin/env bash
 set -euo pipefail
-printf 'curl %s\\n' \"\$*\" >>'$reached' || { echo 'curl double: could not log this call' >&2; exit 98; }
+stub="$(dirname "$0")/../stub"
+printf 'curl %s\n' "$*" >>"$stub/reached" || { echo 'curl double: could not log this call' >&2; exit 98; }
 out=''
-while [ \"\$#\" -gt 0 ]; do
-  case \$1 in
-    --output) out=\$2; shift 2 ;;
+while [ "$#" -gt 0 ]; do
+  case $1 in
+    --output) out=$2; shift 2 ;;
     *) shift ;;
   esac
 done
-if [ -f '$stub/transport-fails' ]; then
+if [ -f "$stub/transport-fails" ]; then
   echo 'stub: could not resolve host' >&2
   exit 6
 fi
-[ -f '$stub/status' ] && [ -f '$stub/body' ] || { echo 'curl double: this case never called answer()' >&2; exit 99; }
-if [ -n \"\$out\" ]; then cat '$stub/body' >\"\$out\" || { echo 'curl double: could not write the response' >&2; exit 97; }; fi
-cat '$stub/status' || { echo 'curl double: could not read the status' >&2; exit 97; }"
+[ -f "$stub/status" ] && [ -f "$stub/body" ] || { echo 'curl double: this case never called answer()' >&2; exit 99; }
+if [ -n "$out" ]; then cat "$stub/body" >"$out" || { echo 'curl double: could not write the response' >&2; exit 97; }; fi
+cat "$stub/status" || { echo 'curl double: could not read the status' >&2; exit 97; }
+STUB
 chmod +x "$work/bin/curl" || fail "could not make the curl double executable; check that $work is not on a noexec filesystem (set \$TMPDIR elsewhere) and rerun"
 
 # $1 = HTTP status, $2 = body (printf %b escapes). Clears any transport failure
@@ -155,6 +159,7 @@ declared="$(awk '
 [ "$(printf '%s\n' "$declared" | wc -l | tr -d ' ')" -eq 6 ] ||
   fail "release-targets.toml declares $(printf '%s\n' "$declared" | wc -l | tr -d ' ') target ids where this test expects the six skilltest publishes; if that set changed on purpose, update this count with it"
 
+# llmlint: ignore-block[contracts_have_one_source_or_a_drift_gate] These are the live registries' response shapes, whose authority is the registry itself and publishes no schema an offline gate could read (AGENTS.md: no network in `just check`); scripts/release-probe-live.sh (`just release-probe-live`) is the reconciliation against crates.io, PyPI and npm.
 while read -r id; do
   name="${id#*:}"
   case "$id" in
@@ -187,6 +192,7 @@ while read -r id; do
   answer 404 '{"errors":[{"detail":"Not Found"}]}'
   assert_answered "$id never released (registry 404)" "" "$stub_path" "$id"
 done < <(printf '%s\n' "$declared")
+# llmlint: ignore-end[contracts_have_one_source_or_a_drift_gate]
 
 # Refused before any registry is read
 assert_declined_offline "no identifier at all" "takes exactly one registry-qualified identifier"
@@ -224,7 +230,7 @@ assert_not_answered "a declaration with no targets" \
   "declares no release targets" "$stub_path" "$fixture_probe" crate:skilltest-core
 # Only a [[target]] is a release target; a retired id or a covers entry beside a
 # real target is still refused.
-cat >"$fixture/release-targets.toml" <<'NEIGHBOURS' || fail "could not write the neighbours fixture under $fixture"
+cat >"$fixture/release-targets.toml" <<'NEIGHBOURS' || fail "could not write the neighbours fixture under $fixture; check that \$TMPDIR (or /tmp) is writable and has space, then rerun"
 schema_version = 3
 
 [[target]]
@@ -301,7 +307,7 @@ assert_not_answered "a host with neither JSON reader" \
 # warns, so a full /tmp never turns a release into "no release yet".
 mkdir -p "$work/badtmp" "$work/badrm" || fail "could not create the mktemp/rm doubles' directories; check that \$TMPDIR (or /tmp) is writable and has space, then rerun"
 put "$work/badtmp/mktemp" '#!/bin/sh\necho "mktemp: No space left on device" >&2\nexit 1\n'
-put "$work/badrm/rm" '#!/bin/sh\n%s "$@"\necho "rm: Permission denied" >&2\nexit 1\n' "$(tool_path rm)"
+put "$work/badrm/rm" '#!/usr/bin/env bash\n%q "$@"\necho "rm: Permission denied" >&2\nexit 1\n' "$(tool_path rm)"
 chmod +x "$work/badtmp/mktemp" "$work/badrm/rm" || fail "could not make the mktemp/rm doubles executable; check that $work is not on a noexec filesystem"
 answer 200 '{"info":{"version":"0.11.2"}}'
 assert_not_answered "a host where mktemp fails" \
@@ -310,7 +316,6 @@ assert_answered "a host where cleanup fails" "0.11.2" "$work/badrm:$stub_path" p
 grep -Fq "could not remove" "$work/err" ||
   fail "a failed cleanup was silent; scripts/release-probe.sh's EXIT trap must say which scratch directory to delete by hand"
 
-# Registry specifics
 # crates.io serves a prerelease as max_version while max_stable_version holds
 # what a dependent may take, so the path order is load-bearing.
 answer 200 '{"crate":{"max_stable_version":"0.11.2","max_version":"0.12.0-rc.1"}}'
@@ -359,6 +364,42 @@ for reader in jq python3; do
 done
 [ "$readers" -gt 0 ] ||
   fail "this host has neither jq nor python3, so no reader could be exercised; install one (the probe needs it too) and rerun"
+
+# The live drift alarm, driven through the same double: green only when every
+# declared target answers a version, red naming the target otherwise.
+run_live() {
+  local status=0
+  put "$work/out" ''
+  put "$work/err" ''
+  PATH="$1" bash "$2" >"$work/out" 2>"$work/err" || status=$?
+  return "$status"
+}
+answer 200 '{"crate":{"max_stable_version":"0.11.2"},"info":{"version":"0.11.2"},"dist-tags":{"latest":"0.11.2"}}'
+run_live "$stub_path" scripts/release-probe-live.sh ||
+  fail "scripts/release-probe-live.sh went red with every registry answering 0.11.2; fix its classification of a version answer"
+for id in $declared; do
+  grep -Fq -- "$id=0.11.2" "$work/out" ||
+    fail "scripts/release-probe-live.sh did not report $id=0.11.2 ('$(cat "$work/out")'); it must probe every declared [[target]]"
+done
+answer 404 '{}'
+if run_live "$stub_path" scripts/release-probe-live.sh; then
+  fail "scripts/release-probe-live.sh stayed green with every registry answering 404; an empty answer for a released target must fail it"
+fi
+grep -Fq "answered 'no release yet'" "$work/err" ||
+  fail "scripts/release-probe-live.sh failed on a 404 without saying the target answered 'no release yet'; restore that message"
+answer 503 '{}'
+if run_live "$stub_path" scripts/release-probe-live.sh; then
+  fail "scripts/release-probe-live.sh stayed green with every registry answering 503; a refusal must fail it"
+fi
+grep -Fq "was not answered" "$work/err" ||
+  fail "scripts/release-probe-live.sh failed on a 503 without saying which target was not answered; restore that message"
+{ cp scripts/release-probe-live.sh "$fixture/scripts/release-probe-live.sh" && : >"$fixture/release-targets.toml"; } ||
+  fail "could not stage the live script under $fixture; check that \$TMPDIR (or /tmp) is writable and has space, then rerun"
+if run_live "$stub_path" "$fixture/scripts/release-probe-live.sh"; then
+  fail "scripts/release-probe-live.sh stayed green over a declaration with no targets, probing nothing; it must refuse an empty target set"
+fi
+grep -Fq "yielded no [[target]] ids" "$work/err" ||
+  fail "scripts/release-probe-live.sh refused an empty declaration without saying so; restore that message"
 
 # One schema version across the declaration and both of its readers
 declared_version="$(sed -n 's/^schema_version = \([0-9]*\)$/\1/p' release-targets.toml)" ||
