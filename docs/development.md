@@ -11,6 +11,10 @@ test-framework package (Python: `sdks/python` + `plugins/pytest`; TypeScript:
 - [**uv**](https://docs.astral.sh/uv/) for the Python packages.
 - **Node** 22+ and [**pnpm**](https://pnpm.io) for the TypeScript packages.
 
+The release-target gate in `just check` also reads manifests with
+[`jq`](https://jqlang.org) and Python 3.11+'s `tomllib`, both of which GitHub's
+Linux and macOS runners carry.
+
 [`just`](https://github.com/casey/just) drives everything, as a thin wrapper
 over [nx](https://nx.dev): each package has a `project.json` with its targets,
 and the default recipes run only the projects **affected** by your change
@@ -20,11 +24,12 @@ and the default recipes run only the projects **affected** by your change
 
 ```bash
 just bootstrap   # pnpm install (nx + TS workspace) + cargo fetch + uv sync — works from a clean clone
-just check       # contract drift gate + the full gate (format, lint, types, unit + e2e) over affected projects
+just check       # contract drift + release-target gates + the full gate (format, lint, types, unit + e2e) over affected projects
 just check-all   # the same gate across every project
 just format      # auto-format all three stacks
 just test        # fast Rust unit tests only
 just test-e2e    # the cross-language e2e suites (nx builds prerequisites first)
+just release-targets-check # release-targets.toml vs publish.yml + the release probe's offline tests
 just gen-contract # regenerate schemas/ + the generated SDK models from the Rust types
 just graph       # open the interactive nx project graph
 just upgrade     # bump deps across all stacks, then re-run check-all

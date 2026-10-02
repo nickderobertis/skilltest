@@ -7,9 +7,10 @@
 # unaffected work.
 #
 # `just check` runs the gate over only the **affected** projects (vs the nx base,
-# `main`) plus the contract drift gate, which is workspace-level and always runs;
-# `just check-all` forces every project. `just bootstrap` must work from a clean
-# clone. Requires `cargo` (+ `cargo-nextest`), `uv`, and `pnpm`/`node`.
+# `main`) plus the contract drift gate and the release-target gate, which are
+# workspace-level and always run; `just check-all` forces every project. `just
+# bootstrap` must work from a clean clone. Requires `cargo` (+ `cargo-nextest`),
+# `uv`, `pnpm`/`node`, `jq`, and `python3` 3.11+.
 
 nx := "pnpm exec nx"
 
@@ -33,13 +34,15 @@ bootstrap:
     uv sync
 
 # Full quality gate over the affected projects (format, lint, type check, unit +
-# e2e), plus the contract drift gate and the Rust coverage gate. Fails on any
-# issue (no warnings-only mode). `test`/`test-e2e` run first as prerequisites
-# (so the test suite is unambiguously part of the gate), then the static gates,
-# then `coverage` enforces the line-coverage floor on the artifact's Rust core.
+# e2e), plus the contract drift gate, the release-target gate and the Rust
+# coverage gate. Fails on any issue (no warnings-only mode). `test`/`test-e2e`
+# run first as prerequisites (so the test suite is unambiguously part of the
+# gate), then the static gates, then `coverage` enforces the line-coverage floor
+# on the artifact's Rust core.
 # Use `check-all` to force every project.
 check: test test-e2e
     @bash scripts/gen-contract.sh --check
+    @just release-targets-check
     {{nx}} affected -t format-check lint typecheck
     @just coverage
     @echo "check: all gates passed"
@@ -47,6 +50,7 @@ check: test test-e2e
 # Same gate, but across every project regardless of what changed.
 check-all: coverage
     @bash scripts/gen-contract.sh --check
+    @just release-targets-check
     {{nx}} run-many -t format-check lint typecheck test test-e2e
     @echo "check-all: all gates passed"
 
@@ -64,6 +68,20 @@ gen-contract:
 # types generate (part of `just check`; workspace-level, not per-project).
 contract-check:
     @bash scripts/gen-contract.sh --check
+
+# Release-target gate (part of `just check`; workspace-level, not per-project,
+# so it runs even when only release-targets.toml or a workflow changed): the
+# declaration against what publish.yml publishes, that gate's own drift tests,
+# and the release probe's offline outcome tests (curl doubled; no network).
+release-targets-check:
+    @bash scripts/check-release-targets.sh >/dev/null
+    @bash scripts/check-release-targets-test.sh >/dev/null
+    @bash scripts/check-release-probe.sh >/dev/null
+
+# Live drift alarm for the release probe: drives it against the real crates.io,
+# PyPI and npm for every declared target. Network, so never part of `check`.
+release-probe-live:
+    @bash scripts/release-probe-live.sh
 
 # Fast unit tests (Rust library/bin suites) for affected projects.
 test:
