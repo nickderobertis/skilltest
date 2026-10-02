@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# llmlint: ignore-file[new_code_lands_in_a_project] the probe onevcs runs by the path release-targets.toml declares, from the repository root, standalone under env -i; it is repo-level release glue that belongs to no Nx package (AGENTS.md: scripts/*.sh are orchestrator-independent glue).
 # What a registry currently serves for one artifact this repository releases.
 #
 # A consumer sequencing work across repositories needs to know when a change has
@@ -45,7 +46,7 @@ unanswered() {
 [ "$#" -eq 1 ] || usage_error "takes exactly one registry-qualified identifier (<registry>:<name>), got $#; e.g. 'scripts/release-probe.sh pypi:skilltest-sdk'"
 identifier="$1"
 
-[ -f "$declarations" ] || unanswered "cannot read $declarations, so no identifier can be recognised; run this from a complete checkout"
+[ -f "$declarations" ] && [ -r "$declarations" ] || unanswered "cannot read $declarations, so no identifier can be recognised; run this from a complete checkout"
 
 # The declaration authorizes which registries this probe will read, so it is
 # read structurally: the version it was written for, then one id per [[target]]
@@ -117,7 +118,8 @@ esac
 
 command -v curl >/dev/null 2>&1 || unanswered "curl is required to read $registry; install curl and retry"
 
-work="$(mktemp -d)"
+work="$(mktemp -d)" ||
+  unanswered "could not create a scratch directory for the $registry response; check that \$TMPDIR (or /tmp) is writable and has space, then retry"
 trap 'rm -rf "$work"' EXIT
 response="$work/response.json"
 
@@ -154,10 +156,12 @@ esac
 # it would otherwise add), then close with a sentinel byte that is dropped
 # below — so a trailing newline the registry really served survives command
 # substitution's stripping and is validated rather than silently tidied away.
+# Both also read a path that runs through a non-object as "no version there",
+# so the answer to one response does not depend on which reader a host has.
 version=""
 if command -v jq >/dev/null 2>&1; then
   version="$( { jq -j --argjson paths "$paths" \
-    '[$paths[] as $p | getpath($p)] | map(select(type == "string" and length > 0)) | first // ""' \
+    '[$paths[] as $p | (try getpath($p) catch null)] | map(select(type == "string" and length > 0)) | first // ""' \
     < "$response" 2>"$work/read-error" && printf X; } )" || version="__unreadable__"
 elif command -v python3 >/dev/null 2>&1; then
   version="$( { python3 -c '
@@ -191,16 +195,17 @@ version="${version%X}"
 # artifact that was never released — so it is not answered.
 [ -n "$version" ] || unanswered "$registry answered for '$identifier' without a version at $(printf '%s' "$paths"); fetch $url yourself and update this script's \$paths for $registry to wherever it now serves the current version"
 
-# Every registry here serves a version as dot-separated numeric release
-# segments with an optional suffix — semver, and PEP 440 with its rare `N!`
-# epoch. Requiring that shape is what separates a version from a word a
-# registry might serve in its place: `latest` carries nothing a caller can
-# order, and `1latest` or `1..` carry less than they look like they do.
+# What the three registries serve skilltest's lockstep version as: crates.io
+# and npm a semver (`0.12.0-rc.1+build.5`), PyPI its PEP 440 normalization
+# (`0.12.0rc1`, `.post1`, `.dev2`, the rare `N!` epoch). Requiring that shape
+# is what separates a version from a word a registry might serve in its place:
+# `latest` carries nothing a caller can order, and `1latest`, `1..` or a
+# suffix ending in a separator carry less than they look like they do.
 #
 # The match is against the WHOLE value, line breaks included, because the
 # caller is promised ONE line: a line-oriented matcher would accept a multiline
 # value on the strength of its first line and then print every line of it.
-VERSION_SYNTAX='^[0-9]+(\.[0-9]+)*([.+~!-][0-9A-Za-z][0-9A-Za-z.+_~!-]*)?$'
+VERSION_SYNTAX='^([0-9]+!)?[0-9]+(\.[0-9]+)*((a|b|rc)[0-9]+)?(\.(post|dev)[0-9]+)*([-+][0-9A-Za-z]+([.+-][0-9A-Za-z]+)*)?$'
 [[ $version =~ $VERSION_SYNTAX ]] ||
   unanswered "$registry served '$version' for '$identifier', which is not a version a caller can use; fetch $url yourself and point this script's \$paths for $registry at the field carrying the version, or widen the shape it accepts if that registry really serves versions like this"
 

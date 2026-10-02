@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# llmlint: ignore-file[new_code_lands_in_a_project] repo-level release gate over release-targets.toml and .github/workflows/publish.yml, neither of which belongs to an Nx package; run workspace-wide from `just check` like scripts/gen-contract.sh --check (AGENTS.md: scripts/*.sh are orchestrator-independent glue).
 # Drift gate for release-targets.toml: what it declares against what this
 # repository really publishes.
 #
@@ -23,9 +24,9 @@
 #
 # Fails in both directions — a published name neither declared nor covered, and
 # a declared or covered name nothing publishes — naming each drift and its fix.
-# The full schema is `onevcs release declaration`'s to enforce; this reads the
-# declaration only as far as the comparison needs, and refuses any key or table
-# outside schema_version 3 so a typo is not read as an absent field.
+# The schema itself is `onevcs release declaration`'s to enforce, so this reads
+# only the fields the comparison needs — and refuses those when they are not the
+# one quoted value (or list of them) the comparison would otherwise misread.
 #
 # Quiet on success, one line.
 set -euo pipefail
@@ -53,9 +54,10 @@ toml_section_name() {
   ' "$1"
 }
 
-# A package.json's top-level name, read as JSON.
+# Empty unless the file is JSON whose name is a non-empty string; every caller
+# fails on empty, naming the manifest.
 json_name() {
-  jq -r '.name // ""' "$1"
+  jq -r 'if (.name | type) == "string" then .name else "" end' "$1" 2>/dev/null || true
 }
 
 # The jobs of publish.yml, one body each. $1 = job id.
@@ -78,47 +80,56 @@ command -v jq >/dev/null 2>&1 || {
   exit 1
 }
 
-# --- The declaration -------------------------------------------------------
-#
-# One record per field: <entry>\t<key>\t<value>, entry 0 being the top level and
-# `!` a refusal. A list yields one record per element.
+if [ ! -r "$declarations" ]; then
+  echo "check-release-targets: cannot read $declarations; check its permissions" >&2
+  exit 1
+fi
+
+# One record per field this gate reads: <entry>\t<key>\t<value>, entry 0 the
+# top level, a list one record per element, and `!` a refusal.
 fields="$(awk '
   function refuse(m) { printf "!\t%d\t%s\n", NR, m }
-  BEGIN { entry = 0; table = "top"; keys = " schema_version probe " }
+  function emit(k, v) {
+    if (seen[entry, k]++) { refuse("writes " k " twice in one entry; keep the one that is right"); return }
+    printf "%s\t%s\t%s\n", entry, k, v
+  }
+  BEGIN { entry = 0; reading = 1 }
   { line = $0; sub(/[ \t\r]+$/, "", line) }
   in_list {
     if (line ~ /^\]$/) { in_list = 0; next }
-    if (match(line, /^[ \t]*"[^"]*",?$/)) {
+    if (line ~ /^[ \t]*"[^"]+",?$/) {
       v = line; sub(/^[ \t]*"/, "", v); sub(/",?$/, "", v)
-      printf "%d\t%s\t%s\n", entry, list_key, v; next
+      printf "%s\t%s\t%s\n", entry, "covers", v; next
     }
-    refuse("writes " list_key " with a line that is not one quoted id: " line); next
+    refuse("writes covers with a line that is not one quoted id: " line); next
   }
-  line ~ /^[ \t]*(#.*)?$/ { next }
-  line == "[[target]]" { entry = ++targets; table = "target"
-    keys = " id name what published_by manifest covers adoption_instructions "; next }
-  line == "[[retired]]" { entry = "r" ++retireds; table = "retired"; keys = " id why "; next }
-  line ~ /^\[/ { refuse("opens " line ", which schema_version 3 does not declare; the only tables are [[target]] and [[retired]]"); next }
-  !match(line, /^[a-z_]+ = /) { refuse("has a line that is not `key = value`: " line); next }
-  {
-    key = substr(line, 1, RLENGTH - 3); rest = substr(line, RLENGTH + 1)
-    if (index(keys, " " key " ") == 0) {
-      refuse("names \"" key "\" in a " table " entry, which schema_version 3 does not declare there; a misspelled key would otherwise read as an absent one"); next
+  line == "[[target]]" { entry = ++targets; reading = 1; next }
+  line ~ /^\[/ { reading = 0; next }
+  !reading { next }
+  entry == 0 && match(line, /^schema_version = /) { emit("schema_version", substr(line, RLENGTH + 1)); next }
+  entry == 0 && match(line, /^probe = /) { key = "probe" }
+  entry > 0 && match(line, /^(id|name|manifest) = /) { key = substr(line, 1, RLENGTH - 3) }
+  entry > 0 && line ~ /^covers = / {
+    if (seen[entry, "covers"]++) { refuse("writes covers twice in one entry; merge them into one list"); next }
+    if (line == "covers = [") { in_list = 1; next }
+    if (line !~ /^covers = \[("[^"]+"(, *"[^"]+")*)?\]$/) { refuse("writes covers as something other than a list of quoted ids: " line); next }
+    body = line
+    while (match(body, /"[^"]+"/)) {
+      printf "%s\t%s\t%s\n", entry, "covers", substr(body, RSTART + 1, RLENGTH - 2)
+      body = substr(body, RSTART + RLENGTH)
     }
-    if (rest == "[") { in_list = 1; list_key = key; next }
-    if (match(rest, /^\[.*\]$/)) {
-      body = substr(rest, 2, length(rest) - 2)
-      while (match(body, /"[^"]*"/)) {
-        printf "%d\t%s\t%s\n", entry, key, substr(body, RSTART + 1, RLENGTH - 2)
-        body = substr(body, RSTART + RLENGTH)
-      }
-      next
-    }
-    if (rest ~ /^"[^"]*"$/) { rest = substr(rest, 2, length(rest) - 2) }
-    printf "%d\t%s\t%s\n", entry, key, rest
+    next
   }
-  END { if (in_list) refuse("leaves " list_key " open; close its list with ]")
-        printf "#\ttargets\t%d\n", targets + 0 }
+  key != "" {
+    rest = line; sub(/^[a-z_]+ = /, "", rest)
+    if (rest ~ /^"[^"]+"$/) emit(key, substr(rest, 2, length(rest) - 2))
+    else refuse("writes " key " as something other than one non-empty quoted string: " line)
+    key = ""
+  }
+  END {
+    if (in_list) refuse("leaves covers open; close its list with ]")
+    printf "#\ttargets\t%d\n", targets + 0
+  }
 ' "$declarations")"
 
 # $1 = entry, $2 = key. Every value it holds, one per line.
@@ -135,24 +146,25 @@ version="$(values_of 0 schema_version)"
   fail "$declarations declares schema_version '$version' and this gate reads $DECLARATION_SCHEMA_VERSION; write schema_version = $DECLARATION_SCHEMA_VERSION, or bring this gate and scripts/release-probe.sh up to the new version together"
 probe="$(values_of 0 probe)"
 [ "$probe" = "scripts/release-probe.sh" ] && [ -x "$probe" ] ||
-  fail "$declarations names probe '$probe'; it must be scripts/release-probe.sh, committed executable, which answers what a registry serves for each target"
+  fail "$declarations names probe '$probe'; write probe = \"scripts/release-probe.sh\" and keep that script committed executable (git update-index --chmod=+x)"
 
 target_count="$(values_of '#' targets)"
 declared="" # one "<id>\t<name>\t<manifest>" per target, in declaration order
 covered=""  # one "<id>\t<covering target id>" per covers entry
 entry=1
 while [ "$entry" -le "$target_count" ]; do
-  id="$(values_of "$entry" id | head -n 1)"
-  name="$(values_of "$entry" name | head -n 1)"
-  manifest="$(values_of "$entry" manifest | head -n 1)"
+  id="$(values_of "$entry" id)"
+  name="$(values_of "$entry" name)"
+  manifest="$(values_of "$entry" manifest)"
   [ -n "$id" ] && [ -n "$name" ] && [ -n "$manifest" ] ||
-    fail "$declarations [[target]] $entry ('$id') lacks an id, name or manifest; every target here carries all three, since the manifest is what pins its name to a real package"
+    fail "$declarations [[target]] $entry ('$id') lacks an id, name or manifest; give it all three, since the manifest is what pins its name to a real package"
   declared="${declared}${id}	${name}	${manifest}
 "
+  covers="$(values_of "$entry" covers)"
   while read -r c; do
     [ -n "$c" ] && covered="${covered}${c}	${id}
 "
-  done < <(values_of "$entry" covers)
+  done <<<"$covers"
   entry=$((entry + 1))
 done
 declared_ids="$(printf '%s' "$declared" | cut -f1)"
@@ -162,10 +174,9 @@ while read -r dup; do
   [ -n "$dup" ] && fail "$declarations declares or covers '$dup' more than once; an artifact is one target or one covers entry, so drop the extra"
 done < <(printf '%s\n%s\n' "$declared_ids" "$covered_ids" | sed '/^$/d' | sort | uniq -d)
 while read -r dup; do
-  [ -n "$dup" ] && fail "$declarations gives the short name '$dup' to more than one target; a consumer's plan selects a target by that name"
+  [ -n "$dup" ] && fail "$declarations gives the short name '$dup' to more than one target; a consumer's plan selects a target by that name, so give each target its own"
 done < <(printf '%s' "$declared" | cut -f2 | sort | uniq -d)
 
-# --- What publish.yml publishes ---------------------------------------------
 published="" # one "<id>\t<manifest>" per target-shaped artifact, in publish order
 platforms="" # one "<id>\t<manifest>" per per-platform npm package
 
@@ -217,7 +228,12 @@ while read -r target; do
     fail "$workflow stages target '$target' but $stager maps it to no committed platform package; add its case arm and sdks/typescript/platforms/<pkg>/package.json"
     continue
   fi
-  platforms="${platforms}npm:$(json_name "$manifest")	${manifest}
+  name="$(json_name "$manifest")"
+  if [ -z "$name" ]; then
+    fail "$manifest is not JSON with a string \"name\", so the platform package it publishes cannot be named; restore its name"
+    continue
+  fi
+  platforms="${platforms}npm:${name}	${manifest}
 "
 done < <(printf '%s\n' "$targets")
 for manifest in sdks/typescript/platforms/*/package.json; do
@@ -230,7 +246,7 @@ while read -r dir; do
   manifest="$dir/package.json"
   name="$( [ -f "$manifest" ] && json_name "$manifest" || true)"
   if [ -z "$name" ]; then
-    fail "$workflow publishes the npm package in '$dir' but $manifest has no name; restore it or fix the publish_pkg call"
+    fail "$workflow publishes the npm package in '$dir' but $manifest is missing or has no string name; restore it or fix the publish_pkg call"
     continue
   fi
   published="${published}npm:${name}	${manifest}
@@ -240,7 +256,6 @@ done < <(printf '%s\n' "$npm_job" | sed -n 's/^ *publish_pkg \([^ ]*\).*$/\1/p')
 [ -n "$published" ] ||
   fail "no published artifact could be derived from $workflow; its publish calls moved, so point this gate's extraction at their new shape"
 
-# --- Both directions ---------------------------------------------------------
 published_ids="$(printf '%s' "$published" | cut -f1)"
 platform_ids="$(printf '%s' "$platforms" | cut -f1)"
 
@@ -280,7 +295,7 @@ while IFS=$'\t' read -r id manifest; do
   fi
   owner_manifest="$(printf '%s' "$declared" | awk -F'\t' -v id="$owner" '$1 == id { print $3 }')"
   case "$owner_manifest" in
-    *.json) pinned="$(jq -r --arg n "${id#npm:}" '.optionalDependencies[$n] // ""' "$owner_manifest" 2>/dev/null || true)" ;;
+    *.json) pinned="$(jq -r --arg n "${id#npm:}" '.optionalDependencies[$n] | if type == "string" then . else "" end' "$owner_manifest" 2>/dev/null || true)" ;;
     *) pinned="" ;;
   esac
   [ -n "$pinned" ] ||
@@ -293,18 +308,25 @@ while IFS=$'\t' read -r id owner; do
     fail "$declarations has $owner cover '$id', which $workflow does not publish; drop it from that covers list, or restore whatever published it"
 done < <(printf '%s' "$covered")
 
-# Every platform package a declared npm manifest pins is one publish.yml ships.
 while IFS=$'\t' read -r id _ manifest; do
   case "$id:$manifest" in
     npm:*.json) ;;
     *) continue ;;
   esac
-  [ -f "$manifest" ] || continue
+  [ -f "$manifest" ] || {
+    fail "$declarations names manifest $manifest for $id, which does not exist; point it at the package.json that publishes $id"
+    continue
+  }
+  if ! deps="$(jq -r '.optionalDependencies // {} | to_entries[]
+      | if (.value | type) == "string" then .key else error("\(.key) is pinned by a non-string spec") end' "$manifest" 2>&1)"; then
+    fail "$manifest's optionalDependencies cannot be read ($deps); make it a JSON object of package name to version-spec string"
+    continue
+  fi
   while read -r dep; do
     [ -n "$dep" ] || continue
     printf '%s\n' "$platform_ids" | grep -Fxq -- "npm:$dep" ||
       fail "$manifest pins '$dep' in optionalDependencies but $workflow never publishes it, so installs of $id cannot resolve it; publish it from the npm job's platform loop or drop the pin"
-  done < <(jq -r '.optionalDependencies // {} | keys[]' "$manifest")
+  done <<<"$deps"
 done < <(printf '%s' "$declared")
 
 if [ "$fails" -ne 0 ]; then

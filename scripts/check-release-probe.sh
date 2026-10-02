@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# llmlint: ignore-file[new_code_lands_in_a_project] tests scripts/release-probe.sh, repo-level release glue that belongs to no Nx package; run workspace-wide from `just check` (AGENTS.md: scripts/*.sh are orchestrator-independent glue).
 # Offline behavioral test of scripts/release-probe.sh, the onevcs release probe
 # release-targets.toml names.
 #
@@ -20,7 +21,10 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
-work="$(mktemp -d)"
+work="$(mktemp -d)" || {
+  echo "check-release-probe: could not create a scratch directory; check that \$TMPDIR (or /tmp) is writable and has space" >&2
+  exit 1
+}
 trap 'rm -rf "$work"' EXIT
 
 fail() {
@@ -40,44 +44,56 @@ tool_path() {
   esac
 }
 
+# A scratch write the harness needs; its failure is the harness's, never a
+# probe refusal. $1 = path, then printf's format and arguments.
+put() {
+  local path=$1
+  shift
+  # shellcheck disable=SC2059 # the caller passes printf's format on purpose
+  printf "$@" >"$path" || fail "could not write $path; check that $work is writable and has space"
+}
+
 # The curl double. What it answers is set per case through files in $stub,
-# never through the probe's environment, which carries only PATH and HOME.
+# never through the probe's environment, which carries only PATH and HOME. A
+# case that reaches it without having said what to answer is a harness bug, so
+# it exits with a message naming that rather than inventing a 200.
 stub="$work/stub"
 reached="$stub/reached"
-mkdir -p "$work/bin" "$stub"
-cat >"$work/bin/curl" <<STUB
-#!/usr/bin/env bash
-printf 'curl %s\n' "\$*" >>"$reached"
-out=""
-while [ "\$#" -gt 0 ]; do
+mkdir -p "$work/bin" "$stub" || fail "could not create the curl double's directories under $work"
+put "$work/bin/curl" '%s\n' "#!/usr/bin/env bash
+set -euo pipefail
+printf 'curl %s\\n' \"\$*\" >>'$reached'
+out=''
+while [ \"\$#\" -gt 0 ]; do
   case \$1 in
     --output) out=\$2; shift 2 ;;
     *) shift ;;
   esac
 done
-if [ -f "$stub/transport-fails" ]; then
-  echo "stub: could not resolve host" >&2
+if [ -f '$stub/transport-fails' ]; then
+  echo 'stub: could not resolve host' >&2
   exit 6
 fi
-if [ -n "\$out" ]; then cat "$stub/body" >"\$out" 2>/dev/null || : >"\$out"; fi
-cat "$stub/status" 2>/dev/null || printf 200
-STUB
-chmod +x "$work/bin/curl"
+[ -f '$stub/status' ] && [ -f '$stub/body' ] || { echo 'curl double: this case never called answer()' >&2; exit 99; }
+if [ -n \"\$out\" ]; then cat '$stub/body' >\"\$out\"; fi
+cat '$stub/status'"
+chmod +x "$work/bin/curl" || fail "could not make the curl double executable"
 
-# $1 = HTTP status, $2 = body. Clears any transport failure a prior case set.
+# $1 = HTTP status, $2 = body (printf %b escapes). Clears any transport failure
+# a prior case set.
 answer() {
-  rm -f "$stub/transport-fails"
-  printf '%s' "$1" >"$stub/status"
-  printf '%b' "$2" >"$stub/body"
+  rm -f "$stub/transport-fails" || fail "could not clear $stub/transport-fails"
+  put "$stub/status" '%s' "$1"
+  put "$stub/body" '%b' "$2"
 }
 
 # A PATH with only what the probe needs before it reads a registry, so a case
 # can take away curl or both JSON readers without taking away the shell.
-mkdir -p "$work/minbin"
+mkdir -p "$work/minbin" || fail "could not create $work/minbin"
 for tool in bash dirname sed awk grep tr head mktemp rm cat; do
   path="$(tool_path "$tool")" ||
     fail "no $tool on this host, so the restricted-PATH cases cannot be built; install $tool (coreutils on Linux and macOS) and rerun"
-  ln -s "$path" "$work/minbin/$tool"
+  ln -s "$path" "$work/minbin/$tool" || fail "could not link $tool into $work/minbin; check that $work is writable"
 done
 
 stub_path="$work/bin:$PATH"
@@ -87,7 +103,9 @@ stub_path="$work/bin:$PATH"
 run_probe() {
   local path=$1 script=$2
   shift 2
-  : >"$reached"
+  put "$reached" ''
+  put "$work/out" ''
+  put "$work/err" ''
   env -i PATH="$path" HOME="$HOME" "$script" "$@" >"$work/out" 2>"$work/err"
 }
 
@@ -129,7 +147,7 @@ assert_answered() {
   [ "$(cat "$work/out")" = "$expected" ] ||
     fail "$description answered '$(cat "$work/out")' where a caller is promised '$expected'; scripts/release-probe.sh prints the version and nothing else, or nothing for a registry 404"
   if [ -z "$expected" ] && [ -s "$work/out" ]; then
-    fail "$description printed output where the empty answer is promised"
+    fail "$description printed output where the empty answer is promised; make the 404 branch of scripts/release-probe.sh exit 0 without printing"
   fi
 }
 
@@ -161,9 +179,15 @@ while read -r id; do
   answer 200 "$body"
   assert_answered "$id with a release" "0.11.2" "$stub_path" "$id"
   grep -Fq -- "$want_url" "$reached" ||
-    fail "$id was requested as '$(cat "$reached")' rather than $want_url; the registry URL in scripts/release-probe.sh moved"
-  grep -Fq -- "--max-time" "$reached" ||
-    fail "$id was read without a --max-time bound, so the probe could outlive the sixty seconds onevcs allows"
+    fail "$id was requested as '$(cat "$reached")' rather than $want_url; restore that registry's url= line in scripts/release-probe.sh, or update this test's expected URL if the registry really moved"
+  # The bound is curl's own, so what can be proven offline is that the flags
+  # reach it: three attempts of at most 15 s, none started after 30 s, keeps
+  # the probe well inside onevcs's 60 s. Proving it by timing would need a
+  # double that hangs for a minute in every gate run.
+  for bound in "--max-time 15" "--retry 2" "--retry-max-time 30"; do
+    grep -Fq -- "$bound" "$reached" ||
+      fail "$id was read without '$bound', so the probe could outlive the sixty seconds onevcs allows; restore it on the curl call in scripts/release-probe.sh"
+  done
   answer 404 '{"errors":[{"detail":"Not Found"}]}'
   assert_answered "$id never released (registry 404)" "" "$stub_path" "$id"
 done < <(printf '%s\n' "$declared")
@@ -186,25 +210,25 @@ assert_declined_offline "a covers entry" \
 
 # Fixture declarations: the probe reads the release-targets.toml beside it.
 fixture="$work/fixture"
-mkdir -p "$fixture/scripts"
-cp scripts/release-probe.sh "$fixture/scripts/release-probe.sh"
+{ mkdir -p "$fixture/scripts" && cp scripts/release-probe.sh "$fixture/scripts/release-probe.sh"; } ||
+  fail "could not copy the probe into $fixture; check that $work is writable"
 fixture_probe="$fixture/scripts/release-probe.sh"
 assert_not_answered "a checkout with no release-targets.toml" \
   "cannot read" "$stub_path" "$fixture_probe" crate:skilltest-core
-: >"$fixture/release-targets.toml"
+put "$fixture/release-targets.toml" ''
 assert_not_answered "a declaration with no schema_version" \
   "declares schema_version ''" "$stub_path" "$fixture_probe" crate:skilltest-core
 for other in 2 4; do
-  printf 'schema_version = %s\n\n[[target]]\nid = "crate:skilltest-core"\n' "$other" >"$fixture/release-targets.toml"
+  put "$fixture/release-targets.toml" 'schema_version = %s\n\n[[target]]\nid = "crate:skilltest-core"\n' "$other"
   assert_not_answered "a declaration at schema_version $other" \
     "declares schema_version '$other'" "$stub_path" "$fixture_probe" crate:skilltest-core
 done
-printf 'schema_version = 3\n' >"$fixture/release-targets.toml"
+put "$fixture/release-targets.toml" 'schema_version = 3\n'
 assert_not_answered "a declaration with no targets" \
   "declares no release targets" "$stub_path" "$fixture_probe" crate:skilltest-core
 # Only a [[target]] is a release target; a retired id or a covers entry beside a
 # real target is still refused.
-cat >"$fixture/release-targets.toml" <<'NEIGHBOURS'
+cat >"$fixture/release-targets.toml" <<'NEIGHBOURS' || fail "could not write the neighbours fixture under $fixture"
 schema_version = 3
 
 [[target]]
@@ -221,18 +245,28 @@ assert_not_answered "a retired id beside a declared target" \
 assert_not_answered "a covered id beside the target that covers it" \
   "is not a release target of this repository" "$stub_path" "$fixture_probe" npm:@skill-test/cli-linux-x64
 # A declared name that is not a package name never becomes a URL.
-printf 'schema_version = 3\n\n[[target]]\nid = "crate:skilltest/../serde"\n' >"$fixture/release-targets.toml"
+put "$fixture/release-targets.toml" 'schema_version = 3\n\n[[target]]\nid = "crate:skilltest/../serde"\n'
 assert_not_answered "a malformed declared crate name" \
   "is not a crate package name" "$stub_path" "$fixture_probe" "crate:skilltest/../serde"
-printf 'schema_version = 3\n\n[[target]]\nid = "npm:@skill-test/sdk/extra"\n' >"$fixture/release-targets.toml"
+put "$fixture/release-targets.toml" 'schema_version = 3\n\n[[target]]\nid = "pypi:skilltest sdk"\n'
+assert_not_answered "a malformed declared PyPI name" \
+  "is not a pypi package name" "$stub_path" "$fixture_probe" "pypi:skilltest sdk"
+put "$fixture/release-targets.toml" 'schema_version = 3\n\n[[target]]\nid = "pypi:-skilltest"\n'
+assert_not_answered "a declared PyPI name with a leading separator" \
+  "is not a pypi package name" "$stub_path" "$fixture_probe" "pypi:-skilltest"
+put "$fixture/release-targets.toml" 'schema_version = 3
+
+[[target]]
+id = "npm:@skill-test/sdk/extra"
+'
 assert_not_answered "a malformed declared npm name" \
   "is not a npm package name" "$stub_path" "$fixture_probe" "npm:@skill-test/sdk/extra"
 # A registry the probe has no URL for, even when declared.
-printf 'schema_version = 3\n\n[[target]]\nid = "gem:skilltest"\n' >"$fixture/release-targets.toml"
+put "$fixture/release-targets.toml" 'schema_version = 3\n\n[[target]]\nid = "gem:skilltest"\n'
 assert_not_answered "a declared id on an unknown registry" \
   "unknown registry 'gem'" "$stub_path" "$fixture_probe" gem:skilltest
 [ ! -s "$reached" ] ||
-  fail "a fixture refusal read the network; every refusal above is decided before any request"
+  fail "a fixture refusal read the network; move that refusal in scripts/release-probe.sh above the curl call, where every other declaration check sits"
 
 # --- Everything a registry read can do other than answer ----------------------
 assert_not_answered "a host with no curl" \
@@ -254,7 +288,7 @@ assert_not_answered "a response with no version" \
 answer 200 '{"dist-tags":{"latest":""}}'
 assert_not_answered "a response with an empty version" \
   "without a version at" "$stub_path" scripts/release-probe.sh npm:@skill-test/sdk
-for bad in 'latest' '1latest' '1..' 'see the release notes' '1.2.3\\n' '1.2.3\\nand more'; do
+for bad in 'latest' '1latest' '1..' '1.2.3-foo.' '1.2.3-' 'see the release notes' '1.2.3\\n' '1.2.3\\nand more'; do
   answer 200 '{"crate":{"max_stable_version":"'"$bad"'"}}'
   assert_not_answered "a response serving '$bad' as the version" \
     "which is not a version a caller can use" "$stub_path" scripts/release-probe.sh crate:skilltest-core
@@ -271,14 +305,36 @@ assert_answered "a crate with a newer prerelease" "0.11.2" "$stub_path" crate:sk
 answer 200 '{"crate":{"max_stable_version":null,"max_version":"0.1.0-alpha.1"}}'
 assert_answered "a crate with only a prerelease" "0.1.0-alpha.1" "$stub_path" crate:skilltest-cli
 
-# Both readers, since either can be the one a host has.
+# PyPI serves a prerelease in its PEP 440 normal form, not semver's.
+answer 200 '{"info":{"version":"0.12.0rc1"}}'
+assert_answered "a PyPI prerelease" "0.12.0rc1" "$stub_path" pypi:skilltest-sdk
+answer 200 '{"dist-tags":{"latest":"0.12.0-rc.1"}}'
+assert_answered "an npm prerelease" "0.12.0-rc.1" "$stub_path" npm:@skill-test/vitest
+
+# Both readers, since either can be the one a host has — each through its
+# answer, its crates.io fallback path, and every way it can fail to read one.
 readers=0
 for reader in jq python3; do
   path="$(tool_path "$reader")" || continue
-  mkdir -p "$work/reader-$reader"
-  ln -sf "$path" "$work/reader-$reader/$reader"
+  { mkdir -p "$work/reader-$reader" && ln -sf "$path" "$work/reader-$reader/$reader"; } ||
+    fail "could not link $reader into $work/reader-$reader; check that $work is writable"
+  only="$work/reader-$reader:$work/minbin:$work/bin"
   answer 200 '{"info":{"version":"0.11.2"}}'
-  assert_answered "the $reader reader" "0.11.2" "$work/reader-$reader:$work/minbin:$work/bin" pypi:skilltest-sdk
+  assert_answered "the $reader reader" "0.11.2" "$only" pypi:skilltest-sdk
+  answer 200 '{"crate":{"max_stable_version":null,"max_version":"0.1.0-alpha.1"}}'
+  assert_answered "the $reader reader's crates.io fallback" "0.1.0-alpha.1" "$only" crate:skilltest-core
+  answer 200 'not json'
+  assert_not_answered "the $reader reader on a response that is not JSON" \
+    "could not parse" "$only" scripts/release-probe.sh pypi:skilltest-sdk
+  answer 200 '{"info":{}}'
+  assert_not_answered "the $reader reader on a response with no version" \
+    "without a version at" "$only" scripts/release-probe.sh pypi:skilltest-sdk
+  answer 200 '{"info":{"version":3}}'
+  assert_not_answered "the $reader reader on a non-string version" \
+    "without a version at" "$only" scripts/release-probe.sh pypi:skilltest-sdk
+  answer 200 '{"info":"0.11.2"}'
+  assert_not_answered "the $reader reader where an object is expected" \
+    "without a version at" "$only" scripts/release-probe.sh pypi:skilltest-sdk
   readers=$((readers + 1))
 done
 [ "$readers" -gt 0 ] ||

@@ -78,6 +78,11 @@ release-targets-check:
     @bash scripts/check-release-targets-test.sh >/dev/null
     @bash scripts/check-release-probe.sh >/dev/null
 
+# Live drift alarm for the release probe: drives it against the real crates.io,
+# PyPI and npm for every declared target. Network, so never part of `check`.
+release-probe-live:
+    @bash scripts/release-probe-live.sh
+
 # Fast unit tests (Rust library/bin suites) for affected projects.
 test:
     {{nx}} affected -t test

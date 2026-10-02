@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# llmlint: ignore-file[new_code_lands_in_a_project] tests scripts/check-release-targets.sh, repo-level release glue that belongs to no Nx package; run workspace-wide from `just check` (AGENTS.md: scripts/*.sh are orchestrator-independent glue).
 # Behavioral test of scripts/check-release-targets.sh, the release-target drift
 # gate. A gate nobody has watched fail is not known to work, and what this one
 # guards against is an inventory going stale in silence — so it is driven against
@@ -10,7 +11,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-work="$(mktemp -d)"
+work="$(mktemp -d)" || {
+  echo "check-release-targets-test: could not create a scratch directory; check that \$TMPDIR (or /tmp) is writable and has space" >&2
+  exit 1
+}
 trap 'rm -rf "$work"' EXIT
 
 fail() {
@@ -19,7 +23,6 @@ fail() {
   exit 1
 }
 
-# Everything the gate reads.
 staged=(
   release-targets.toml
   .github/workflows/publish.yml
@@ -39,53 +42,60 @@ staged=(
 )
 
 stage() {
-  rm -rf "$work/repo"
+  rm -rf "$work/repo" || fail "could not clear $work/repo between cases; check its permissions"
   local f
   for f in "${staged[@]}"; do
-    mkdir -p "$work/repo/$(dirname "$f")"
-    cp -p "$f" "$work/repo/$f"
+    { mkdir -p "$work/repo/$(dirname "$f")" && cp -p "$f" "$work/repo/$f"; } ||
+      fail "could not stage $f into $work/repo; restore $f from git or free space in \$TMPDIR"
   done
+}
+
+# Replaces a staged file with what was written to $work/next; a failure here is
+# the harness's, not the gate's, so it is reported as such.
+replace() {
+  mv "$work/next" "$work/repo/$1" || fail "could not rewrite the staged $1; check that $work is writable"
 }
 
 # Portable in-place edit (BSD and GNU sed disagree on -i). $1 = file, rest = sed args.
 edit() {
-  local file="$work/repo/$1"
+  local rel=$1
   shift
-  sed "$@" "$file" >"$file.new" && mv "$file.new" "$file"
+  sed "$@" "$work/repo/$rel" >"$work/next" || fail "could not apply this case's sed edit to the staged $rel; fix the expression in this test"
+  replace "$rel"
 }
 
 run_gate() {
-  local status=0
-  bash "$work/repo/scripts/check-release-targets.sh" >"$work/out" 2>&1 || status=$?
-  return "$status"
+  : >"$work/out" || fail "could not write $work/out to capture the gate; check that $work is writable"
+  bash "$work/repo/scripts/check-release-targets.sh" >"$work/out" 2>&1
 }
 
 # $1 = what drifted, $2 = what the gate must say about it. Stage, then the
 # caller's mutation runs, then this asserts red with that diagnosis.
 expect_red() {
   if run_gate; then
-    fail "the gate stayed green when $1; it must refuse that drift"
+    fail "the gate stayed green when $1; restore the comparison in scripts/check-release-targets.sh that refuses it"
   fi
   grep -Fq -- "$2" "$work/out" ||
-    fail "the gate went red when $1, but not for that reason (expected it to say '$2'), so the case exercised some other branch"
+    fail "the gate went red when $1, but not for that reason (expected it to say '$2'); fix the branch of scripts/check-release-targets.sh that now reports it, or this case's mutation if it no longer produces that drift"
 }
 
 stage
-run_gate || fail "the gate is red on an unmodified copy of this tree, so no red below would mean anything"
+run_gate || fail "the gate is red on an unmodified copy of this tree, so no red below would mean anything; run 'bash scripts/check-release-targets.sh' and fix what it reports first"
 
 # Published but not declared: drop the pytest plugin's [[target]].
 stage
 # Paragraph mode: each [[target]] is one blank-line-separated block.
 awk 'BEGIN { RS = ""; ORS = "\n\n" } !/id = "pypi:skilltest-pytest"/' \
-  "$work/repo/release-targets.toml" >"$work/decl"
-mv "$work/decl" "$work/repo/release-targets.toml"
+  "$work/repo/release-targets.toml" >"$work/next" || fail "could not drop the pytest target from the staged declaration"
+replace release-targets.toml
 expect_red "a published PyPI project lost its target" \
   "publishes 'pypi:skilltest-pytest' (from plugins/pytest/pyproject.toml) and release-targets.toml declares no target"
 
 # Published but not declared: a new crate starts publishing.
 stage
-mkdir -p "$work/repo/crates/skilltest-extra"
-printf '[package]\nname = "skilltest-extra"\n' >"$work/repo/crates/skilltest-extra/Cargo.toml"
+{ mkdir -p "$work/repo/crates/skilltest-extra" &&
+  printf '[package]\nname = "skilltest-extra"\n' >"$work/repo/crates/skilltest-extra/Cargo.toml"; } ||
+  fail "could not write the extra crate's staged manifest; check that $work is writable"
 edit .github/workflows/publish.yml 's/^\( *\)publish_crate skilltest-cli$/&\
 \1publish_crate skilltest-extra/'
 expect_red "publish.yml started publishing an undeclared crate" \
@@ -125,7 +135,8 @@ expect_red "the npm job stopped staging a committed platform package" \
 # Covered but not pinned by the covering target's optionalDependencies.
 stage
 jq 'del(.optionalDependencies["@skill-test/cli-linux-arm64"])' "$work/repo/sdks/typescript/package.json" \
-  >"$work/pkg" && mv "$work/pkg" "$work/repo/sdks/typescript/package.json"
+  >"$work/next" || fail "could not drop the arm64 pin from the staged SDK manifest"
+replace sdks/typescript/package.json
 expect_red "the SDK stopped pinning a covered platform package" \
   "does not pin it in optionalDependencies"
 
@@ -137,20 +148,34 @@ expect_red "a target named the wrong manifest" \
 
 # Targets out of publication order.
 stage
-# Swap the first two blocks that open a target (the two crates).
 awk 'BEGIN { RS = ""; ORS = "\n\n" }
   /\[\[target\]\]/ && ++n == 1 { held = $0; next }
   { print }
   n == 2 && held != "" { print held; held = "" }
-' "$work/repo/release-targets.toml" >"$work/decl"
-mv "$work/decl" "$work/repo/release-targets.toml"
+' "$work/repo/release-targets.toml" >"$work/next" || fail "could not swap the two crate targets in the staged declaration"
+replace release-targets.toml
 expect_red "the targets were listed out of publication order" \
   "in a different order than"
 
-# A key the schema does not declare, which must not read as an absent field.
+# A misspelled field reads as an absent one, and every target here needs it.
 stage
 edit release-targets.toml 's/^manifest = "crates\/skilltest-core\/Cargo.toml"$/manifset = "crates\/skilltest-core\/Cargo.toml"/'
-expect_red "a key was misspelled" 'names "manifset"'
+expect_red "the manifest key was misspelled" "lacks an id, name or manifest"
+
+stage
+edit release-targets.toml 's/^name = "core"$/&\
+name = "core-again"/'
+expect_red "a target wrote its short name twice" "writes name twice in one entry"
+
+stage
+edit release-targets.toml 's/^manifest = "plugins\/vitest\/package.json"$/manifest = ["plugins\/vitest\/package.json"]/'
+expect_red "a manifest was written as a list" "writes manifest as something other than one non-empty quoted string"
+
+stage
+jq '.optionalDependencies["@skill-test/cli-linux-x64"] = 1' "$work/repo/sdks/typescript/package.json" \
+  >"$work/next" || fail "could not rewrite the staged SDK manifest's x64 pin"
+replace sdks/typescript/package.json
+expect_red "the SDK pinned a platform package by a non-string spec" "is pinned by a non-string spec"
 
 # A schema_version this gate does not read.
 stage
