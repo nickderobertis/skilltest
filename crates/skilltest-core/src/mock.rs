@@ -1544,7 +1544,6 @@ mod tests {
             "match: { tool: bash }\nstub:\n  - a\n  - { output: b, exit_cod: 2 }\n"
         )
         .is_err());
-        // And the set refuses to build, so no run ever starts.
         let decls: Vec<MockDecl> =
             serde_yaml::from_str("- match: { tool: bash }\n  stub: []\n").unwrap();
         assert!(MockSet::build(&[], &decls, false).is_err());

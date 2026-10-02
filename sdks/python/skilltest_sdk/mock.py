@@ -509,9 +509,14 @@ def stub(
     )
 
 
+# The range of the case schema's `exit_code` (`format: int32`, a Rust `i32`);
+# tests/test_stub_sequence.py reconciles it with schemas/case.schema.json.
+EXIT_CODE_MIN, EXIT_CODE_MAX = -(2**31), 2**31 - 1
+
+
 def _compile_responses(
     responses: Sequence[str | Mapping[str, str | int]],
-) -> list[str | dict[str, Any]]:
+) -> list[str | dict[str, str | int]]:
     """Check a `stub` sequence and render it in the case schema's form, each
     map item through the generated `StubOutput` model (strict, so `"2"` is not
     an exit code). Loud on anything the CLI would refuse, so the fault
@@ -522,7 +527,7 @@ def _compile_responses(
         )
     if not responses:
         raise SkilltestUsageError("stub(responses=...) needs at least one response")
-    compiled: list[str | dict[str, Any]] = []
+    compiled: list[str | dict[str, str | int]] = []
     for i, item in enumerate(responses):
         match item:
             case "":
@@ -539,6 +544,16 @@ def _compile_responses(
                         f'stub response {i} is not a valid {{"output": ..., "exit_code": ...}}: '
                         f"{err}"
                     ) from err
+                # The generated field is optional only because it has a
+                # default; the CLI refuses an explicit null, so refuse it here
+                # rather than let `exclude_none` turn it into exit code 0.
+                if response.exit_code is None:
+                    raise SkilltestUsageError(f"stub response {i} has a null exit code")
+                if not EXIT_CODE_MIN <= response.exit_code <= EXIT_CODE_MAX:
+                    raise SkilltestUsageError(
+                        f"stub response {i} has exit code {response.exit_code}, outside the "
+                        "32-bit range the CLI takes"
+                    )
                 compiled.append(response.model_dump(exclude_none=True))
             case _:
                 raise SkilltestUsageError(

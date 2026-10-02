@@ -5,6 +5,7 @@ build-42` twice per turn, so a two-turn case makes four intercepted calls.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +21,7 @@ from skilltest_sdk import (
     stub,
     user,
 )
-from skilltest_sdk.mock import ToolMock, compile_decls
+from skilltest_sdk.mock import EXIT_CODE_MAX, EXIT_CODE_MIN, ToolMock, compile_decls
 
 RESPONSES: list[str | dict[str, str | int]] = [
     "build-42: queued",
@@ -93,6 +94,8 @@ def test_responses_compile_to_the_yaml_sequence_form() -> None:
         ({"responses": [{"output": "a", "exit_cod": 2}]}, "(?s)exit_cod.*Extra inputs"),
         ({"responses": [{"exit_code": 2}]}, "(?s)output.*Field required"),
         ({"responses": [{"output": "a", "exit_code": "2"}]}, "(?s)exit_code.*valid integer"),
+        ({"responses": [{"output": "a", "exit_code": 2**31}]}, "outside the 32-bit range"),
+        ({"responses": [{"output": "a", "exit_code": None}]}, "null exit code"),
         ({"responses": [3]}, "output string"),
     ],
 )
@@ -108,3 +111,12 @@ def test_single_output_stub_is_unchanged() -> None:
     assert decl["stub"] == {"output": "ok", "exit_code": 0}
     (decl,) = compile_decls([stub("git push", output="no", exit_code=2)])
     assert decl["stub"] == {"output": "no", "exit_code": 2}
+
+
+def test_exit_code_bounds_match_the_case_schema(schemas: Path) -> None:
+    # The SDK's range check restates the schema's integer format; fail here if
+    # the Rust type (and so the generated schema) ever widens or narrows.
+    schema = json.loads((schemas / "case.schema.json").read_text())
+    exit_code = schema["definitions"]["StubOutput"]["properties"]["exit_code"]
+    assert exit_code["format"] == "int32"
+    assert (EXIT_CODE_MIN, EXIT_CODE_MAX) == (-(2**31), 2**31 - 1)

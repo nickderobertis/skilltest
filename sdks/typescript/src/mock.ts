@@ -455,14 +455,26 @@ export function stub(options: MatchOptions & (StubOutputOptions | StubResponsesO
 }
 
 /** An exit code as the case schema takes it: absent means 0, and anything
- * but an integer is refused rather than silently replaced. */
+ * but an integer the CLI's 32-bit `exit_code` holds is refused rather than
+ * silently replaced. */
 function checkedExitCode(exitCode: unknown, message: string): number {
   if (exitCode === undefined) return 0;
-  if (typeof exitCode !== "number" || !Number.isInteger(exitCode)) {
+  if (
+    typeof exitCode !== "number" ||
+    !Number.isInteger(exitCode) ||
+    exitCode < EXIT_CODE_MIN ||
+    exitCode > EXIT_CODE_MAX
+  ) {
     throw new SkilltestUsageError(message);
   }
   return exitCode;
 }
+
+/** The range of the case schema's `exit_code` (`format: int32`, a Rust
+ * `i32`); tests/stub-sequence.test.ts reconciles it with
+ * schemas/case.schema.json. */
+export const EXIT_CODE_MIN = -(2 ** 31);
+export const EXIT_CODE_MAX = 2 ** 31 - 1;
 
 /** Check a stub sequence and render it in the case schema's form. Loud on
  * anything the CLI would refuse, so the fault surfaces at construction. */

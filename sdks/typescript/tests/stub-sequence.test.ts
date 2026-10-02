@@ -3,6 +3,8 @@
  * binary + fake provider. The poller fixture skill checks `jobctl status
  * build-42` twice per turn, so a two-turn case makes four intercepted calls.
  */
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import {
   SkilltestUsageError,
@@ -13,8 +15,8 @@ import {
   testCase,
   user,
 } from "../src/index.js";
-import { compileDecls } from "../src/mock.js";
-import { requireBinaries, skillDir } from "./helpers.js";
+import { EXIT_CODE_MAX, EXIT_CODE_MIN, compileDecls } from "../src/mock.js";
+import { REPO_ROOT, requireBinaries, skillDir } from "./helpers.js";
 
 beforeAll(requireBinaries);
 
@@ -80,6 +82,8 @@ describe("ordered stub responses", () => {
     [{ responses: [{ output: "a", exit_code: 2 }] }, "unknown key"],
     [{ responses: [{ exitCode: 2 }] }, "string `output`"],
     [{ responses: [{ output: "a", exitCode: 1.5 }] }, "integer `exitCode`"],
+    [{ responses: [{ output: "a", exitCode: 2 ** 31 }] }, "integer `exitCode`"],
+    [{ responses: [{ output: "a", exitCode: null }] }, "integer `exitCode`"],
     [{ responses: [3] }, "output string"],
     [{ output: "a", exitCode: "2" }, "integer `exitCode`"],
   ])("refuses %j at construction", (options, message) => {
@@ -87,5 +91,13 @@ describe("ordered stub responses", () => {
     const build = stub as (options: object) => unknown;
     expect(() => build({ contains: "jobctl status", ...options })).toThrow(SkilltestUsageError);
     expect(() => build({ contains: "jobctl status", ...options })).toThrow(message);
+  });
+
+  it("keeps its exit-code bounds in step with the case schema", () => {
+    // The SDK's range check restates the schema's integer format; fail here if
+    // the Rust type (and so the generated schema) ever widens or narrows.
+    const schema = JSON.parse(readFileSync(join(REPO_ROOT, "schemas", "case.schema.json"), "utf8"));
+    expect(schema.definitions.StubOutput.properties.exit_code.format).toBe("int32");
+    expect([EXIT_CODE_MIN, EXIT_CODE_MAX]).toEqual([-(2 ** 31), 2 ** 31 - 1]);
   });
 });
