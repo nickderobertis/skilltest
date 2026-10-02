@@ -158,6 +158,32 @@ def test_full_code_defined_case_surface_is_reexported(fixtures: Path) -> None:
     push.assert_called_once()
 
 
+def test_reexported_stub_takes_ordered_responses(fixtures: Path) -> None:
+    # `responses=` rides the plugin's re-export: successive intercepted calls
+    # get successive responses, the last repeating, across a two-turn run.
+    from skilltest_pytest import TestCase, called, run_skill, stub, user
+
+    status = stub(
+        "jobctl status",
+        responses=["queued", {"output": "failed", "exit_code": 1}, "passed"],
+    )
+    case = TestCase(
+        skill=fixtures / "skills" / "poller",
+        input="Watch build-42 until it settles.",
+        user=user("You are an operator.\nsay: Check again, please.", max_turns=2),
+        mocks=[status],
+        evals=[called(status, times=4)],
+    )
+    report = run_skill(case)
+    assert report.passed, describe_failures(report)
+    outputs = [
+        (event.output or "").strip()
+        for message in report.runs[0].transcript.messages
+        for event in message.events or []
+    ]
+    assert outputs == ["queued", "failed", "passed", "passed"]
+
+
 def test_provider_error_subclass_is_reexported_and_raised(
     cases: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
