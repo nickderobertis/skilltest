@@ -37,19 +37,20 @@ fail() {
   fails=$((fails + 1))
 }
 
-# The `name = "..."` of a TOML section, or empty when the file cannot be read or
-# the section names itself twice — every caller fails on empty, naming the
-# manifest. $1 = file, $2 = section.
+# A TOML table's string `name`, parsed by Python's own TOML reader; empty when
+# the file is unreadable, is not valid TOML, or lacks that string — every caller
+# fails on empty, naming the manifest. $1 = file, $2 = table.
 toml_section_name() {
-  awk -v section="[$2]" '
-    $0 == section { inside = 1; next }
-    inside && /^\[/ { exit }
-    inside && /^name *=/ {
-      if (++names > 1 || $0 !~ /^name *= *"[^"]+" *$/) { found = ""; bad = 1; exit }
-      found = $0; sub(/^name *= *"/, "", found); sub(/" *$/, "", found)
-    }
-    END { if (!bad && found != "") print found }
-  ' "$1" 2>/dev/null || true
+  local name
+  if name="$(python3 -c '
+import sys, tomllib
+with open(sys.argv[1], "rb") as f:
+    name = tomllib.load(f).get(sys.argv[2], {}).get("name")
+if isinstance(name, str) and name:
+    sys.stdout.write(name)
+' "$1" "$2" 2>/dev/null)"; then
+    printf '%s' "$name"
+  fi
 }
 
 # Empty unless the file is exactly one JSON document whose name is a non-empty
@@ -82,6 +83,10 @@ for required in "$declarations" "$workflow" "$stager"; do
 done
 command -v jq >/dev/null 2>&1 || {
   echo "check-release-targets: jq is required to read the npm manifests; install jq and retry" >&2
+  exit 1
+}
+python3 -c 'import tomllib' 2>/dev/null || {
+  echo "check-release-targets: python3 3.11+ (for tomllib) is required to read the Cargo and pyproject manifests; install it and retry" >&2
   exit 1
 }
 

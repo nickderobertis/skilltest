@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # llmlint: ignore-file[new_code_lands_in_a_project] tests scripts/release-probe.sh, repo-level release glue that belongs to no Nx package; run workspace-wide from `just check` (AGENTS.md: scripts/*.sh are orchestrator-independent glue).
+# llmlint: ignore-file[contracts_have_one_source_or_a_drift_gate] Every response body here is an offline copy of a live registry's shape (crates.io, PyPI, npm), whose authority is the registry itself and publishes no schema an offline gate could read (AGENTS.md: no network in `just check`); scripts/release-probe-live.sh (`just release-probe-live`) is the reconciliation, and this file drives that script too.
 # Offline test of scripts/release-probe.sh. Every declared target must answer a
 # version and a 404's empty answer; anything uncertain must exit non-zero with
 # a reason and no stdout, because a caller reads empty output as "not released".
@@ -169,7 +170,6 @@ declared="$(awk '
 [ "$(printf '%s\n' "$declared" | wc -l | tr -d ' ')" -eq 6 ] ||
   fail "release-targets.toml declares $(printf '%s\n' "$declared" | wc -l | tr -d ' ') target ids where this test expects the six skilltest publishes; if that set changed on purpose, update this count with it"
 
-# llmlint: ignore-block[contracts_have_one_source_or_a_drift_gate] These are the live registries' response shapes, whose authority is the registry itself and publishes no schema an offline gate could read (AGENTS.md: no network in `just check`); scripts/release-probe-live.sh (`just release-probe-live`) is the reconciliation against crates.io, PyPI and npm.
 while read -r id; do
   name="${id#*:}"
   case "$id" in
@@ -202,7 +202,6 @@ while read -r id; do
   answer 404 '{"errors":[{"detail":"Not Found"}]}'
   assert_answered "$id never released (registry 404)" "" "$stub_path" "$id"
 done < <(printf '%s\n' "$declared")
-# llmlint: ignore-end[contracts_have_one_source_or_a_drift_gate]
 
 assert_declined_offline "no identifier at all" "takes exactly one registry-qualified identifier"
 assert_declined_offline "two identifiers" "takes exactly one registry-qualified identifier" \
@@ -372,6 +371,9 @@ for reader in jq python3; do
   answer 200 '{"info":{"version":3}}'
   assert_not_answered "the $reader reader on a non-string version" \
     "without a version at" "$only" scripts/release-probe.sh pypi:skilltest-sdk
+  answer 200 '{} {"info":{"version":"0.11.2"}}'
+  assert_not_answered "the $reader reader on two concatenated JSON documents" \
+    "could not parse" "$only" scripts/release-probe.sh pypi:skilltest-sdk
   answer 200 '{"info":"0.11.2"}'
   assert_not_answered "the $reader reader where an object is expected" \
     "without a version at" "$only" scripts/release-probe.sh pypi:skilltest-sdk

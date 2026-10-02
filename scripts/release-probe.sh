@@ -174,12 +174,14 @@ esac
 # it would otherwise add), then close with a sentinel byte that is dropped
 # below — so a trailing newline the registry really served survives command
 # substitution's stripping and is validated rather than silently tidied away.
-# Both also read a path that runs through a non-object as "no version there",
-# so the answer to one response does not depend on which reader a host has.
+# Both also require exactly one JSON document and read a path that runs through
+# a non-object as "no version there", so the answer to one response does not
+# depend on which reader a host has.
 version=""
 if command -v jq >/dev/null 2>&1; then
-  version="$( { jq -j --argjson paths "$paths" \
-    '[$paths[] as $p | (try getpath($p) catch null)] | map(select(type == "string" and length > 0)) | first // ""' \
+  version="$( { jq -j -s --argjson paths "$paths" \
+    'if length != 1 then error("the response is not exactly one JSON document") else .[0] end
+     | [$paths[] as $p | (try getpath($p) catch null)] | map(select(type == "string" and length > 0)) | first // ""' \
     < "$response" 2>"$work/read-error" && printf X; } )" || version="__unreadable__"
 elif command -v python3 >/dev/null 2>&1; then
   version="$( { python3 -c '

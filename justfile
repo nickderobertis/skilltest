@@ -10,7 +10,7 @@
 # `main`) plus the contract drift gate and the release-target gate, which are
 # workspace-level and always run; `just check-all` forces every project. `just
 # bootstrap` must work from a clean clone. Requires `cargo` (+ `cargo-nextest`),
-# `uv`, `pnpm`/`node`, and `jq`.
+# `uv`, `pnpm`/`node`, `jq`, and `python3` 3.11+.
 
 nx := "pnpm exec nx"
 

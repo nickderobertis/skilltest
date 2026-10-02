@@ -174,6 +174,11 @@ edit release-targets.toml 's/^  "npm:@skill-test\/cli-linux-x64",$/  "npm:@skill
 expect_red "a multi-line covers list lost a comma" "with no comma before the next one"
 
 stage
+printf '[package]\nname = "skilltest-cli"\nversion = \n' >"$work/repo/crates/skilltest-cli/Cargo.toml" ||
+  fail "could not write the truncated crate manifest; check that $work is writable and has space, then rerun"
+expect_red "a crate manifest is not valid TOML" "publishes crate 'skilltest-cli' but no crates/*/Cargo.toml has that [package] name"
+
+stage
 printf '{"name": "@skill-test/cli-linux-x64"}\n{"name": "@skill-test/other"\n' \
   >"$work/repo/sdks/typescript/platforms/cli-linux-x64/package.json" ||
   fail "could not write the truncated platform manifest; check that $work is writable and has space, then rerun"

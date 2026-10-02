@@ -12,7 +12,8 @@ test-framework package (Python: `sdks/python` + `plugins/pytest`; TypeScript:
 - **Node** 22+ and [**pnpm**](https://pnpm.io) for the TypeScript packages.
 
 The release-target gate in `just check` also reads manifests with
-[`jq`](https://jqlang.org), which GitHub's Linux and macOS runners carry.
+[`jq`](https://jqlang.org) and Python 3.11+'s `tomllib`, both of which GitHub's
+Linux and macOS runners carry.
 
 [`just`](https://github.com/casey/just) drives everything, as a thin wrapper
 over [nx](https://nx.dev): each package has a `project.json` with its targets,
