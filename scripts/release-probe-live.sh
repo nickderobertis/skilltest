@@ -12,13 +12,21 @@
 # Network-touching, so never in `just check`; run it with `just release-probe-live`.
 # Quiet on success, one line.
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || {
+  echo "release-probe-live: cannot enter the repository root from $0; run it from a complete checkout" >&2
+  exit 1
+}
 
 ids="$(awk '
   /^[[:space:]]*\[/ { inside = ($0 == "[[target]]"); next }
   inside && /^id = "[^"]+"$/ { v = $0; sub(/^id = "/, "", v); sub(/"$/, "", v); print v; inside = 0 }
 ' release-targets.toml)" || {
   echo "release-probe-live: cannot read release-targets.toml; run this from a complete checkout" >&2
+  exit 1
+}
+
+[ -n "$ids" ] || {
+  echo "release-probe-live: release-targets.toml yielded no [[target]] ids, so nothing would be probed; restore its [[target]] entries" >&2
   exit 1
 }
 

@@ -26,7 +26,10 @@
 # It answers well inside sixty seconds, or says it could not.
 set -euo pipefail
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" || {
+  printf 'release-probe: cannot resolve the repository root from %s; run it from a complete checkout\n' "${BASH_SOURCE[0]}" >&2
+  exit 1
+}
 declarations="$repo_root/release-targets.toml"
 DECLARATION_SCHEMA_VERSION=3
 
@@ -59,16 +62,23 @@ identifier="$1"
 # version for something no consumer may wait on — so a table header always ends
 # the block above it, and a [[target]] that somehow carried no id can never
 # reach into the entry below for one.
-declared_version="$(sed -n 's/^schema_version = \([0-9]*\)$/\1/p' "$declarations")"
+declared_version="$(sed -n 's/^schema_version = \([0-9]*\)$/\1/p' "$declarations")" ||
+  unanswered "could not read $declarations; check its permissions and retry"
 [ "$declared_version" = "$DECLARATION_SCHEMA_VERSION" ] ||
   unanswered "$declarations declares schema_version '$declared_version' and this probe reads exactly one, version $DECLARATION_SCHEMA_VERSION; leave a single schema_version line saying which shape the file is written in"
+# A [[target]] writing `id` twice is refused whole: which of the two a reader
+# would take is exactly what nobody wrote down.
 declared="$(awk '
-  /^[[:space:]]*\[/ { inside = ($0 == "[[target]]"); next }
-  inside && match($0, /^id = "[^"]+"$/) {
+  /^[[:space:]]*\[/ { inside = ($0 == "[[target]]"); ids = 0; next }
+  inside && /^id[[:space:]]*=/ && ++ids > 1 { print "!duplicate"; exit }
+  inside && ids == 1 && match($0, /^id = "[^"]+"$/) {
     entry = $0; sub(/^id = "/, "", entry); sub(/"$/, "", entry)
-    print entry; inside = 0
+    print entry
   }
-' "$declarations")"
+' "$declarations")" || unanswered "could not read $declarations; check its permissions and retry"
+case $'\n'"$declared"$'\n' in
+  *$'\n!duplicate\n'*) unanswered "$declarations writes id twice in one [[target]]; keep the one that names the artifact and run 'onevcs release declaration .' to validate the rest" ;;
+esac
 [ -n "$declared" ] || unanswered "$declarations declares no release targets; restore its [[target]] entries"
 
 if ! printf '%s\n' "$declared" | grep -Fxq -- "$identifier"; then
@@ -78,21 +88,33 @@ fi
 registry="${identifier%%:*}"
 name="${identifier#*:}"
 
-# Per registry: the URL that serves its metadata, and the paths to the version
-# it currently serves, most preferred first. Paths are JSON key paths so a key
-# holding a hyphen needs no per-reader quoting.
+# Per registry: the URL that serves its metadata, the paths to the version it
+# currently serves (most preferred first, as JSON key paths so a key holding a
+# hyphen needs no per-reader quoting), and the shape that version takes there.
+#
+# What each registry serves is matched against the WHOLE value, line breaks
+# included, because the caller is promised ONE line. crates.io and npm serve
+# semver; PyPI serves the PEP 440 normal form (`0.12.0rc1`, `.post1`, `.dev2`,
+# an `N!` epoch, a lowercase local label), never semver's `-rc.1`. Requiring
+# that shape is what separates a version from a word served in its place:
+# `latest` carries nothing a caller can order, nor do `1latest` or `1..`.
+semver='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
+pep440='^([0-9]+!)?[0-9]+(\.[0-9]+)*((a|b|rc)[0-9]+)?(\.post[0-9]+)?(\.dev[0-9]+)?(\+[a-z0-9]+(\.[a-z0-9]+)*)?$'
+# llmlint: ignore-block[contracts_have_one_source_or_a_drift_gate] The authority for each URL and field is the live registry, which publishes no schema the offline gate could read (AGENTS.md: no network or non-determinism in `just check`); `just release-probe-live` (scripts/release-probe-live.sh) is the reconciliation, driving this exact case against crates.io, PyPI and npm.
 case "$registry" in
   crate)
     # crates.io: ASCII alphanumerics, hyphen and underscore.
     name_syntax='^[A-Za-z0-9][A-Za-z0-9_-]*$'
     url="https://crates.io/api/v1/crates/${name}"
     paths='[["crate","max_stable_version"],["crate","max_version"]]'
+    version_syntax=$semver
     ;;
   pypi)
     # PEP 503: alphanumerics separated by runs of `.`, `_` or `-`.
     name_syntax='^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$'
     url="https://pypi.org/pypi/${name}/json"
     paths='[["info","version"]]'
+    version_syntax=$pep440
     ;;
   npm)
     # An optional `@scope/`, then the package name — the one `/` a name may
@@ -101,11 +123,13 @@ case "$registry" in
     name_syntax='^(@[A-Za-z0-9][A-Za-z0-9._-]*/)?[A-Za-z0-9][A-Za-z0-9._-]*$'
     url="https://registry.npmjs.org/${name//\//%2f}"
     paths='[["dist-tags","latest"]]'
+    version_syntax=$semver
     ;;
   *)
     usage_error "unknown registry '$registry' in '$identifier'; this probe answers for crate, pypi and npm"
     ;;
 esac
+# llmlint: ignore-end[contracts_have_one_source_or_a_drift_gate]
 
 # The declaration is a file this probe reads, so the name it carries is an input
 # like any other — and this one becomes a path segment of a registry URL.
@@ -120,7 +144,7 @@ command -v curl >/dev/null 2>&1 || unanswered "curl is required to read $registr
 
 work="$(mktemp -d)" ||
   unanswered "could not create a scratch directory for the $registry response; check that \$TMPDIR (or /tmp) is writable and has space, then retry"
-trap 'rm -rf "$work"' EXIT
+trap 'rm -rf "$work" || printf "release-probe: could not remove %s; delete it by hand\n" "$work" >&2' EXIT
 response="$work/response.json"
 
 # Bounded well inside the sixty seconds the contract allows: at most three
@@ -195,18 +219,7 @@ version="${version%X}"
 # artifact that was never released — so it is not answered.
 [ -n "$version" ] || unanswered "$registry answered for '$identifier' without a version at $(printf '%s' "$paths"); fetch $url yourself and update this script's \$paths for $registry to wherever it now serves the current version"
 
-# What the three registries serve skilltest's lockstep version as: crates.io
-# and npm a semver (`0.12.0-rc.1+build.5`), PyPI its PEP 440 normalization
-# (`0.12.0rc1`, `.post1`, `.dev2`, the rare `N!` epoch). Requiring that shape
-# is what separates a version from a word a registry might serve in its place:
-# `latest` carries nothing a caller can order, and `1latest`, `1..` or a
-# suffix ending in a separator carry less than they look like they do.
-#
-# The match is against the WHOLE value, line breaks included, because the
-# caller is promised ONE line: a line-oriented matcher would accept a multiline
-# value on the strength of its first line and then print every line of it.
-VERSION_SYNTAX='^([0-9]+!)?[0-9]+(\.[0-9]+)*((a|b|rc)[0-9]+)?(\.(post|dev)[0-9]+)*([-+][0-9A-Za-z]+([.+-][0-9A-Za-z]+)*)?$'
-[[ $version =~ $VERSION_SYNTAX ]] ||
-  unanswered "$registry served '$version' for '$identifier', which is not a version a caller can use; fetch $url yourself and point this script's \$paths for $registry at the field carrying the version, or widen the shape it accepts if that registry really serves versions like this"
+[[ $version =~ $version_syntax ]] ||
+  unanswered "$registry served '$version' for '$identifier', which is not a $registry version a caller can use; fetch $url yourself and point this script's \$paths for $registry at the field carrying the version, or widen the shape it accepts if that registry really serves versions like this"
 
 printf '%s\n' "$version"

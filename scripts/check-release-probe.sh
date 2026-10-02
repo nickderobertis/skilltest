@@ -18,14 +18,16 @@
 # Quiet on success, one line. On failure it prints what the probe said.
 set -euo pipefail
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$repo_root"
+cd "$(dirname "${BASH_SOURCE[0]}")/.." || {
+  echo "check-release-probe: cannot enter the repository root from ${BASH_SOURCE[0]}; run it from a complete checkout" >&2
+  exit 1
+}
 
 work="$(mktemp -d)" || {
   echo "check-release-probe: could not create a scratch directory; check that \$TMPDIR (or /tmp) is writable and has space" >&2
   exit 1
 }
-trap 'rm -rf "$work"' EXIT
+trap 'rm -rf "$work" || echo "check-release-probe: could not remove $work; delete it by hand" >&2' EXIT
 
 fail() {
   echo "check-release-probe: $1" >&2
@@ -62,7 +64,7 @@ reached="$stub/reached"
 mkdir -p "$work/bin" "$stub" || fail "could not create the curl double's directories under $work"
 put "$work/bin/curl" '%s\n' "#!/usr/bin/env bash
 set -euo pipefail
-printf 'curl %s\\n' \"\$*\" >>'$reached'
+printf 'curl %s\\n' \"\$*\" >>'$reached' || { echo 'curl double: could not log this call' >&2; exit 98; }
 out=''
 while [ \"\$#\" -gt 0 ]; do
   case \$1 in
@@ -75,8 +77,8 @@ if [ -f '$stub/transport-fails' ]; then
   exit 6
 fi
 [ -f '$stub/status' ] && [ -f '$stub/body' ] || { echo 'curl double: this case never called answer()' >&2; exit 99; }
-if [ -n \"\$out\" ]; then cat '$stub/body' >\"\$out\"; fi
-cat '$stub/status'"
+if [ -n \"\$out\" ]; then cat '$stub/body' >\"\$out\" || { echo 'curl double: could not write the response' >&2; exit 97; }; fi
+cat '$stub/status' || { echo 'curl double: could not read the status' >&2; exit 97; }"
 chmod +x "$work/bin/curl" || fail "could not make the curl double executable"
 
 # $1 = HTTP status, $2 = body (printf %b escapes). Clears any transport failure
@@ -155,7 +157,7 @@ assert_answered() {
 declared="$(awk '
   /^[[:space:]]*\[/ { inside = ($0 == "[[target]]"); next }
   inside && /^id = "[^"]+"$/ { v = $0; sub(/^id = "/, "", v); sub(/"$/, "", v); print v; inside = 0 }
-' release-targets.toml)"
+' release-targets.toml)" || fail "could not read release-targets.toml; restore it from git"
 [ "$(printf '%s\n' "$declared" | wc -l | tr -d ' ')" -eq 6 ] ||
   fail "release-targets.toml declares $(printf '%s\n' "$declared" | wc -l | tr -d ' ') target ids where this test expects the six skilltest publishes; if that set changed on purpose, update this count with it"
 
@@ -261,6 +263,9 @@ id = "npm:@skill-test/sdk/extra"
 '
 assert_not_answered "a malformed declared npm name" \
   "is not a npm package name" "$stub_path" "$fixture_probe" "npm:@skill-test/sdk/extra"
+put "$fixture/release-targets.toml" 'schema_version = 3\n\n[[target]]\nid = "crate:skilltest-core"\nid = "crate:skilltest-cli"\n'
+assert_not_answered "a target writing id twice" \
+  "writes id twice in one [[target]]" "$stub_path" "$fixture_probe" crate:skilltest-core
 # A registry the probe has no URL for, even when declared.
 put "$fixture/release-targets.toml" 'schema_version = 3\n\n[[target]]\nid = "gem:skilltest"\n'
 assert_not_answered "a declared id on an unknown registry" \
@@ -271,7 +276,7 @@ assert_not_answered "a declared id on an unknown registry" \
 # --- Everything a registry read can do other than answer ----------------------
 assert_not_answered "a host with no curl" \
   "curl is required" "$work/minbin" scripts/release-probe.sh pypi:skilltest-sdk
-: >"$stub/transport-fails"
+put "$stub/transport-fails" ''
 assert_not_answered "an unreachable registry" \
   "could not reach" "$stub_path" scripts/release-probe.sh pypi:skilltest-sdk
 for status in 500 503 403 301; do
@@ -288,10 +293,10 @@ assert_not_answered "a response with no version" \
 answer 200 '{"dist-tags":{"latest":""}}'
 assert_not_answered "a response with an empty version" \
   "without a version at" "$stub_path" scripts/release-probe.sh npm:@skill-test/sdk
-for bad in 'latest' '1latest' '1..' '1.2.3-foo.' '1.2.3-' 'see the release notes' '1.2.3\\n' '1.2.3\\nand more'; do
+for bad in 'latest' '1latest' '1..' '1' '1.2' '1.2.3rc1' '1.2.3-foo.' '1.2.3-' 'see the release notes' '1.2.3\\n' '1.2.3\\nand more'; do
   answer 200 '{"crate":{"max_stable_version":"'"$bad"'"}}'
   assert_not_answered "a response serving '$bad' as the version" \
-    "which is not a version a caller can use" "$stub_path" scripts/release-probe.sh crate:skilltest-core
+    "version a caller can use" "$stub_path" scripts/release-probe.sh crate:skilltest-core
 done
 answer 200 '{"info":{"version":"0.11.2"}}'
 assert_not_answered "a host with neither JSON reader" \
@@ -305,9 +310,16 @@ assert_answered "a crate with a newer prerelease" "0.11.2" "$stub_path" crate:sk
 answer 200 '{"crate":{"max_stable_version":null,"max_version":"0.1.0-alpha.1"}}'
 assert_answered "a crate with only a prerelease" "0.1.0-alpha.1" "$stub_path" crate:skilltest-cli
 
-# PyPI serves a prerelease in its PEP 440 normal form, not semver's.
-answer 200 '{"info":{"version":"0.12.0rc1"}}'
-assert_answered "a PyPI prerelease" "0.12.0rc1" "$stub_path" pypi:skilltest-sdk
+# PyPI serves a prerelease in its PEP 440 normal form, never semver's.
+for good in 0.12.0rc1 1.0.post1 1.0.dev2 1!2.0 0.11.2+local.1 1; do
+  answer 200 '{"info":{"version":"'"$good"'"}}'
+  assert_answered "PyPI serving $good" "$good" "$stub_path" pypi:skilltest-pytest
+done
+for bad in 0.12.0-rc.1 0.11.2+Local 1.2.3.post; do
+  answer 200 '{"info":{"version":"'"$bad"'"}}'
+  assert_not_answered "PyPI serving '$bad', which is not PEP 440's normal form" \
+    "version a caller can use" "$stub_path" scripts/release-probe.sh pypi:skilltest-pytest
+done
 answer 200 '{"dist-tags":{"latest":"0.12.0-rc.1"}}'
 assert_answered "an npm prerelease" "0.12.0-rc.1" "$stub_path" npm:@skill-test/vitest
 
@@ -341,9 +353,11 @@ done
   fail "this host has neither jq nor python3, so no reader could be exercised; install one (the probe needs it too) and rerun"
 
 # --- One schema version across the declaration and both of its readers --------
-declared_version="$(sed -n 's/^schema_version = \([0-9]*\)$/\1/p' release-targets.toml)"
+declared_version="$(sed -n 's/^schema_version = \([0-9]*\)$/\1/p' release-targets.toml)" ||
+  fail "could not read release-targets.toml; restore it from git"
 for reader in scripts/release-probe.sh scripts/check-release-targets.sh; do
-  reader_version="$(sed -n 's/^DECLARATION_SCHEMA_VERSION=\([0-9]*\)$/\1/p' "$reader")"
+  reader_version="$(sed -n 's/^DECLARATION_SCHEMA_VERSION=\([0-9]*\)$/\1/p' "$reader")" ||
+    fail "could not read $reader; restore it from git"
   [ -n "$reader_version" ] && [ "$reader_version" = "$declared_version" ] ||
     fail "$reader reads schema_version '$reader_version' and release-targets.toml declares '$declared_version'; bring whichever is behind up to the other"
 done

@@ -9,13 +9,16 @@
 #
 # Quiet on success, one line. On failure it prints what the gate said.
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || {
+  echo "check-release-targets-test: cannot enter the repository root from $0; run it from a complete checkout" >&2
+  exit 1
+}
 
 work="$(mktemp -d)" || {
   echo "check-release-targets-test: could not create a scratch directory; check that \$TMPDIR (or /tmp) is writable and has space" >&2
   exit 1
 }
-trap 'rm -rf "$work"' EXIT
+trap 'rm -rf "$work" || echo "check-release-targets-test: could not remove $work; delete it by hand" >&2' EXIT
 
 fail() {
   echo "check-release-targets-test: $1" >&2
@@ -82,16 +85,13 @@ expect_red() {
 stage
 run_gate || fail "the gate is red on an unmodified copy of this tree, so no red below would mean anything; run 'bash scripts/check-release-targets.sh' and fix what it reports first"
 
-# Published but not declared: drop the pytest plugin's [[target]].
 stage
-# Paragraph mode: each [[target]] is one blank-line-separated block.
 awk 'BEGIN { RS = ""; ORS = "\n\n" } !/id = "pypi:skilltest-pytest"/' \
   "$work/repo/release-targets.toml" >"$work/next" || fail "could not drop the pytest target from the staged declaration"
 replace release-targets.toml
 expect_red "a published PyPI project lost its target" \
   "publishes 'pypi:skilltest-pytest' (from plugins/pytest/pyproject.toml) and release-targets.toml declares no target"
 
-# Published but not declared: a new crate starts publishing.
 stage
 { mkdir -p "$work/repo/crates/skilltest-extra" &&
   printf '[package]\nname = "skilltest-extra"\n' >"$work/repo/crates/skilltest-extra/Cargo.toml"; } ||
@@ -101,38 +101,32 @@ edit .github/workflows/publish.yml 's/^\( *\)publish_crate skilltest-cli$/&\
 expect_red "publish.yml started publishing an undeclared crate" \
   "publishes 'crate:skilltest-extra'"
 
-# Declared but not published: publish.yml stops publishing the vitest plugin.
 stage
 edit .github/workflows/publish.yml '/^ *publish_pkg plugins\/vitest/d'
 expect_red "a declared npm package stopped being published" \
   "declares 'npm:@skill-test/vitest', which .github/workflows/publish.yml does not publish"
 
-# Declared but not published: a renamed manifest.
 stage
 edit sdks/python/pyproject.toml 's/^name = "skilltest-sdk"$/name = "skilltest-sdk-renamed"/'
 expect_red "the Python SDK's manifest was renamed" \
   "declares 'pypi:skilltest-sdk', which .github/workflows/publish.yml does not publish"
 
-# Published but not covered: a covers entry dropped.
 stage
 edit release-targets.toml '/"npm:@skill-test\/cli-darwin-x64",/d'
 expect_red "a published platform package lost its covers entry" \
   "publishes per-platform package 'npm:@skill-test/cli-darwin-x64'"
 
-# Covered but not published: a platform publish.yml never stages.
 stage
 edit release-targets.toml 's/^  "npm:@skill-test\/cli-darwin-arm64",$/&\
   "npm:@skill-test\/cli-win32-x64",/'
 expect_red "a covers entry names a package nothing publishes" \
   "cover 'npm:@skill-test/cli-win32-x64', which .github/workflows/publish.yml does not publish"
 
-# A committed platform package the npm job's loop never stages.
 stage
 edit .github/workflows/publish.yml 's/ x86_64-apple-darwin aarch64-apple-darwin; do/ aarch64-apple-darwin; do/'
 expect_red "the npm job stopped staging a committed platform package" \
   "sdks/typescript/platforms/cli-darwin-x64/package.json is committed but"
 
-# Covered but not pinned by the covering target's optionalDependencies.
 stage
 jq 'del(.optionalDependencies["@skill-test/cli-linux-arm64"])' "$work/repo/sdks/typescript/package.json" \
   >"$work/next" || fail "could not drop the arm64 pin from the staged SDK manifest"
@@ -140,13 +134,11 @@ replace sdks/typescript/package.json
 expect_red "the SDK stopped pinning a covered platform package" \
   "does not pin it in optionalDependencies"
 
-# A declared target pointing at the wrong manifest.
 stage
 edit release-targets.toml 's|^manifest = "plugins/vitest/package.json"$|manifest = "sdks/typescript/package.json"|'
 expect_red "a target named the wrong manifest" \
   "gives 'npm:@skill-test/vitest' manifest \"sdks/typescript/package.json\""
 
-# Targets out of publication order.
 stage
 awk 'BEGIN { RS = ""; ORS = "\n\n" }
   /\[\[target\]\]/ && ++n == 1 { held = $0; next }
@@ -157,7 +149,6 @@ replace release-targets.toml
 expect_red "the targets were listed out of publication order" \
   "in a different order than"
 
-# A misspelled field reads as an absent one, and every target here needs it.
 stage
 edit release-targets.toml 's/^manifest = "crates\/skilltest-core\/Cargo.toml"$/manifset = "crates\/skilltest-core\/Cargo.toml"/'
 expect_red "the manifest key was misspelled" "lacks an id, name or manifest"
@@ -177,7 +168,10 @@ jq '.optionalDependencies["@skill-test/cli-linux-x64"] = 1' "$work/repo/sdks/typ
 replace sdks/typescript/package.json
 expect_red "the SDK pinned a platform package by a non-string spec" "is pinned by a non-string spec"
 
-# A schema_version this gate does not read.
+stage
+edit release-targets.toml 's/^  "npm:@skill-test\/cli-linux-x64",$/  "npm:@skill-test\/cli-linux-x64"/'
+expect_red "a multi-line covers list lost a comma" "with no comma before the next one"
+
 stage
 edit release-targets.toml 's/^schema_version = 3$/schema_version = 2/'
 expect_red "the declaration moved off schema_version 3" "declares schema_version '2'"

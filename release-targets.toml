@@ -1,5 +1,7 @@
 # What this repository releases, and the name each registry serves it under.
 #
+# llmlint: ignore-file[contracts_have_one_source_or_a_drift_gate] This document is written against onevcs's release-target schema, whose authority is onevcs's own reader: `onevcs release declaration` validates it every time a consumer reads it, and refuses it there. onevcs is skilltest's consumer rather than its dependency, so the offline gate holds only what skilltest owns — the declared set against publish.yml (scripts/check-release-targets.sh).
+#
 # Written against the canonical release-target schema that nickderobertis/onevcs
 # defines in its `docs/contract.md` and reads with `onevcs release declaration`.
 # scripts/check-release-targets.sh derives what .github/workflows/publish.yml
@@ -48,8 +50,6 @@
 schema_version = 3
 probe = "scripts/release-probe.sh"
 
-# The reusable library: config, skill model, provider protocol, evals, runner and
-# the JSON contract's Rust types. Published first; skilltest-cli pins it.
 [[target]]
 id = "crate:skilltest-core"
 name = "core"
@@ -79,7 +79,6 @@ what = "The pytest plugin that collects `*.skilltest.yaml` cases, built on the `
 published_by = ".github/workflows/publish.yml — the pypi job, after skilltest-sdk, built by uv build under plugins/pytest/pyproject.toml's [project] name and version."
 manifest = "plugins/pytest/pyproject.toml"
 
-# The per-platform carriers are covered, not declared: see the header.
 [[target]]
 id = "npm:@skill-test/sdk"
 name = "node-sdk"

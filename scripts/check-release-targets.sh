@@ -30,7 +30,10 @@
 #
 # Quiet on success, one line.
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || {
+  echo "check-release-targets: cannot enter the repository root from $0; run it from a complete checkout" >&2
+  exit 1
+}
 
 declarations="release-targets.toml"
 workflow=".github/workflows/publish.yml"
@@ -43,7 +46,8 @@ fail() {
   fails=$((fails + 1))
 }
 
-# The first `name = "..."` inside a TOML section. $1 = file, $2 = section.
+# The first `name = "..."` inside a TOML section, or empty when the file cannot
+# be read — every caller fails on empty, naming the manifest. $1 = file, $2 = section.
 toml_section_name() {
   awk -v section="[$2]" '
     $0 == section { inside = 1; next }
@@ -51,7 +55,7 @@ toml_section_name() {
     inside && /^name *= *"[^"]+"/ {
       sub(/^name *= *"/, ""); sub(/".*$/, ""); print; exit
     }
-  ' "$1"
+  ' "$1" 2>/dev/null || true
 }
 
 # Empty unless the file is JSON whose name is a non-empty string; every caller
@@ -66,7 +70,10 @@ job_body() {
     $0 == job { inside = 1; next }
     inside && /^  [A-Za-z0-9_-]+:$/ { exit }
     inside { print }
-  ' "$workflow"
+  ' "$workflow" || {
+    echo "check-release-targets: could not read $workflow; check its permissions" >&2
+    exit 1
+  }
 }
 
 for required in "$declarations" "$workflow" "$stager"; do
@@ -85,6 +92,7 @@ if [ ! -r "$declarations" ]; then
   exit 1
 fi
 
+# llmlint: ignore-block[boundary_inputs_validated] This reads release-targets.toml only for the fields the drift comparison needs and refuses those when malformed; validating the whole document is the authoritative reader's job — `onevcs release declaration`, which reads it on every consumption — and onevcs is this repository's consumer rather than a dependency, so the gate does not take on a consumer's tool to re-check what that consumer validates whenever it reads the file.
 # One record per field this gate reads: <entry>\t<key>\t<value>, entry 0 the
 # top level, a list one record per element, and `!` a refusal.
 fields="$(awk '
@@ -98,6 +106,8 @@ fields="$(awk '
   in_list {
     if (line ~ /^\]$/) { in_list = 0; next }
     if (line ~ /^[ \t]*"[^"]+",?$/) {
+      if (open_element) { refuse("writes a covers entry with no comma before the next one; end every entry but the last with ,"); next }
+      open_element = (line !~ /,$/)
       v = line; sub(/^[ \t]*"/, "", v); sub(/",?$/, "", v)
       printf "%s\t%s\t%s\n", entry, "covers", v; next
     }
@@ -111,7 +121,7 @@ fields="$(awk '
   entry > 0 && match(line, /^(id|name|manifest) = /) { key = substr(line, 1, RLENGTH - 3) }
   entry > 0 && line ~ /^covers = / {
     if (seen[entry, "covers"]++) { refuse("writes covers twice in one entry; merge them into one list"); next }
-    if (line == "covers = [") { in_list = 1; next }
+    if (line == "covers = [") { in_list = 1; open_element = 0; next }
     if (line !~ /^covers = \[("[^"]+"(, *"[^"]+")*)?\]$/) { refuse("writes covers as something other than a list of quoted ids: " line); next }
     body = line
     while (match(body, /"[^"]+"/)) {
@@ -130,7 +140,11 @@ fields="$(awk '
     if (in_list) refuse("leaves covers open; close its list with ]")
     printf "#\ttargets\t%d\n", targets + 0
   }
-' "$declarations")"
+' "$declarations")" || {
+  echo "check-release-targets: could not read $declarations; check its permissions" >&2
+  exit 1
+}
+# llmlint: ignore-end[boundary_inputs_validated]
 
 # $1 = entry, $2 = key. Every value it holds, one per line.
 values_of() {
@@ -222,7 +236,10 @@ targets="$(printf '%s\n' "$npm_job" | awk '
   fail "$workflow's npm job has no 'for target in ...' loop over the platform packages; point this gate's target extraction at its new shape"
 while read -r target; do
   [ -n "$target" ] || continue
-  pkg="$(sed -n "s/^${target}) pkg=\"\\([^\"]*\\)\".*/\\1/p" "$stager")"
+  pkg="$(sed -n "s/^${target}) pkg=\"\\([^\"]*\\)\".*/\\1/p" "$stager")" || {
+    echo "check-release-targets: could not read $stager; check its permissions" >&2
+    exit 1
+  }
   manifest="sdks/typescript/platforms/$pkg/package.json"
   if [ -z "$pkg" ] || [ ! -f "$manifest" ]; then
     fail "$workflow stages target '$target' but $stager maps it to no committed platform package; add its case arm and sdks/typescript/platforms/<pkg>/package.json"
@@ -280,7 +297,6 @@ while read -r id; do
   fi
 done < <(printf '%s\n' "$declared_ids")
 
-# Publication order: the declaration lists targets as publish.yml publishes them.
 if [ "$(printf '%s\n' "$declared_ids" | grep -Fxf <(printf '%s\n' "$published_ids") || true)" != \
   "$(printf '%s\n' "$published_ids" | grep -Fxf <(printf '%s\n' "$declared_ids") || true)" ]; then
   fail "$declarations lists its targets in a different order than $workflow publishes them ($(printf '%s' "$published_ids" | tr '\n' ' ')); reorder the [[target]] entries to match"
