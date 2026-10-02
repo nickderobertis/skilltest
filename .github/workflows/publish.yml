@@ -172,7 +172,7 @@ jobs:
             echo "skip: skilltest-pytest $pytest_version already on PyPI"
           else
             echo "publishing: skilltest-pytest $pytest_version"
-            ( cd plugins/pytest && rm -rf dist && uv build && uv publish dist/* )
+            ( cd plugins/pytest && rm -rf dist && uv build --out-dir dist && uv publish dist/* )
           fi
 
   npm:
