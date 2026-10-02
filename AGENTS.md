@@ -135,6 +135,9 @@ a single template. What was pulled in, and why:
 | `scripts/smoke-python-bundle.sh`, `scripts/smoke-npm-bundle.sh` | Bundle smoke: install the publish-shape package with the binary bundled into a fresh consumer project and run a case through the plugin with `SKILLTEST_BIN` unset, so a pass can only come from the bundled binary. Driven per platform by `bundle-smoke.yml`. |
 | `scripts/install-oneharness.sh` | Installs the prebuilt `oneharness` the live e2e drives (verifies checksum). |
 | `scripts/e2e-lib.sh`, `scripts/e2e-harness.sh` | Live, per-harness e2e: drive the built CLI against a *real* harness through oneharness. See `docs/e2e.md`. |
+| `release-targets.toml` | The onevcs release-target declaration (`schema_version = 3`): the six registry artifacts a dependent can wait on — `crate:skilltest-core` (`core`), `crate:skilltest-cli` (`cli-crate`), `pypi:skilltest-sdk` (`python-sdk`), `pypi:skilltest-pytest` (`pytest-plugin`), `npm:@skill-test/sdk` (`node-sdk`, covering the four `@skill-test/cli-*`), `npm:@skill-test/vitest` (`vitest-plugin`) — in publication order, plus comments on what ships undeclared (the GitHub Release archives, the `skilltest-sdk` wheel/sdist files) and why. The short names are a cross-repository contract; see "Publishing". |
+| `scripts/release-probe.sh` | The probe the declaration names: given one declared target id, prints the version its registry serves (exit 0), nothing for a registry 404 (exit 0), or refuses with a reason on stderr (non-zero). Reads only `PATH`/`HOME`, no credential; network calls bounded well inside onevcs's 60 s. |
+| `scripts/check-release-targets.sh`, `scripts/check-release-targets-test.sh`, `scripts/check-release-probe.sh` | The release-target gate (`just release-targets-check`, in `just check`): derives the published set from `publish.yml` + the manifests and compares it with `release-targets.toml` both ways (covers held against `@skill-test/sdk`'s `optionalDependencies`); that check's red/green tests on a staged copy; the probe's offline outcome tests against a doubled `curl`. |
 | `scripts/set-version.sh` | Writes one lockstep version into all six manifests + the four `@skill-test/cli-*` platform packages + every lockfile + the two cross-package pins. Invoked by semantic-release each release; idempotent and runnable by hand. |
 | `scripts/screenshots.sh`, `scripts/demo-gif.py` | Terminal screenshots (informational; never a gate). The former drives the **real** CLI against the bundled fake provider + `screenshots/fixture/` and renders each scene to a deterministic SVG via `freeze` + the vendored pinned font, so screencomp can hash-gate the bytes; the latter renders the README hero GIF of a typical run (Pillow, not hash-gated). See `screenshots/AGENTS.md`. |
 | `screenshots/`, `screencomp.toml`, `shots/baseline/`, `docs/screenshots/` | The screenshot inputs and outputs: `screenshots/fixture/` (the skills + cases the scenes drive) and `screenshots/fonts/` (the vendored JetBrains Mono); `screencomp.toml` (arches, the `format` toggle, `[guard].paths`); `shots/baseline/<arch>.json` (the committed digest baseline — no images; `shots/current`/`review`/`verify` are gitignored); `docs/screenshots/*.svg` + `demo.gif` (the committed README images). |
@@ -161,16 +164,18 @@ language's SDK), so nx builds prerequisites in order and, for the default
 recipes, runs **only the [affected](https://nx.dev/ci/features/affected)
 projects** (diffed against the `main` base in `nx.json`). A TS-only change
 never spends time on the Rust or Python suites; a core change fans out to the
-CLI, both SDKs, and both framework packages. The one workspace-level exception
-is the contract drift gate (`just contract-check`), which spans every stack and
-always runs as part of `just check`.
+CLI, both SDKs, and both framework packages. The two workspace-level exceptions
+are the contract drift gate (`just contract-check`) and the release-target gate
+(`just release-targets-check`): each spans every stack, so each always runs as
+part of `just check` — the latter even when only `release-targets.toml` or a
+workflow changed, which no nx project would mark affected.
 
 - `just bootstrap` — set up from a clean clone. Every stack installs from its
   own workspace root, so each language has one dependency tree, not one per
   package.
-- `just check` — the contract drift gate plus the full quality gate (format,
-  lint, type check, unit + e2e) over the **affected** projects. Must pass
-  before any commit or PR.
+- `just check` — the contract drift and release-target gates plus the full
+  quality gate (format, lint, type check, unit + e2e) over the **affected**
+  projects. Must pass before any commit or PR.
 - `just check-all` — the same gate forced across **every** project (`nx run-many`).
   Use when you need the whole matrix regardless of what changed.
 - `just test` / `just lint` / `just format` / `just typecheck` / `just build` —
@@ -182,6 +187,9 @@ always runs as part of `just check`.
   in `schemas/` from the Rust report types, then every SDK's generated models
   from the schemas. Run it whenever the report types change; `just
   contract-check` fails while anything is stale.
+- `just release-targets-check` — the release-target gate (see "Publishing"):
+  `release-targets.toml` against what `publish.yml` publishes, that check's own
+  drift tests, and the release probe's offline tests.
 - `just graph` — open the interactive nx project graph.
 - `just upgrade` — upgrade dependencies across nx + all three stacks, then
   `just check-all`.
@@ -354,6 +362,13 @@ registry hiccup must not block the binary release, or vice versa.
   consciously go 1.0 by removing that rule. PRs are **squash-merged**, so the PR
   **title** is the commit subject semantic-release parses — `pr-title.yml` enforces a
   conventional title so a bad subject can't silently skip or mis-size a release.
+- **What a release publishes is declared.** `release-targets.toml` is what onevcs
+  reads to hold a consumer's plan node until skilltest releases; its six target
+  ids and short names are a contract other repositories' plans name, so never
+  rename, add or drop one in passing. Adding or removing a publish step in
+  `publish.yml` turns `just release-targets-check` red until the declaration
+  says the same (a target, or a `covers` entry for a per-platform package);
+  `scripts/release-probe.sh` answers what a registry serves for one target.
 - **To cut a release:** merge a conventional-commit PR. That's it. The lockstep
   version is never hand-edited; if the JSON contract changed, run `just gen-contract`
   and commit the regenerated artifacts in the same PR — the version moves on its own at
