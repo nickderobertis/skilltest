@@ -119,6 +119,14 @@ assert_not_answered() {
   run_probe "$path" "$script" "$@" || status=$?
   [ "$status" -ne 0 ] ||
     fail "$description was answered (exit 0) instead of refused; a caller cannot tell it from 'no release yet' — end that branch in scripts/release-probe.sh through unanswered/usage_error"
+  # A question that cannot be asked (usage_error) exits 2; one that could not
+  # be answered (unanswered) exits 1. These reasons are usage_error's.
+  local want=1
+  case $reason in
+    "takes exactly one"* | "is not a release target"* | "is not a "*" package name" | "unknown registry"*) want=2 ;;
+  esac
+  [ "$status" -eq "$want" ] ||
+    fail "$description exited $status where $want is promised; route it through $([ "$want" -eq 2 ] && echo usage_error || echo unanswered) in scripts/release-probe.sh"
   [ ! -s "$work/out" ] ||
     fail "$description wrote '$(cat "$work/out")' to stdout; a refusal says nothing there, so route that message to stderr in scripts/release-probe.sh"
   [ -s "$work/err" ] ||
@@ -144,10 +152,13 @@ assert_answered() {
   run_probe "$path" scripts/release-probe.sh "$@" || status=$?
   [ "$status" -eq 0 ] ||
     fail "$description was refused (exit $status) instead of answered; a caller holds forever on a refusal, so fix the branch of scripts/release-probe.sh that swallows it"
-  [ "$(cat "$work/out")" = "$expected" ] ||
-    fail "$description answered '$(cat "$work/out")' where a caller is promised '$expected'; scripts/release-probe.sh prints the version and nothing else, or nothing for a registry 404"
-  if [ -z "$expected" ] && [ -s "$work/out" ]; then
-    fail "$description printed output where the empty answer is promised; make the 404 branch of scripts/release-probe.sh exit 0 without printing"
+  # Byte-exact: one newline-terminated line, or nothing at all.
+  if [ -z "$expected" ]; then
+    [ ! -s "$work/out" ] ||
+      fail "$description printed '$(cat "$work/out")' where the empty answer is promised; make the 404 branch of scripts/release-probe.sh exit 0 without printing"
+  else
+    printf '%s\n' "$expected" | cmp -s - "$work/out" ||
+      fail "$description answered '$(cat "$work/out")' where a caller is promised exactly one line, '$expected'; scripts/release-probe.sh prints the version, a newline, and nothing else"
   fi
 }
 
@@ -320,8 +331,15 @@ assert_answered "a crate with a newer prerelease" "0.11.2" "$stub_path" crate:sk
 answer 200 '{"crate":{"max_stable_version":null,"max_version":"0.1.0-alpha.1"}}'
 assert_answered "a crate with only a prerelease" "0.1.0-alpha.1" "$stub_path" crate:skilltest-cli
 
+# semver.org's own examples, for both semver registries.
+for good in 1.0.0-alpha 1.0.0-alpha.1 1.0.0-0.3.7 1.0.0-x.7.z.92 1.0.0-x-y-z.--- 1.0.0+20130313144700 1.0.0-beta+exp.sha.5114f85 1.0.0+21AF26D3----117B344092BD; do
+  answer 200 '{"crate":{"max_stable_version":"'"$good"'"},"dist-tags":{"latest":"'"$good"'"}}'
+  assert_answered "crates.io serving $good" "$good" "$stub_path" crate:skilltest-cli
+  assert_answered "npm serving $good" "$good" "$stub_path" npm:@skill-test/sdk
+done
 # PyPI serves a prerelease in its PEP 440 normal form, never semver's.
-for good in 0.12.0rc1 1.0.post1 1.0.dev2 1!2.0 0.11.2+local.1 1; do
+# PEP 440's own examples, in their normalized form.
+for good in 0.12.0rc1 1.0.post1 1.0.dev2 1!2.0 0.11.2+local.1 1 1.0.dev456 1.0a1 1.0a2.dev456 1.0b2.post345.dev456 1.0rc1 1.0.post456.dev34 1.0+abc.5 1.1.dev1; do
   answer 200 '{"info":{"version":"'"$good"'"}}'
   assert_answered "PyPI serving $good" "$good" "$stub_path" pypi:skilltest-pytest
 done
@@ -397,6 +415,12 @@ if run_live "$stub_path" "$fixture/scripts/release-probe-live.sh"; then
 fi
 grep -Fq "yielded no [[target]] ids" "$work/err" ||
   fail "scripts/release-probe-live.sh refused an empty declaration without saying so; restore that message"
+put "$fixture/release-targets.toml" 'schema_version = 3\n\n[[target]]\nid = "crate:skilltest-core"\n\n[[target]]\nid = crate:skilltest-cli\n'
+if run_live "$stub_path" "$fixture/scripts/release-probe-live.sh"; then
+  fail "scripts/release-probe-live.sh stayed green with a [[target]] it could not read an id from, leaving it unprobed; it must refuse that declaration"
+fi
+grep -Fq "has no id line" "$work/err" ||
+  fail "scripts/release-probe-live.sh refused an unreadable [[target]] without saying which; restore that message"
 
 declared_version="$(sed -n 's/^schema_version = \([0-9]*\)$/\1/p' release-targets.toml)" ||
   fail "could not read release-targets.toml; restore it from git"

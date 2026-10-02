@@ -174,6 +174,12 @@ edit release-targets.toml 's/^  "npm:@skill-test\/cli-linux-x64",$/  "npm:@skill
 expect_red "a multi-line covers list lost a comma" "with no comma before the next one"
 
 stage
+printf '{"name": "@skill-test/cli-linux-x64"}\n{"name": "@skill-test/other"\n' \
+  >"$work/repo/sdks/typescript/platforms/cli-linux-x64/package.json" ||
+  fail "could not write the truncated platform manifest; check that $work is writable and has space, then rerun"
+expect_red "a platform manifest parsed only partway" 'is not JSON with a string "name"'
+
+stage
 edit release-targets.toml 's/^schema_version = 3$/schema_version = 2/'
 expect_red "the declaration moved off schema_version 3" "declares schema_version '2'"
 

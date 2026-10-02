@@ -92,11 +92,13 @@ name="${identifier#*:}"
 # an `N!` epoch, a lowercase local label), never semver's `-rc.1`. Requiring
 # that shape is what separates a version from a word served in its place:
 # `latest` carries nothing a caller can order, nor do `1latest` or `1..`.
+# llmlint: ignore-block[contracts_have_one_source_or_a_drift_gate] Both grammars are transcribed from their specifications — semver.org's published regex, and PEP 440's normalized public form plus local label — which are prose and regex documents rather than code a standalone Bash probe could derive from; scripts/check-release-probe.sh holds each to the spec's own valid and invalid examples.
 # semver.org's own grammar: no leading zero in a numeric core or prerelease part.
 num='(0|[1-9][0-9]*)'
 pre="($num|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
 semver="^$num\\.$num\\.$num(-$pre(\\.$pre)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?\$"
 pep440='^([0-9]+!)?[0-9]+(\.[0-9]+)*((a|b|rc)[0-9]+)?(\.post[0-9]+)?(\.dev[0-9]+)?(\+[a-z0-9]+(\.[a-z0-9]+)*)?$'
+# llmlint: ignore-end[contracts_have_one_source_or_a_drift_gate]
 # llmlint: ignore-block[contracts_have_one_source_or_a_drift_gate] The authority for each URL and field is the live registry, which publishes no schema the offline gate could read (AGENTS.md: no network or non-determinism in `just check`); `just release-probe-live` (scripts/release-probe-live.sh) is the reconciliation, driving this exact case against crates.io, PyPI and npm.
 case "$registry" in
   crate)

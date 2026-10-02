@@ -52,10 +52,14 @@ toml_section_name() {
   ' "$1" 2>/dev/null || true
 }
 
-# Empty unless the file is JSON whose name is a non-empty string; every caller
+# Empty unless the file is exactly one JSON document whose name is a non-empty
+# string — output from a parse that later failed is discarded. Every caller
 # fails on empty, naming the manifest.
 json_name() {
-  jq -r 'if (.name | type) == "string" then .name else "" end' "$1" 2>/dev/null || true
+  local name
+  if name="$(jq -rs 'if length == 1 and (.[0].name | type) == "string" then .[0].name else "" end' "$1" 2>/dev/null)"; then
+    printf '%s' "$name"
+  fi
 }
 
 # The jobs of publish.yml, one body each. $1 = job id.
@@ -305,7 +309,10 @@ while IFS=$'\t' read -r id manifest; do
   fi
   owner_manifest="$(printf '%s' "$declared" | awk -F'\t' -v id="$owner" '$1 == id { print $3 }')"
   case "$owner_manifest" in
-    *.json) pinned="$(jq -r --arg n "${id#npm:}" '.optionalDependencies[$n] | if type == "string" then . else "" end' "$owner_manifest" 2>/dev/null || true)" ;;
+    *.json)
+      pinned="$(jq -rs --arg n "${id#npm:}" 'if length == 1 then .[0].optionalDependencies[$n] | if type == "string" then . else "" end else "" end' "$owner_manifest" 2>/dev/null)" ||
+        pinned=""
+      ;;
     *) pinned="" ;;
   esac
   [ -n "$pinned" ] ||
@@ -327,7 +334,7 @@ while IFS=$'\t' read -r id _ manifest; do
     fail "$declarations names manifest $manifest for $id, which does not exist; point it at the package.json that publishes $id"
     continue
   }
-  if ! deps="$(jq -r '.optionalDependencies // {} | to_entries[]
+  if ! deps="$(jq -rs 'if length != 1 then error("it is not exactly one JSON document") else .[0] end | .optionalDependencies // {} | to_entries[]
       | if (.value | type) == "string" then .key else error("\(.key) is pinned by a non-string spec") end' "$manifest" 2>&1)"; then
     fail "$manifest's optionalDependencies cannot be read ($deps); make it a JSON object of package name to version-spec string"
     continue

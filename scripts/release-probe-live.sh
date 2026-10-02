@@ -17,14 +17,23 @@ cd "$(dirname "$0")/.." || {
   exit 1
 }
 
+# Every [[target]] must yield exactly one id, so an entry the extractor cannot
+# read is a failure here rather than a target silently left unprobed.
 ids="$(awk '
-  /^[[:space:]]*\[/ { inside = ($0 == "[[target]]"); next }
-  inside && /^id = "[^"]+"$/ { v = $0; sub(/^id = "/, "", v); sub(/"$/, "", v); print v; inside = 0 }
+  /^[[:space:]]*\[/ { if (inside && !found) { print "!unread " NR; exit } inside = ($0 == "[[target]]"); found = 0; next }
+  inside && /^id = "[^"]+"$/ { v = $0; sub(/^id = "/, "", v); sub(/"$/, "", v); print v; found = 1; inside = 0 }
+  END { if (inside && !found) print "!unread " NR }
 ' release-targets.toml)" || {
   echo "release-probe-live: cannot read release-targets.toml; run this from a complete checkout" >&2
   exit 1
 }
 
+case $ids in
+  *'!unread'*)
+    echo "release-probe-live: a [[target]] in release-targets.toml (ending near line ${ids##*!unread }) has no id line of the form id = \"<registry>:<name>\"; fix it, then run 'onevcs release declaration .' to validate the rest" >&2
+    exit 1
+    ;;
+esac
 [ -n "$ids" ] || {
   echo "release-probe-live: release-targets.toml yielded no [[target]] ids, so nothing would be probed; restore its [[target]] entries" >&2
   exit 1
