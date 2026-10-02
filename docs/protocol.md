@@ -156,7 +156,12 @@ spy-only run. A provider that receives the block MUST apply the rules to its
 tool calls and respond with **`mock_calls`**: an array (possibly empty) of
 `{tool, input, action, rule}` records — `input` is the call's *original*
 arguments, `action` the verdict applied (`allow`/`deny`/`rewrite`/`stub`), and
-`rule` the intercepting ruleset index (`null` for `allow`). A response without
+`rule` the intercepting ruleset index (`null` for `allow`). A stub with
+ordered responses arrives as a `rewrite` whose `input.command` is a shell
+command that prints the next response for the run. A provider that runs the
+rewritten command, as a harness would, gets the sequence without further work.
+It records those calls as `rewrite`, and the runner reports them as `stub`.
+A response without
 `mock_calls` despite a `mocks` block is a **provider error** — the runner
 treats silent mock-ignoring as a failure, never a vacuous pass. Providers that
 don't implement mocking simply keep omitting the field; skilltest only sends

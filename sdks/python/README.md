@@ -32,6 +32,12 @@ of `stub`/`spy`/`deny`/`rewrite` (a `called` / `not_called` eval takes the
 mock object itself, or a `name=` you gave it). Validate a skill definition with
 `validate_skill("skills/greeter")`.
 
+A stub can answer successive calls differently: pass `responses` instead of
+`output`, and the *n*-th call it intercepts in a run gets the *n*-th item, with
+the last item repeating. So
+`stub("jobctl status", responses=["queued", {"output": "failed", "exit_code": 1}, "passed"])`
+answers `failed` on its second call and `passed` on every call after that.
+
 ### Or point at existing YAML cases
 
 `run_skill` also takes a path to a test-case YAML file — or a directory of
