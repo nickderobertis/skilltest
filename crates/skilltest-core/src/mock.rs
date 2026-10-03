@@ -267,33 +267,77 @@ pub struct StubOutput {
     pub exit_code: i32,
 }
 
+/// One canned response: a bare string (the output, exit code 0) or a map with
+/// `output` + `exit_code`. Both a single `stub` and each item of a `stub`
+/// sequence take this shape.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum StubResponse {
+    /// Bare-string shorthand: the canned stdout, exit code 0.
+    Text(String),
+    Full(StubOutput),
+}
+
+impl StubResponse {
+    /// The canned output text.
+    #[must_use]
+    pub fn output(&self) -> &str {
+        match self {
+            StubResponse::Text(output) | StubResponse::Full(StubOutput { output, .. }) => output,
+        }
+    }
+
+    /// The response's exit code (0 unless faked as failing).
+    #[must_use]
+    pub fn exit_code(&self) -> i32 {
+        match self {
+            StubResponse::Text(_) => 0,
+            StubResponse::Full(StubOutput { exit_code, .. }) => *exit_code,
+        }
+    }
+}
+
 /// A `stub` action: fake a shell call's result by declaring only the output.
-/// Written as a bare string (the output) or a map with `output` + `exit_code`.
-/// A typo'd key inside the map form is a loud parse error (deny on the inner
-/// struct), never a silently-applied default exit code.
+/// Written as a bare string (the output), a map with `output` + `exit_code`,
+/// or a non-empty sequence of those two forms: the *n*-th call the mock
+/// intercepts within one skill run gets the *n*-th item, and every call after
+/// the last item gets the last item again. A typo'd key inside the map form is
+/// a loud parse error (deny on the inner struct), never a silently-applied
+/// default exit code.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(untagged)]
 pub enum StubSpec {
     /// Bare-string shorthand: the canned stdout, exit code 0.
     Text(String),
     Full(StubOutput),
+    /// Ordered responses for successive intercepted calls; the last repeats.
+    Sequence(#[schemars(length(min = 1))] Vec<StubResponse>),
 }
 
 impl StubSpec {
-    /// The canned output text.
+    /// The canned output text — of the first response, for a sequence.
     #[must_use]
     pub fn output(&self) -> &str {
-        match self {
-            StubSpec::Text(output) | StubSpec::Full(StubOutput { output, .. }) => output,
-        }
+        self.responses().first().map_or("", |(output, _)| output)
     }
 
-    /// The stub's exit code (0 unless faked as failing).
+    /// The stub's exit code (0 unless faked as failing) — of the first
+    /// response, for a sequence.
     #[must_use]
     pub fn exit_code(&self) -> i32 {
+        self.responses().first().map_or(0, |(_, code)| *code)
+    }
+
+    /// Every response as `(output, exit_code)`, in call order: one for a
+    /// single stub, the items for a sequence.
+    #[must_use]
+    pub fn responses(&self) -> Vec<(&str, i32)> {
         match self {
-            StubSpec::Text(_) => 0,
-            StubSpec::Full(StubOutput { exit_code, .. }) => *exit_code,
+            StubSpec::Text(output) => vec![(output.as_str(), 0)],
+            StubSpec::Full(StubOutput { output, exit_code }) => vec![(output.as_str(), *exit_code)],
+            StubSpec::Sequence(items) => {
+                items.iter().map(|r| (r.output(), r.exit_code())).collect()
+            }
         }
     }
 }
@@ -384,22 +428,51 @@ impl MockDecl {
                 )));
             }
         }
-        if let Some(StubSpec::Text(text)) = &self.stub {
-            if text.is_empty() {
+        match &self.stub {
+            Some(StubSpec::Text(text)) if text.is_empty() => {
                 return Err(Error::Invalid(format!(
                     "{who}: `stub` output must not be empty (use `deny` to block a call)"
                 )));
             }
+            Some(StubSpec::Sequence(items)) if items.is_empty() => {
+                return Err(Error::Invalid(format!(
+                    "{who}: a `stub` sequence needs at least one response"
+                )));
+            }
+            Some(StubSpec::Sequence(items)) => {
+                if let Some(i) = items
+                    .iter()
+                    .position(|item| matches!(item, StubResponse::Text(t) if t.is_empty()))
+                {
+                    return Err(Error::Invalid(format!(
+                        "{who}: `stub` response {i} must not be empty (use `deny` to block a call)"
+                    )));
+                }
+            }
+            _ => {}
         }
         Ok(())
     }
 
     /// The oneharness rule action this compiles to; `None` for a spy.
-    fn action_json(&self) -> Option<Value> {
+    /// `sequence_dir` is this declaration's private call counter for the run,
+    /// required for (and only used by) a stub sequence of two or more items.
+    fn action_json(&self, sequence_dir: Option<&std::path::Path>) -> Option<Value> {
         if let Some(stub) = &self.stub {
-            return Some(json!({
-                "stub": { "output": stub.output(), "exit_code": stub.exit_code() }
-            }));
+            // A sequence needs state between calls, which oneharness's
+            // stateless hook does not keep: it compiles to a rewrite whose
+            // command claims the next ticket from the run's counter dir.
+            // [`MockSet::build`] passes a dir exactly for those declarations.
+            return Some(match sequence_dir {
+                Some(dir) => json!({
+                    "rewrite": {
+                        "input": { "command": stub_sequence_command(dir, &stub.responses()) }
+                    }
+                }),
+                None => json!({
+                    "stub": { "output": stub.output(), "exit_code": stub.exit_code() }
+                }),
+            });
         }
         if let Some(deny) = &self.deny {
             return Some(json!({ "deny": { "message": deny.message() } }));
@@ -407,6 +480,13 @@ impl MockDecl {
         self.rewrite
             .as_ref()
             .map(|input| json!({ "rewrite": { "input": input } }))
+    }
+
+    /// Whether the `stub` is a sequence of two or more responses — the form
+    /// that needs a per-run call counter. A one-item sequence is a plain stub.
+    #[must_use]
+    pub fn is_stub_sequence(&self) -> bool {
+        matches!(&self.stub, Some(StubSpec::Sequence(items)) if items.len() > 1)
     }
 
     /// The action's stable token (`stub`/`deny`/`rewrite`), or `None` for a spy.
@@ -473,6 +553,57 @@ pub struct MockSet {
     /// The observation channel was requested even without any declarations
     /// (`spy: true` on the case, `--spy` on the CLI).
     spy_requested: bool,
+    /// The per-run call counters of the stub sequences, when any declaration
+    /// has one. Held only so the directory lives as long as the compiled
+    /// rules that name it, and is removed when the last clone of the set drops.
+    _sequence_state: Option<std::sync::Arc<SequenceState>>,
+}
+
+/// The private temp directory holding one run's stub-sequence counters: one
+/// subdirectory per sequence declaration, into which each intercepted call
+/// atomically claims the next numbered ticket (see [`stub_sequence_command`]).
+/// A fresh directory per [`MockSet`] — and a set is built per platform × model
+/// run — is what keeps concurrent runs from sharing a count.
+#[derive(Debug)]
+struct SequenceState {
+    dir: std::path::PathBuf,
+}
+
+impl SequenceState {
+    fn create() -> Result<SequenceState> {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or_default();
+        let dir = std::env::temp_dir().join(format!(
+            "skilltest-stubseq-{}-{nanos}-{}",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).map_err(|source| Error::Io {
+            path: dir.clone(),
+            source,
+        })?;
+        Ok(SequenceState { dir })
+    }
+
+    /// The counter directory of declaration `index`, created empty.
+    fn counter(&self, index: usize) -> Result<std::path::PathBuf> {
+        let path = self.dir.join(format!("decl-{index}"));
+        std::fs::create_dir_all(&path).map_err(|source| Error::Io {
+            path: path.clone(),
+            source,
+        })?;
+        Ok(path)
+    }
+}
+
+impl Drop for SequenceState {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
 }
 
 impl MockSet {
@@ -495,10 +626,19 @@ impl MockSet {
                 }
             }
         }
+        let sequence_state = decls
+            .iter()
+            .any(MockDecl::is_stub_sequence)
+            .then(SequenceState::create)
+            .transpose()?;
         let mut rules = Vec::new();
         let mut rule_to_decl = Vec::new();
         for (i, decl) in decls.iter().enumerate() {
-            if let Some(action) = decl.action_json() {
+            let counter = match &sequence_state {
+                Some(state) if decl.is_stub_sequence() => Some(state.counter(i)?),
+                _ => None,
+            };
+            if let Some(action) = decl.action_json(counter.as_deref()) {
                 rules.push(json!({ "match": decl.matcher.to_oneharness(), "action": action }));
                 rule_to_decl.push(i);
             }
@@ -508,6 +648,7 @@ impl MockSet {
             rules: (!rules.is_empty()).then(|| json!({ "rules": rules })),
             rule_to_decl,
             spy_requested,
+            _sequence_state: sequence_state.map(std::sync::Arc::new),
         })
     }
 
@@ -530,13 +671,18 @@ impl MockSet {
     }
 
     /// Fill each record's `mock` name from the rule index that intercepted it.
+    /// A stub sequence travels to the hook as a `rewrite`; its records are
+    /// reported as the `stub` the case declared.
     #[must_use]
     pub fn resolve(&self, mut records: Vec<MockCall>) -> Vec<MockCall> {
         for record in &mut records {
-            record.mock = record
-                .rule
-                .and_then(|rule| self.rule_to_decl.get(rule))
-                .map(|&decl| decl_label(&self.decls[decl], decl));
+            let decl = record.rule.and_then(|rule| self.rule_to_decl.get(rule));
+            record.mock = decl.map(|&decl| decl_label(&self.decls[decl], decl));
+            if decl.is_some_and(|&decl| self.decls[decl].is_stub_sequence())
+                && record.action == "rewrite"
+            {
+                record.action = "stub".to_string();
+            }
         }
         records
     }
@@ -740,6 +886,39 @@ pub fn stub_command(output: &str, exit_code: i32) -> String {
     if exit_code != 0 {
         command.push_str(&format!("; exit {exit_code}"));
     }
+    command
+}
+
+/// The first token of every command [`stub_sequence_command`] renders — a
+/// shell no-op that names what the command is to anyone reading a transcript,
+/// and lets the fake provider recognise a sequence among general rewrites.
+pub const STUB_SEQUENCE_MARKER: &str = ": skilltest-stub-sequence;";
+
+/// The shell command a stub sequence compiles to. Each run of it claims the
+/// next ticket in `dir` with `mkdir` (atomic, so calls racing within one run
+/// still get distinct tickets) and prints that ticket's response the way
+/// [`stub_command`] prints a single one; every ticket past the last response
+/// gets the last again. A missing counter dir fails the call loudly rather
+/// than looping or answering from the wrong position.
+#[must_use]
+pub fn stub_sequence_command(dir: &std::path::Path, responses: &[(&str, i32)]) -> String {
+    let quote = |text: &str| format!("'{}'", text.replace('\'', "'\\''"));
+    let mut command = format!(
+        "{STUB_SEQUENCE_MARKER} d={}; n=1; until mkdir \"$d/$n\" 2>/dev/null; do \
+         [ -d \"$d/$n\" ] || {{ echo 'skilltest: stub sequence counter is missing' >&2; exit 1; }}; \
+         n=$((n+1)); done; case $n in",
+        quote(&dir.to_string_lossy())
+    );
+    let last = responses.len().saturating_sub(1);
+    for (i, (output, exit_code)) in responses.iter().enumerate() {
+        let label = if i == last {
+            "*".to_string()
+        } else {
+            (i + 1).to_string()
+        };
+        command.push_str(&format!(" {label}) {};;", stub_command(output, *exit_code)));
+    }
+    command.push_str(" esac");
     command
 }
 
@@ -1328,6 +1507,156 @@ mod tests {
             mock: None,
         };
         assert_eq!(describe_records(&[bare]), "?()");
+    }
+
+    #[test]
+    fn parses_stub_sequences_of_both_item_forms() {
+        let seq =
+            decl("match: { tool: bash }\nstub:\n  - first\n  - { output: second, exit_code: 3 }\n");
+        let stub = seq.stub.as_ref().unwrap();
+        assert_eq!(stub.responses(), vec![("first", 0), ("second", 3)]);
+        // The single-response accessors read the first item.
+        assert_eq!(stub.output(), "first");
+        assert_eq!(stub.exit_code(), 0);
+        assert!(seq.is_stub_sequence());
+        assert_eq!(seq.action_kind(), Some("stub"));
+        seq.validate("m").unwrap();
+        // A one-item sequence is just a stub: no counter needed.
+        assert!(!decl("match: { tool: bash }\nstub: [only]\n").is_stub_sequence());
+        assert!(!decl("match: { tool: bash }\nstub: once\n").is_stub_sequence());
+    }
+
+    #[test]
+    fn stub_sequence_faults_are_refused_before_anything_runs() {
+        let err = decl("match: { tool: bash }\nstub: []\n")
+            .validate("mock `look`")
+            .unwrap_err();
+        assert!(err.to_string().contains("at least one response"), "{err}");
+        let err = decl("match: { tool: bash }\nstub: [a, \"\"]\n")
+            .validate("mock `look`")
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("response 1 must not be empty"),
+            "{err}"
+        );
+        // A typo'd key inside an item is a parse error, never a default.
+        assert!(serde_yaml::from_str::<MockDecl>(
+            "match: { tool: bash }\nstub:\n  - a\n  - { output: b, exit_cod: 2 }\n"
+        )
+        .is_err());
+        let decls: Vec<MockDecl> =
+            serde_yaml::from_str("- match: { tool: bash }\n  stub: []\n").unwrap();
+        assert!(MockSet::build(&[], &decls, false).is_err());
+    }
+
+    /// Run a compiled shell command the way a harness's shell tool would.
+    fn sh(command: &str) -> (String, i32) {
+        let out = std::process::Command::new("sh")
+            .args(["-c", command])
+            .output()
+            .expect("sh runs");
+        (
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            out.status.code().unwrap_or(-1),
+        )
+    }
+
+    fn sequence_command_of(set: &MockSet, rule: usize) -> String {
+        set.rules().unwrap()["rules"][rule]["action"]["rewrite"]["input"]["command"]
+            .as_str()
+            .expect("a sequence compiles to a command rewrite")
+            .to_string()
+    }
+
+    const SEQUENCE: &str = r#"
+- name: look
+  match: { tool: bash, contains: "camera look" }
+  stub:
+    - "frame 1: it's fine"
+    - { output: "frame 2: spaghetti", exit_code: 3 }
+    - "frame 3: stopped"
+- name: push
+  match: { contains: "git push" }
+  stub: [Everything up-to-date]
+"#;
+
+    #[test]
+    fn stub_sequence_answers_in_order_and_repeats_the_last() {
+        let set = set(SEQUENCE);
+        let command = sequence_command_of(&set, 0);
+        assert!(command.starts_with(STUB_SEQUENCE_MARKER), "{command}");
+        // The one-item sequence stayed oneharness's own stateless stub.
+        assert_eq!(
+            set.rules().unwrap()["rules"][1]["action"]["stub"]["output"],
+            "Everything up-to-date"
+        );
+        assert_eq!(sh(&command), ("frame 1: it's fine\n".into(), 0));
+        // The exit code applies to its own call alone.
+        assert_eq!(sh(&command), ("frame 2: spaghetti\n".into(), 3));
+        assert_eq!(sh(&command), ("frame 3: stopped\n".into(), 0));
+        assert_eq!(sh(&command), ("frame 3: stopped\n".into(), 0));
+    }
+
+    #[test]
+    fn concurrent_sets_count_their_own_calls() {
+        let (a, b) = (set(SEQUENCE), set(SEQUENCE));
+        let (ca, cb) = (sequence_command_of(&a, 0), sequence_command_of(&b, 0));
+        assert_ne!(ca, cb, "each run gets its own counter");
+        assert_eq!(sh(&ca).0, "frame 1: it's fine\n");
+        assert_eq!(sh(&cb).0, "frame 1: it's fine\n");
+        assert_eq!(sh(&ca).0, "frame 2: spaghetti\n");
+        // Racing calls within one run still claim distinct tickets.
+        let racing: Vec<_> = (0..8)
+            .map(|_| {
+                let command = cb.clone();
+                std::thread::spawn(move || sh(&command).0)
+            })
+            .collect();
+        let mut outputs: Vec<String> = racing.into_iter().map(|t| t.join().unwrap()).collect();
+        outputs.sort();
+        assert_eq!(outputs[0], "frame 2: spaghetti\n");
+        assert!(
+            outputs[1..].iter().all(|o| o == "frame 3: stopped\n"),
+            "{outputs:?}"
+        );
+    }
+
+    #[test]
+    fn stub_sequence_counter_lives_and_dies_with_its_set() {
+        let set = set(SEQUENCE);
+        let command = sequence_command_of(&set, 0);
+        let clone = set.clone();
+        drop(set);
+        // A clone keeps the counter alive (the runner may hold several).
+        assert_eq!(sh(&command).0, "frame 1: it's fine\n");
+        drop(clone);
+        // Gone with the last clone; a stray later call fails loudly instead
+        // of looping or answering from the wrong position.
+        let (stdout, code) = sh(&command);
+        assert_eq!((stdout.as_str(), code), ("", 1));
+    }
+
+    #[test]
+    fn resolve_reports_sequence_rewrites_as_stubs() {
+        let set = set(SEQUENCE);
+        let records = set.resolve(vec![
+            call("Bash", "camera look", "rewrite", Some(0)),
+            call("Bash", "git push", "stub", Some(1)),
+        ]);
+        assert_eq!(records[0].action, "stub");
+        assert_eq!(records[0].mock.as_deref(), Some("look"));
+        // The original input is what is recorded, unchanged.
+        assert_eq!(records[0].input.as_ref().unwrap()["command"], "camera look");
+        assert_eq!(set.records_for("look", &records).unwrap().len(), 1);
+        // A genuine `rewrite` declaration keeps its own verdict.
+        let rw = MockSet::build(
+            &[],
+            &[decl("match: { tool: bash }\nrewrite: { command: ls }\n")],
+            false,
+        )
+        .unwrap();
+        let records = rw.resolve(vec![call("bash", "pwd", "rewrite", Some(0))]);
+        assert_eq!(records[0].action, "rewrite");
     }
 
     #[test]

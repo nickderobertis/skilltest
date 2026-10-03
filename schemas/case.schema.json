@@ -442,8 +442,8 @@
         "output"
       ]
     },
-    "StubSpec": {
-      "description": "A `stub` action: fake a shell call's result by declaring only the output.\nWritten as a bare string (the output) or a map with `output` + `exit_code`.\nA typo'd key inside the map form is a loud parse error (deny on the inner\nstruct), never a silently-applied default exit code.",
+    "StubResponse": {
+      "description": "One canned response: a bare string (the output, exit code 0) or a map with\n`output` + `exit_code`. Both a single `stub` and each item of a `stub`\nsequence take this shape.",
       "anyOf": [
         {
           "description": "Bare-string shorthand: the canned stdout, exit code 0.",
@@ -451,6 +451,26 @@
         },
         {
           "$ref": "#/definitions/StubOutput"
+        }
+      ]
+    },
+    "StubSpec": {
+      "description": "A `stub` action: fake a shell call's result by declaring only the output.\nWritten as a bare string (the output), a map with `output` + `exit_code`,\nor a non-empty sequence of those two forms: the *n*-th call the mock\nintercepts within one skill run gets the *n*-th item, and every call after\nthe last item gets the last item again. A typo'd key inside the map form is\na loud parse error (deny on the inner struct), never a silently-applied\ndefault exit code.",
+      "anyOf": [
+        {
+          "description": "Bare-string shorthand: the canned stdout, exit code 0.",
+          "type": "string"
+        },
+        {
+          "$ref": "#/definitions/StubOutput"
+        },
+        {
+          "description": "Ordered responses for successive intercepted calls; the last repeats.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/StubResponse"
+          },
+          "minItems": 1
         }
       ]
     }

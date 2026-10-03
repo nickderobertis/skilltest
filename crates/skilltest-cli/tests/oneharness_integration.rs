@@ -255,6 +255,153 @@ fn rewrite_substitutes_input_through_real_oneharness() {
 
 #[test]
 #[ignore = "needs oneharness on PATH (just install-oneharness); run via just test-oneharness"]
+fn stub_sequence_answers_in_order_through_real_oneharness() {
+    // Two turns of two calls each: the real hook rewrites every call to the
+    // compiled counter command, the shim executes it, and the run's count
+    // spans the conversation (turn 2 resumes the session).
+    let out = run_case(
+        "../../sequence/mock_stub_sequence.yaml",
+        &["--format", "json"],
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report = report(&out);
+    let run = &report["runs"][0];
+    assert_eq!(run["passed"], Value::Bool(true), "run: {run:#}");
+    let records = run["mock_calls"].as_array().expect("mock_calls present");
+    assert_eq!(records.len(), 4, "records: {records:?}");
+    for record in records {
+        // The hook logged a rewrite; the report shows the declared stub with
+        // the original input, one record per intercepted call.
+        assert_eq!(record["action"], "stub");
+        assert_eq!(record["mock"], "status");
+        assert_eq!(record["input"]["command"], "jobctl status build-42");
+    }
+    let outputs: Vec<String> = run["transcript"]["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| m["role"] == "assistant")
+        .flat_map(|m| m["events"].as_array().cloned().unwrap_or_default())
+        .filter(|e| e["kind"] == "tool_result")
+        .map(|e| e["output"].as_str().unwrap_or_default().trim().to_string())
+        .collect();
+    assert_eq!(
+        outputs,
+        [
+            "build-42: queued",
+            "build-42: failed (retrying)",
+            "build-42: passed",
+            "build-42: passed",
+        ]
+    );
+}
+
+/// One PreToolUse event through the real `oneharness mock claude-code` hook
+/// with `rules`, then — as claude-code does — the substituted command through
+/// the shell. Returns `(stdout, exit code)` of the command that ran.
+fn hook_then_shell(rules: &std::path::Path, spy: &std::path::Path) -> (String, i32) {
+    use std::io::Write;
+    let mut hook = Command::new(oneharness_bin())
+        .args(["mock", "claude-code", "--rules"])
+        .arg(rules)
+        .arg("--spy-file")
+        .arg(spy)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("oneharness mock runs");
+    hook.stdin
+        .take()
+        .unwrap()
+        .write_all(br#"{"tool_name":"Bash","tool_input":{"command":"jobctl status build-42"}}"#)
+        .unwrap();
+    let verdict: Value =
+        serde_json::from_slice(&hook.wait_with_output().unwrap().stdout).expect("a verdict");
+    let command = verdict["hookSpecificOutput"]["updatedInput"]["command"]
+        .as_str()
+        .expect("the hook rewrote the command")
+        .to_string();
+    let ran = Command::new("sh").args(["-c", &command]).output().unwrap();
+    (
+        String::from_utf8_lossy(&ran.stdout).trim().to_string(),
+        ran.status.code().unwrap_or(-1),
+    )
+}
+
+#[test]
+#[ignore = "needs oneharness on PATH (just install-oneharness); run via just test-oneharness"]
+fn concurrent_runs_count_their_own_stub_sequences_through_the_real_hook() {
+    // Two runs alive at once (two mock sets, as the runner builds per run),
+    // their calls interleaved through the real hook: each counts from its own
+    // first response, an item's exit code applies to that call alone, and the
+    // last response repeats.
+    let case =
+        skilltest_core::TestCase::load(&fixtures().join("../sequence/mock_stub_sequence.yaml"))
+            .expect("the sequence case loads");
+    let scratch = Scratch::new("stubseq");
+    let runs: Vec<_> = ["a", "b"]
+        .iter()
+        .map(|tag| {
+            let set = skilltest_core::MockSet::build(&[], &case.mocks, false).unwrap();
+            let rules = scratch.0.join(format!("{tag}.rules.json"));
+            std::fs::write(&rules, set.rules().unwrap().to_string()).unwrap();
+            (set, rules, scratch.0.join(format!("{tag}.spy.jsonl")))
+        })
+        .collect();
+    let (a, b) = (&runs[0], &runs[1]);
+    let queued = ("build-42: queued".to_string(), 0);
+    let failed = ("build-42: failed (retrying)".to_string(), 1);
+    let passed = ("build-42: passed".to_string(), 0);
+    assert_eq!(hook_then_shell(&a.1, &a.2), queued);
+    assert_eq!(hook_then_shell(&b.1, &b.2), queued);
+    assert_eq!(hook_then_shell(&a.1, &a.2), failed);
+    assert_eq!(hook_then_shell(&a.1, &a.2), passed);
+    assert_eq!(hook_then_shell(&b.1, &b.2), failed);
+    assert_eq!(hook_then_shell(&a.1, &a.2), passed);
+    // The real spy log holds one original-input record per call, resolved to
+    // the declared stub.
+    let log = std::fs::read_to_string(&a.2).unwrap();
+    let records =
+        a.0.resolve(skilltest_core::mock::parse_spy_log(&log).unwrap());
+    assert_eq!(records.len(), 4);
+    assert!(records
+        .iter()
+        .all(|r| r.action == "stub" && r.mock.as_deref() == Some("status")));
+    assert_eq!(
+        records[0].input.as_ref().unwrap()["command"],
+        "jobctl status build-42"
+    );
+}
+
+#[test]
+#[ignore = "needs oneharness on PATH (just install-oneharness); run via just test-oneharness"]
+fn one_item_stub_sequence_is_a_plain_stub_through_the_real_hook() {
+    // A one-item list compiles to oneharness's own stub: every call gets that
+    // response and its exit code, and the hook itself logs `stub`.
+    let decls: Vec<skilltest_core::MockDecl> = serde_yaml::from_str(
+        "- name: status\n  match: { contains: jobctl }\n  stub: [{ output: steady, exit_code: 2 }]\n",
+    )
+    .unwrap();
+    let set = skilltest_core::MockSet::build(&[], &decls, false).unwrap();
+    let scratch = Scratch::new("stubone");
+    let (rules, spy) = (scratch.0.join("rules.json"), scratch.0.join("spy.jsonl"));
+    std::fs::write(&rules, set.rules().unwrap().to_string()).unwrap();
+    for _ in 0..2 {
+        assert_eq!(hook_then_shell(&rules, &spy), ("steady".to_string(), 2));
+    }
+    let records =
+        skilltest_core::mock::parse_spy_log(&std::fs::read_to_string(&spy).unwrap()).unwrap();
+    assert_eq!(records.len(), 2);
+    assert!(records.iter().all(|r| r.action == "stub"));
+}
+
+#[test]
+#[ignore = "needs oneharness on PATH (just install-oneharness); run via just test-oneharness"]
 fn spy_flag_records_all_calls_through_real_oneharness() {
     // --spy with no mocks: oneharness installs the pure observer hook
     // (`--spy-file` alone) and every scripted call comes back as `allow`.

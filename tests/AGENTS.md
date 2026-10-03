@@ -9,7 +9,12 @@ and authored for the `skilltest-fake-provider`.
 - `fixtures/skills/<name>/SKILL.md` — a sample skill. The greeter is the happy
   path; `invalid/` deliberately omits a `description` to exercise validation;
   `deployer/` scripts three shell calls (`git push origin main`, `git status`,
-  `rm -rf /tmp/build`) for the mock/spy suites to intercept and observe.
+  `rm -rf /tmp/build`) for the mock/spy suites to intercept and observe;
+  `poller/` checks `jobctl status build-42` twice per turn for the stub-sequence
+  journeys.
+- `fixtures/sequence/` — the stub-sequence case, kept out of `cases/` (whose
+  directory run counts its cases) and shared by the fake-provider e2e and the
+  hermetic oneharness tier.
 - `fixtures/cases/*.yaml` — sample test cases. Each names the journey it covers
   (`greet_pass`, `greet_fail`, `greet_numeric`, `booking_multiturn`).
 - `fixtures/oneharness/` — the hermetic tier: the `fake-claude.sh` shim (a

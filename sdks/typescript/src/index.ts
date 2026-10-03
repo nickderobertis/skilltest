@@ -59,6 +59,9 @@ export {
   type Criterion,
   type MatchOptions,
   type Matcher,
+  type StubOutputOptions,
+  type StubResponseInput,
+  type StubResponsesOptions,
   type ToolCall,
   type WhereCriteria,
 } from "./mock.js";

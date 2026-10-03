@@ -37,11 +37,20 @@ export type FieldPredicate = string | FieldPredicateSpec;
 export type DenySpec = string | DenyMessage;
 /**
  * A `stub` action: fake a shell call's result by declaring only the output.
- * Written as a bare string (the output) or a map with `output` + `exit_code`.
- * A typo'd key inside the map form is a loud parse error (deny on the inner
- * struct), never a silently-applied default exit code.
+ * Written as a bare string (the output), a map with `output` + `exit_code`,
+ * or a non-empty sequence of those two forms: the *n*-th call the mock
+ * intercepts within one skill run gets the *n*-th item, and every call after
+ * the last item gets the last item again. A typo'd key inside the map form is
+ * a loud parse error (deny on the inner struct), never a silently-applied
+ * default exit code.
  */
-export type StubSpec = string | StubOutput;
+export type StubSpec = string | StubOutput | [StubResponse, ...StubResponse[]];
+/**
+ * One canned response: a bare string (the output, exit code 0) or a map with
+ * `output` + `exit_code`. Both a single `stub` and each item of a `stub`
+ * sequence take this shape.
+ */
+export type StubResponse = string | StubOutput;
 
 /**
  * One test case.

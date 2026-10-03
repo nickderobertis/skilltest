@@ -34,7 +34,7 @@
  * counting as zero calls.
  */
 import { SkilltestUsageError } from "./errors.js";
-import type { FieldPredicateSpec, MockDecl, MockMatch } from "./generated/case.js";
+import type { FieldPredicateSpec, MockDecl, MockMatch, StubResponse } from "./generated/case.js";
 import type { CaseRun } from "./generated/report.js";
 
 /** A predicate on one input-field value; build with {@link contains} /
@@ -333,6 +333,7 @@ export class ToolSpy {
 /** One mock action, keyed exactly like the YAML declaration. */
 type MockAction =
   | { stub: { output: string; exit_code: number } }
+  | { stub: [StubResponse, ...StubResponse[]] }
   | { deny: string }
   | { rewrite: Record<string, unknown> };
 
@@ -395,14 +396,128 @@ export function spy(criteria: MatchOptions): ToolSpy {
   return new ToolSpy(criteria);
 }
 
+/** One of a stub's ordered `responses`: a bare output, or an output with the
+ * exit code that call fakes. */
+export type StubResponseInput = string | { output: string; exitCode?: number };
+
+/** A single canned result: `output`, optionally failing with `exitCode`. */
+export interface StubOutputOptions {
+  output: string;
+  exitCode?: number;
+  responses?: never;
+}
+
+/** Ordered results for successive intercepted calls; the last repeats. */
+export interface StubResponsesOptions {
+  responses: readonly StubResponseInput[];
+  output?: never;
+  exitCode?: never;
+}
+
 /**
  * Fake a matching SHELL call's result: the real command never runs and the
  * model receives `output` as the tool's genuine result. `pattern` is
  * Rust-regex (linear-time; no lookarounds) — it runs inside the harness.
+ *
+ * Pass `responses` instead of `output`/`exitCode` to answer successive calls
+ * differently: the *n*-th call this mock intercepts in one run (counted across
+ * a multi-turn conversation) gets the *n*-th item, and every later call gets
+ * the last item again.
  */
-export function stub(options: MatchOptions & { output: string; exitCode?: number }): ToolMock {
-  const { output, exitCode, ...criteria } = options;
-  return new ToolMock({ stub: { output, exit_code: exitCode ?? 0 } }, criteria);
+export function stub(options: MatchOptions & (StubOutputOptions | StubResponsesOptions)): ToolMock {
+  // Widened to `unknown` on purpose: the types already keep a TypeScript caller
+  // to one form, but a JavaScript caller can pass anything, so every field is
+  // checked at runtime below before it reaches the declaration.
+  const { output, exitCode, responses, ...criteria } = options as MatchOptions & {
+    output?: unknown;
+    exitCode?: unknown;
+    responses?: unknown;
+  };
+  if (responses !== undefined) {
+    if (output !== undefined || exitCode !== undefined) {
+      throw new SkilltestUsageError(
+        "stub() takes either `responses` or `output`/`exitCode`, not both (give each response its own exitCode inside `responses`)",
+      );
+    }
+    return new ToolMock({ stub: compileResponses(responses) }, criteria);
+  }
+  if (typeof output !== "string") {
+    throw new SkilltestUsageError(
+      "stub() needs `output` (one canned result) or `responses` (one per successive call)",
+    );
+  }
+  return new ToolMock(
+    {
+      stub: { output, exit_code: checkedExitCode(exitCode, "stub() needs an integer `exitCode`") },
+    },
+    criteria,
+  );
+}
+
+/** An exit code as the case schema takes it: absent means 0, and anything
+ * but an integer the CLI's 32-bit `exit_code` holds is refused rather than
+ * silently replaced. */
+function checkedExitCode(exitCode: unknown, message: string): number {
+  if (exitCode === undefined) return 0;
+  if (
+    typeof exitCode !== "number" ||
+    !Number.isInteger(exitCode) ||
+    exitCode < EXIT_CODE_MIN ||
+    exitCode > EXIT_CODE_MAX
+  ) {
+    throw new SkilltestUsageError(message);
+  }
+  return exitCode;
+}
+
+/** The range of the case schema's `exit_code` (`format: int32`, a Rust
+ * `i32`); tests/stub-sequence.test.ts reconciles it with
+ * schemas/case.schema.json. */
+export const EXIT_CODE_MIN = -(2 ** 31);
+export const EXIT_CODE_MAX = 2 ** 31 - 1;
+
+/** Check a stub sequence and render it in the case schema's form. Loud on
+ * anything the CLI would refuse, so the fault surfaces at construction. */
+function compileResponses(responses: unknown): [StubResponse, ...StubResponse[]] {
+  if (!Array.isArray(responses)) {
+    throw new SkilltestUsageError("stub({ responses }) needs an array of responses");
+  }
+  const compiled: StubResponse[] = responses.map((item: unknown, i: number) => {
+    if (typeof item === "string") {
+      if (item === "") {
+        throw new SkilltestUsageError(
+          `stub response ${i} must not be empty (use deny() to block a call)`,
+        );
+      }
+      return item;
+    }
+    if (typeof item !== "object" || item === null || Array.isArray(item)) {
+      throw new SkilltestUsageError(
+        `stub response ${i} must be an output string or { output, exitCode }`,
+      );
+    }
+    const unknown = Object.keys(item).filter((key) => key !== "output" && key !== "exitCode");
+    if (unknown.length > 0) {
+      throw new SkilltestUsageError(
+        `stub response ${i} has unknown key(s) ${unknown.join(", ")}; use \`output\` and \`exitCode\``,
+      );
+    }
+    // Only `output` and `exitCode` remain after the key check above; read
+    // them as `unknown` so each is type-checked before use.
+    const { output, exitCode } = item as { output?: unknown; exitCode?: unknown };
+    if (typeof output !== "string") {
+      throw new SkilltestUsageError(`stub response ${i} needs a string \`output\``);
+    }
+    return {
+      output,
+      exit_code: checkedExitCode(exitCode, `stub response ${i} needs an integer \`exitCode\``),
+    };
+  });
+  const [first, ...rest] = compiled;
+  if (first === undefined) {
+    throw new SkilltestUsageError("stub({ responses }) needs at least one response");
+  }
+  return [first, ...rest];
 }
 
 /**

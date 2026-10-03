@@ -39,14 +39,16 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
+from ._case import StubOutput
 from .errors import SkilltestUsageError
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable
 
     from ._report import MockCall
 
@@ -459,8 +461,9 @@ def spy(
 def stub(
     contains: str | None = None,
     *,
-    output: str,
-    exit_code: int = 0,
+    output: str | None = None,
+    exit_code: int | None = None,
+    responses: Sequence[str | Mapping[str, str | int]] | None = None,
     tool: str | None = None,
     pattern: str | re.Pattern[str] | None = None,
     where: dict[str, Criterion] | None = None,
@@ -471,15 +474,93 @@ def stub(
     argument is the ``contains`` matcher (the common case). ``pattern`` is
     Rust-regex (linear-time; no lookarounds) — it runs inside the harness.
     A case's `called`/`not_called` eval can reference this mock — pass the
-    object itself, or give a ``name`` and reference that."""
+    object itself, or give a ``name`` and reference that.
+
+    Pass ``responses`` instead of ``output``/``exit_code`` to answer successive
+    calls differently: each item is a bare output or
+    ``{"output": ..., "exit_code": ...}``, the *n*-th call this mock intercepts
+    in one run (counted across a multi-turn conversation) gets the *n*-th
+    item, and every later call gets the last item again."""
+    if responses is not None:
+        if output is not None or exit_code is not None:
+            raise SkilltestUsageError(
+                "stub() takes either `responses` or `output`/`exit_code`, not both "
+                "(give each response its own exit code inside `responses`)"
+            )
+        return ToolMock(
+            {"stub": _compile_responses(responses)},
+            tool=tool,
+            contains=contains,
+            pattern=pattern,
+            where=where,
+            name=name,
+        )
+    if output is None:
+        raise SkilltestUsageError(
+            "stub() needs `output` (one canned result) or `responses` (one per successive call)"
+        )
     return ToolMock(
-        {"stub": {"output": output, "exit_code": exit_code}},
+        {"stub": {"output": output, "exit_code": 0 if exit_code is None else exit_code}},
         tool=tool,
         contains=contains,
         pattern=pattern,
         where=where,
         name=name,
     )
+
+
+# The range of the case schema's `exit_code` (`format: int32`, a Rust `i32`);
+# tests/test_stub_sequence.py reconciles it with schemas/case.schema.json.
+EXIT_CODE_MIN, EXIT_CODE_MAX = -(2**31), 2**31 - 1
+
+
+def _compile_responses(
+    responses: Sequence[str | Mapping[str, str | int]],
+) -> list[str | dict[str, str | int]]:
+    """Check a `stub` sequence and render it in the case schema's form, each
+    map item through the generated `StubOutput` model (strict, so `"2"` is not
+    an exit code). Loud on anything the CLI would refuse, so the fault
+    surfaces at construction."""
+    if isinstance(responses, str) or not isinstance(responses, Sequence):
+        raise SkilltestUsageError(
+            f"stub(responses=...) needs a sequence of responses (got {responses!r})"
+        )
+    if not responses:
+        raise SkilltestUsageError("stub(responses=...) needs at least one response")
+    compiled: list[str | dict[str, str | int]] = []
+    for i, item in enumerate(responses):
+        match item:
+            case "":
+                raise SkilltestUsageError(
+                    f"stub response {i} must not be empty (use deny() to block a call)"
+                )
+            case str():
+                compiled.append(item)
+            case Mapping():
+                try:
+                    response = StubOutput.model_validate(dict(item), strict=True)
+                except ValidationError as err:
+                    raise SkilltestUsageError(
+                        f'stub response {i} is not a valid {{"output": ..., "exit_code": ...}}: '
+                        f"{err}"
+                    ) from err
+                # The generated field is optional only because it has a
+                # default; the CLI refuses an explicit null, so refuse it here
+                # rather than let `exclude_none` turn it into exit code 0.
+                if response.exit_code is None:
+                    raise SkilltestUsageError(f"stub response {i} has a null exit code")
+                if not EXIT_CODE_MIN <= response.exit_code <= EXIT_CODE_MAX:
+                    raise SkilltestUsageError(
+                        f"stub response {i} has exit code {response.exit_code}, outside the "
+                        "32-bit range the CLI takes"
+                    )
+                compiled.append(response.model_dump(exclude_none=True))
+            case _:
+                raise SkilltestUsageError(
+                    f"stub response {i} must be an output string or "
+                    f'{{"output": ..., "exit_code": ...}} (got {item!r})'
+                )
+    return compiled
 
 
 def deny(

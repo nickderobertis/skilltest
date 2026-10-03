@@ -38,7 +38,7 @@ pub use eval::{
 pub use exit::ExitCode;
 pub use mock::{
     DenyMessage, DenySpec, FieldPredicate, FieldPredicateSpec, MockCall, MockDecl, MockMatch,
-    MockPlan, MockSet, StubOutput, StubSpec,
+    MockPlan, MockSet, StubOutput, StubResponse, StubSpec,
 };
 pub use provider::{
     supports_resume, ApiJudgeProvider, AssistantTurn, CommandProvider, JudgeKind, JudgeQuery,

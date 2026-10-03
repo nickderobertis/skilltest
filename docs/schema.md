@@ -75,7 +75,8 @@ mocks:
     match: { tool: bash, pattern: "git push( --force)?\b" }
     # Fake a SHELL call's result by declaring only the output: nothing real
     # runs, and the model receives this text as the tool's genuine result.
-    # Also `stub: { output: ..., exit_code: 2 }` to fake a failing command.
+    # Also `stub: { output: ..., exit_code: 2 }` to fake a failing command, or
+    # a list of either form for ordered responses (see "Ordered stub responses").
     stub: Everything up-to-date
   - name: danger
     match: { contains: "rm -rf" }
@@ -176,6 +177,44 @@ exactly as it validates YAML — a malformed case is a loud usage error, never a
 vacuous pass. YAML files remain first-class — a path works everywhere a
 code-defined case does, and the plugins still auto-discover `*.skilltest.yaml`
 files.
+
+### Ordered stub responses
+
+A `stub` may also be a non-empty **list** of responses, each one a bare output
+or an `{output, exit_code}` map. The *n*-th call the mock intercepts within one
+run gets the *n*-th item, and every call after the last item gets the last item
+again. A run is one platform × model run of the case, and a multi-turn case
+counts across its whole conversation; every run starts again from the first
+item, including runs executing at the same time. An item's `exit_code` applies
+to that call alone. Here the first status check sees the job queued, the second
+sees it fail, and every later check sees it pass:
+
+```yaml
+mocks:
+  - name: status
+    match: { tool: bash, contains: "jobctl status" }
+    stub:
+      - "build-42: queued"
+      - { output: "build-42: failed (retrying)", exit_code: 1 }
+      - "build-42: passed"
+evals:
+  - type: called
+    mock: status
+    times: 3
+```
+
+An empty list, an empty bare-string item, or an unknown key inside an item is
+refused when the case loads. `called`/`not_called` and the report's
+`mock_calls` record each intercepted call once with its original input and the
+action `stub`, as for a single stub. In the SDKs the same mock is
+`stub("jobctl status", responses=[...])` (Python) and
+`stub({ contains: "jobctl status", responses: [...] })` (TypeScript, items
+`{ output, exitCode }`).
+
+oneharness's mock hook keeps no state between calls, so a list of two or more
+items reaches the hook as a `rewrite` of the shell command. The rewritten
+command takes the next number from a counter directory that skilltest creates
+for that one run and removes when the run ends.
 
 Unknown fields are rejected **everywhere** in a case — including inside an
 eval, the `user` block, and the map forms of `stub`/`deny` and field
