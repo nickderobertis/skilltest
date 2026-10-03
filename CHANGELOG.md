@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.12.0](https://github.com/nickderobertis/skilltest/compare/v0.11.2...v0.12.0) (2026-10-03)
+
+### Features
+
+* **mocks:** answer successive matching calls with ordered stub responses ([#60](https://github.com/nickderobertis/skilltest/issues/60)) ([048f54a](https://github.com/nickderobertis/skilltest/commit/048f54a18089fc1dfe0f211d3101196851967fcd))
+
 ## [0.11.2](https://github.com/nickderobertis/skilltest/compare/v0.11.1...v0.11.2) (2026-09-29)
 
 ### Bug Fixes
