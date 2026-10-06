@@ -87,7 +87,8 @@ fn documented_oneharness_version_matches_the_installer_pin() {
     // it — so an unrelated historical mention cannot satisfy the check.
     for (doc, anchor) in [
         (
-            "AGENTS.md",
+            // The provider-boundary notes live with the provider's crate.
+            "crates/skilltest-core/AGENTS.md",
             "[`oneharness`](https://github.com/nickderobertis/oneharness) **v",
         ),
         ("README.md", "the default **oneharness** provider (v"),
