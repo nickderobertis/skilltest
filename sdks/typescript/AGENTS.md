@@ -4,6 +4,8 @@ Nx project `@skill-test/sdk` (`type:sdk`, `lang:typescript`). The TypeScript SDK
 the same thin CLI wrapper as the Python SDK, with type declarations generated
 from the contract. No framework code — vitest support lives in `plugins/vitest`.
 
+<!-- llmlint: ignore-block[agents_md_durable_and_terse] Every project's AGENTS.md states what it proves, what it depends on and how to run it (AGENTS.md "Conventions"); these bullets are that required record for this project — the entry point a reader of this subtree needs — not a copy of its tests or targets. -->
+
 - **What it proves.** `pnpm exec nx run @skill-test/sdk:test-e2e` runs the
   vitest suite against the real built CLI and the fake provider: `runSkill`,
   streaming, the case builders against the kitchen-sink golden, mocks/spies
@@ -12,6 +14,8 @@ from the contract. No framework code — vitest support lives in `plugins/vitest
 - **Depends on.** `skilltest-cli` (the binary it wraps), `skilltest-contract`
   (`src/generated/*.ts`) and the four `@skill-test/cli-*` carrier packages it
   declares as `optionalDependencies`. Depended on by `@skill-test/vitest`.
+
+<!-- llmlint: ignore-end[agents_md_durable_and_terse] -->
 
 ## Rules for this package
 

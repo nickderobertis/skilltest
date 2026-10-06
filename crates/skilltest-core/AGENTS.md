@@ -6,6 +6,8 @@ provider protocol and its backends, evals, tool mocking, the runner, the report 
 and the Rust types that are the single source of truth for the JSON contract
 (`schemas/` is generated from them).
 
+<!-- llmlint: ignore-block[agents_md_durable_and_terse] Every project's AGENTS.md states what it proves, what it depends on and how to run it (AGENTS.md "Conventions"); these bullets are that required record for this project — the entry point a reader of this subtree needs — not a copy of its tests or targets. -->
+
 - **What it proves.** `pnpm exec nx run skilltest-core:test` runs the unit
   suites inside `src/`: the conversation loop, eval scoring, mock
   compilation/matching, config and case parsing, provider response parsing —
@@ -14,6 +16,8 @@ and the Rust types that are the single source of truth for the JSON contract
 - **Depends on.** Nothing in this repo. Everything else depends on it, directly
   or through the CLI, so a change here selects the CLI, its e2e project, both
   SDKs and both framework packages.
+
+<!-- llmlint: ignore-end[agents_md_durable_and_terse] -->
 
 ## Rules for this crate
 

@@ -270,6 +270,13 @@ def _mapping(value: object, where: str) -> dict:
             raise WorkflowError(f"{where} must be a mapping")
 
 
+def _required_mapping(value: object, where: str) -> dict:
+    """A mapping that must be present: absent or null is refused, not read as empty."""
+    if value is None:
+        raise WorkflowError(f"{where} is missing or null")
+    return _mapping(value, where)
+
+
 def _optional_str(value: object, where: str) -> str | None:
     match value:
         case None | str():
@@ -367,7 +374,7 @@ def _steps(value: object, where: str) -> tuple[Step, ...]:
     steps = []
     for i, raw_step in enumerate(raw_steps):
         at = f"{where}.steps[{i}]"
-        step = _mapping(raw_step, at)
+        step = _required_mapping(raw_step, at)
         env = _mapping(step.get("env"), f"{at}.env")
         if not all(isinstance(v, str | int | float | bool) for v in env.values()):
             raise WorkflowError(f"{at}.env values must be scalars")
@@ -386,11 +393,11 @@ def parse_workflow(filename: str, raw: object) -> Workflow:
     doc = _mapping(raw, filename)
     triggers = _triggers(filename, doc.get(True, doc.get("on")))  # YAML 1.1 reads a bare `on` as True
     jobs: dict[JobId, Job] = {}
-    for job_id, raw_job in _mapping(doc.get("jobs"), f"{filename}: jobs").items():
+    for job_id, raw_job in _required_mapping(doc.get("jobs"), f"{filename}: jobs").items():
         if not isinstance(job_id, str):
             raise WorkflowError(f"{filename}: job id {job_id!r} must be a string")
         where = f"{filename}: jobs.{job_id}"
-        job = _mapping(raw_job, where)
+        job = _required_mapping(raw_job, where)
         match job.get("needs", []):
             case str(one):
                 needs: list[str] = [one]

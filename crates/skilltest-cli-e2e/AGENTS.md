@@ -5,6 +5,8 @@ crate holding only `tests/`. It drives the **built** `skilltest` binary the way 
 user does — as a subprocess, asserting on exit codes and JSON — against the
 deterministic `skilltest-fake-provider`. Only the model is faked.
 
+<!-- llmlint: ignore-block[agents_md_durable_and_terse] Every project's AGENTS.md states what it proves, what it depends on and how to run it (AGENTS.md "Conventions"); these bullets are that required record for this project — the entry point a reader of this subtree needs — not a copy of its tests or targets. -->
+
 - **What it proves.** `pnpm exec nx run skilltest-cli-e2e:test` — which never
   starts before `skilltest-cli:build` has produced the binary — runs `e2e.rs`
   (the representative journeys: single/multi-turn, evals, mocks/spies,
@@ -18,6 +20,8 @@ deterministic `skilltest-fake-provider`. Only the model is faked.
   (`e2e.rs` constructs the kitchen-sink case in Rust) and `skilltest-contract`
   (the goldens). Nothing may depend on it, so it is reachable only from a change
   to those or to itself.
+
+<!-- llmlint: ignore-end[agents_md_durable_and_terse] -->
 
 ## Rules for this crate
 

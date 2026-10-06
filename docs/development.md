@@ -19,25 +19,38 @@ Linux and macOS runners carry.
 [`just`](https://github.com/casey/just) drives everything, as a thin wrapper
 over [nx](https://nx.dev): each package has a `project.json` with its targets,
 and the default recipes run only the projects **affected** by your change
-(`just check-all` forces all). nx itself is installed by `just bootstrap`.
+(`just check all` runs every project). nx itself is installed by `just bootstrap`.
 
 ## The loop
 
 ```bash
 just bootstrap   # pnpm install (nx + TS workspace) + cargo fetch + uv sync — works from a clean clone
-just check       # contract drift + release-target gates + the full gate (format, lint, types, unit + e2e) over affected projects
-just check-all   # the same gate across every project
+just check       # the affected tier: format, lint, types, unit + e2e over the projects your change reaches, plus the workspace gates
+just check all   # the broader tier: the same over every project (what CI runs at merge-to-main)
 just format      # auto-format all three stacks
 just test        # fast Rust unit tests only
 just test-e2e    # the cross-language e2e suites (nx builds prerequisites first)
 just release-targets-check # release-targets.toml vs publish.yml + the release probe's offline tests
 just gen-contract # regenerate schemas/ + the generated SDK models from the Rust types
 just graph       # open the interactive nx project graph
-just upgrade     # bump deps across all stacks, then re-run check-all
+just upgrade     # bump deps across all stacks, then re-run `just check all`
 ```
 
 `just check` is the single source of truth and is exactly what CI runs after a
-clean `just bootstrap` (CI uses `nrwl/nx-set-shas` to pick the affected base).
+clean `just bootstrap`.
+
+**The affected tier's base.** `scripts/nx-base.sh` derives it: `NX_BASE` when it
+is a plain ref name or SHA that resolves (CI exports it with `nrwl/nx-set-shas`),
+else the merge base of `HEAD` with `origin/main`; any other `NX_BASE` (a
+revision expression like `HEAD~1` included) fails the recipe before any gate
+runs, naming `NX_BASE`. Set `NX_BASE=<ref>` to diff against something else.
+
+**The workspace-level gates** run on both tiers because they span every stack:
+contract drift (`just contract-check`), release targets (`just
+release-targets-check`), module boundaries (`just boundaries-check`), workflow
+routing and toolchain targets (`just workflows-check`), the base derivation's
+own test (`just base-check`), and the Rust coverage floor (`just coverage`).
+Each is also a recipe of its own for iterating.
 It is strict: `clippy`, `ruff`, `ty`, `biome`, and `tsc` all fail the build on
 findings.
 

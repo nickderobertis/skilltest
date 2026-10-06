@@ -167,18 +167,11 @@ Use the `just` recipes; do not hand-roll equivalent commands. They delegate to
 nx, which builds prerequisites in graph order.
 
 - `just bootstrap` — set up from a clean clone (each stack from its workspace root).
-- `just check [tier]` — **the** gate, and the tier is a flag on it:
-  - `just check` — the **affected tier**: the projects this change can reach,
-    diffed against the base `scripts/nx-base.sh` derives — `NX_BASE` when it is a
-    plain ref name or SHA that resolves (CI exports it with `nx-set-shas`), else
-    the merge base with `origin/main`; any other `NX_BASE` fails closed, naming it.
-    Must pass before any commit or PR.
-  - `just check all` — the **broader tier**: the same targets over every project.
-  Both tiers exclude the live projects and then run the workspace-level gates
-  that span every stack — contract drift (`just contract-check`), release targets
-  (`just release-targets-check`), module boundaries (`just boundaries-check`),
-  workflow routing (`just workflows-check`), the base derivation's own test
-  (`just base-check`) — and the Rust coverage floor.
+- `just check [tier]` — **the** gate; the tier is a flag on it. `just check`
+  (the affected tier, against an explicitly derived base, never Nx's implicit
+  default) must pass before any commit or PR; `just check all` is the broader
+  tier. Both exclude the live projects and always run the workspace-level gates
+  (`docs/development.md`).
 - The **live** suites (`just test-live`, `just test-judge-api`, `just
   test-harness <id>`) are never part of `just check`: real model or API calls,
   credentials, network. `just test-oneharness` is deterministic but needs the
@@ -343,7 +336,8 @@ binary release, or vice versa.
   **generated** from `schemas/` (`schemas/AGENTS.md`), nothing framework-specific.
   A new test framework gets one package under `plugins/<framework>` that builds on
   its language's SDK and re-exports it. Either gets a `project.json` with
-  `type:`/`lang:` tags and a nested `AGENTS.md`.
+  `type:`/`lang:` tags and a nested `AGENTS.md` that states what the project
+  proves, what it depends on and how to run it, then its own rules.
 - See `tests/AGENTS.md` for test-fixture conventions.
 
 ## After the main task: refine and hand off

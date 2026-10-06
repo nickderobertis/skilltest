@@ -12,12 +12,16 @@ source every SDK's models are generated from:
   `tests/fixtures/contract/case_kitchen_sink.json`, which the Rust construction
   and both SDKs' case builders must each serialize to exactly.
 
+<!-- llmlint: ignore-block[agents_md_durable_and_terse] Every project's AGENTS.md states what it proves, what it depends on and how to run it (AGENTS.md "Conventions"); these bullets are that required record for this project — the entry point a reader of this subtree needs — not a copy of its tests or targets. -->
+
 - **What it proves.** That every SDK sees exactly the contract the Rust types
   define (`just contract-check`, uncached, on every `just check` tier).
 - **Depends on.** Nothing (a `type:contract` project may depend only on other
   contracts). Its inputs are this directory, `scripts/gen-contract.sh` and
   `tests/fixtures/contract/`, so a change to any of them selects it and its
   dependents — both SDKs and `skilltest-cli-e2e` — and not every project.
+
+<!-- llmlint: ignore-end[agents_md_durable_and_terse] -->
 
 ## Rules
 

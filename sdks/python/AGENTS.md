@@ -5,6 +5,8 @@ wrapper that runs the `skilltest` CLI as a subprocess and parses its JSON
 contract into Pydantic models. No framework code — pytest support lives in
 `plugins/pytest`.
 
+<!-- llmlint: ignore-block[agents_md_durable_and_terse] Every project's AGENTS.md states what it proves, what it depends on and how to run it (AGENTS.md "Conventions"); these bullets are that required record for this project — the entry point a reader of this subtree needs — not a copy of its tests or targets. -->
+
 - **What it proves.** `pnpm exec nx run skilltest-sdk:test-e2e` runs the pytest
   suite against the real built CLI and the fake provider
   (`SKILLTEST_BIN`/`SKILLTEST_PROVIDER` point at `target/debug`): `run_skill`,
@@ -14,6 +16,8 @@ contract into Pydantic models. No framework code — pytest support lives in
 - **Depends on.** `skilltest-cli` (the binary it wraps; `test-e2e` builds it
   first) and `skilltest-contract` (its `_*.py` models are generated from
   `schemas/`). Depended on by `skilltest-pytest`.
+
+<!-- llmlint: ignore-end[agents_md_durable_and_terse] -->
 
 ## Rules for this package
 

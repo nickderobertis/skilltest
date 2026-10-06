@@ -101,6 +101,18 @@ CASES = (
         "must be one axis or only `include` rows",
     ),
     Case(
+        "a workflow with a null job",
+        lambda wf, _tc: (wf / "notignored.yml").write_text("on: pull_request\njobs:\n  review:\n"),
+        2,
+        "notignored.yml: jobs.review is missing or null",
+    ),
+    Case(
+        "a workflow without jobs",
+        lambda wf, _tc: (wf / "notignored.yml").write_text("on: pull_request\n"),
+        2,
+        "notignored.yml: jobs is missing or null",
+    ),
+    Case(
         "a called workflow without workflow_call",
         lambda wf, _tc: _replace(wf / "e2e-codex.yml", "  workflow_call:\n", ""),
         2,

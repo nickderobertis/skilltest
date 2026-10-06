@@ -4,6 +4,8 @@ Nx project `skilltest-cli` (`type:app`, `lang:rust`). The shipped artifact: the
 clap CLI (`run`, `validate`, `init`, `schema`), plus `skilltest-fake-provider`,
 the deterministic reference provider the e2e suites drive.
 
+<!-- llmlint: ignore-block[agents_md_durable_and_terse] Every project's AGENTS.md states what it proves, what it depends on and how to run it (AGENTS.md "Conventions"); these bullets are that required record for this project — the entry point a reader of this subtree needs — not a copy of its tests or targets. -->
+
 - **What it proves.** `pnpm exec nx run skilltest-cli:test` runs the unit suites
   in `src/` (`kind(lib) | kind(bin)`). Its `build` enables the `fake-provider`
   feature, and every suite that drives the binary waits on it. The binary is
@@ -12,6 +14,8 @@ the deterministic reference provider the e2e suites drive.
   shell out to it.
 - **Depends on.** `skilltest-core`. Depended on by the CLI e2e project, both
   SDKs, and the live projects.
+
+<!-- llmlint: ignore-end[agents_md_durable_and_terse] -->
 
 ## Rules for this crate
 
