@@ -143,7 +143,7 @@ see the message itself rather than any harness's wrapper noise.
    secret name, the install step (`oneharness list` shows each `install_hint`),
    and the run step (`just test-harness <id>`). Keep the `if:` repo+fork gate,
    the credential fail-fast and the `workflow_call`/`workflow_dispatch` triggers
-   (never `pull_request`). Then add a `live-<id>` job calling it to `ci.yml`, add
-   that job to the `release` job's `needs`, and add the file to `LIVE` in
-   `scripts/check-workflow-routing.py` — `just workflows-check` fails until the
-   new suite runs at merge-to-main and gates the release.
+   (never `pull_request`). Then add a `live-<id>` job calling it to `ci.yml` and
+   add that job to the `release` job's `needs` — `just workflows-check` treats
+   every `e2e-*.yml` as a live suite and fails until the new one runs at
+   merge-to-main and gates the release.

@@ -115,10 +115,6 @@ added. What was pulled in, and why:
 
 ## Layout
 
-Every project root carries a nested `AGENTS.md` with what it proves, what it
-depends on, how to run its targets, and its own rules — read it before
-changing that subtree.
-
 | Path | What |
 | --- | --- |
 | `crates/skilltest-core` | Library: config, skill + case models, the provider protocol and backends, evals, mocking, runner, report; the source of truth for the JSON contract. |
@@ -138,7 +134,7 @@ changing that subtree.
 | `gh-secrets.json` | Declarative secret manifest, synced from Bitwarden via `gh-secrets manifest sync`. |
 | `.github/workflows/` | `ci.yml` (both gate tiers, the live calls, the release), `e2e-*.yml` (one live suite each), `semantic-release.yml`, `release.yml`/`publish.yml` (tag-triggered), `bundle-smoke.yml`, `visual-docs.yml`, `pr-title.yml`, `notignored.yml`. |
 | `nx.json`, `<project>/project.json` | The Nx workspace: named inputs, target defaults, and each project's targets, tags and edges. |
-| `rust-toolchain.toml` | The one Rust toolchain pin (channel, components, release targets); every workflow installs from it. |
+| `rust-toolchain.toml` | The one Rust toolchain pin (channel, components, release targets); every workflow installs from it, and `just workflows-check` holds its targets to the build matrices. |
 
 ## Project graph
 
@@ -227,7 +223,7 @@ projects reach a real harness.
   YAML, skill frontmatter, and every provider response are parsed into typed
   models (`serde` in Rust, Pydantic in Python) before use. Never trust raw
   provider output. Case input is strict everywhere — a typo'd key must never
-  silently apply a default (`crates/skilltest-core/AGENTS.md`). The one
+  silently apply a default. The one
   deliberate exception is the CLI's own `--format json` output inside the SDKs:
   its shape is guaranteed by the generated-model drift gate rather than
   re-validated at runtime, so SDKs may type-cast it after a JSON parse.

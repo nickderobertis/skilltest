@@ -7,7 +7,8 @@
 channel = "1.99.0"
 # clippy + rustfmt are gate steps; llvm-tools backs `cargo llvm-cov` (`just coverage`).
 components = ["clippy", "rustfmt", "llvm-tools"]
-# The four release targets release.yml / publish.yml / bundle-smoke.yml build.
+# The four release targets release.yml / publish.yml / bundle-smoke.yml build;
+# `just workflows-check` fails when this list and those build matrices differ.
 targets = [
   "x86_64-unknown-linux-gnu",
   "aarch64-unknown-linux-gnu",

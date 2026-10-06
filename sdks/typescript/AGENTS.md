@@ -16,12 +16,11 @@ from the contract. No framework code — vitest support lives in `plugins/vitest
 
 ## Rules for this package
 
-- Public API is `src/index.ts`: `runSkill` (YAML path **or** a code-defined
-  case), the async streaming API `streamSkill` → `SkillStream` (a `for await` of
-  tool events that `break`s to short-circuit), `toolCalls`/`ToolEvent`, and the
-  `case.ts` builders (`testCase`/`user`/`boolean`/`numeric`/`called`/
-  `notCalled`), typed against the **generated** `src/generated/case.ts`. Never
-  hand-edit `src/generated/*` — `just gen-contract`.
+- The public API (`runSkill`, `streamSkill`, `toolCalls`, the `case.ts`
+  builders) is exported from `src/index.ts`; everything else is internal. The
+  case builders are typed against the **generated** `src/generated/case.ts`, so
+  a code-defined case cannot drift from the Rust parse. Never hand-edit
+  `src/generated/*` — `just gen-contract`.
 - The CLI ships inside the per-platform `@skill-test/cli-*` packages
   (`platforms/`), declared as `optionalDependencies` so `pnpm add` pulls only the
   matching host's binary; the runner resolves it, falling back to

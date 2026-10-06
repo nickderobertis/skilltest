@@ -34,6 +34,8 @@ and the Rust types that are the single source of truth for the JSON contract
 
 ## The provider boundary
 
+<!-- llmlint: ignore-block[agents_md_durable_and_terse] Moved here from the root AGENTS.md with this same reason: it is the summary of which oneharness features skilltest depends on and why — the maintenance constraints behind each — while docs/protocol.md holds the wire detail. -->
+
 `skilltest` never talks to a model directly. The `Provider` trait
 (`src/provider.rs`) has two real backends:
 
@@ -82,3 +84,5 @@ pre-rewrite inputs + verdicts). There are two matching engines on purpose — th
 hook-side `oneharness mock`, mirrored by `mock::decide` for the fake provider —
 and `just test-oneharness` plus the live e2e are their drift alarms. Anything
 inexpressible or unresolvable errors loudly, never a vacuous pass.
+
+<!-- llmlint: ignore-end[agents_md_durable_and_terse] -->

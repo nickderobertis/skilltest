@@ -25,7 +25,7 @@ import sys
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import TypeVar
+from typing import NewType, TypeVar
 
 
 class Kind(StrEnum):
@@ -68,45 +68,61 @@ class GraphError(ValueError):
     """The file is not the project graph `nx graph --file` writes."""
 
 
+# A node name in the nx graph: a project of this repo, or an external
+# (`npm:...`) node an edge may point at.
+ProjectId = NewType("ProjectId", str)
+
+
 @dataclass(frozen=True)
 class Project:
-    name: str
+    name: ProjectId
     tags: tuple[str, ...]
 
 
 @dataclass(frozen=True)
 class Edge:
-    source: str
-    target: str
+    source: ProjectId
+    target: ProjectId
 
 
 @dataclass(frozen=True)
 class Graph:
-    projects: dict[str, Project]
+    projects: dict[ProjectId, Project]
     edges: tuple[Edge, ...]
+
+
+def _project(name: str, node: object) -> Project:
+    match node:
+        case {"data": {"tags": list(tags)}} if all(isinstance(t, str) for t in tags):
+            return Project(ProjectId(name), tuple(tags))
+        case {"data": dict(data)} if "tags" not in data:
+            return Project(ProjectId(name), ())
+        case _:
+            raise GraphError(f"node `{name}` needs a `data` object whose `tags` is a list of strings")
 
 
 def parse_graph(raw: object) -> Graph:
     """Validate the `nx graph --file` JSON into a `Graph`, naming what is malformed."""
-    if not isinstance(raw, dict) or not isinstance(raw.get("graph"), dict):
-        raise GraphError("top level must be an object with a `graph` object")
-    nodes, deps = raw["graph"].get("nodes"), raw["graph"].get("dependencies", {})
-    if not isinstance(nodes, dict) or not isinstance(deps, dict):
-        raise GraphError("`graph.nodes` and `graph.dependencies` must be objects")
-    projects: dict[str, Project] = {}
-    for name, node in nodes.items():
-        tags = node.get("data", {}).get("tags", []) if isinstance(node, dict) else None
-        if not isinstance(tags, list) or not all(isinstance(t, str) for t in tags):
-            raise GraphError(f"node `{name}` has no list of string tags at `data.tags`")
-        projects[name] = Project(name, tuple(tags))
+    match raw:
+        case {"graph": {"nodes": dict(nodes), **rest}}:
+            deps = rest.get("dependencies", {})
+        case _:
+            raise GraphError("top level must be an object with a `graph.nodes` object")
+    if not isinstance(deps, dict):
+        raise GraphError("`graph.dependencies` must be an object")
+    projects = {ProjectId(name): _project(name, node) for name, node in nodes.items()}
     edges: list[Edge] = []
     for source, out in deps.items():
+        if source not in projects:
+            raise GraphError(f"`dependencies` has edges from `{source}`, which is not a node of the graph")
         if not isinstance(out, list):
             raise GraphError(f"`dependencies.{source}` must be a list")
         for edge in out:
-            if not isinstance(edge, dict) or not isinstance(edge.get("target"), str):
-                raise GraphError(f"an edge of `{source}` has no string `target`")
-            edges.append(Edge(source, edge["target"]))
+            match edge:
+                case {"target": str(target)}:
+                    edges.append(Edge(ProjectId(source), ProjectId(target)))
+                case _:
+                    raise GraphError(f"an edge of `{source}` has no string `target`")
     return Graph(projects, tuple(edges))
 
 
@@ -134,7 +150,7 @@ def _one_tag(project: Project, prefix: str, known: type[E]) -> tuple[E | None, l
 def violations(graph: Graph) -> list[str]:
     """Every rule the graph breaks, as one actionable line each."""
     problems: list[str] = []
-    kinds: dict[str, Kind | None] = {}
+    kinds: dict[ProjectId, Kind | None] = {}
     for name in sorted(graph.projects):
         kind, errs = _one_tag(graph.projects[name], "type:", Kind)
         _, lang_errs = _one_tag(graph.projects[name], "lang:", Lang)

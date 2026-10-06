@@ -17,10 +17,9 @@ contract into Pydantic models. No framework code — pytest support lives in
 
 ## Rules for this package
 
-- Public API: `run_skill` (YAML path **or** a code-defined `TestCase`), the
-  opt-in async streaming API `stream_skill` → `SkillStream` (an `async for` of
-  tool events that `break`s to short-circuit), and `tool_calls`/`ToolEvent`, all
-  re-exported from `skilltest_sdk/__init__.py`; everything else is internal.
+- The public API (`run_skill`, `stream_skill`, `tool_calls`, the case builders)
+  is re-exported from `skilltest_sdk/__init__.py`; everything else is internal.
+  `run_skill`/`stream_skill` take a YAML path **or** a code-defined `TestCase`.
 - The `case.py` builders (`TestCase`/`user`/`boolean`/`numeric`/`called`/
   `not_called`, reusing the `mock.py` builders) construct the **generated**
   `_case.py` models, so the payload cannot drift from the Rust parse; a

@@ -16,14 +16,22 @@ work="$(mktemp -d)" || {
   echo "nx-base-test: could not create a scratch directory; check that \$TMPDIR (or /tmp) is writable" >&2
   exit 1
 }
-trap 'rm -rf "$work"' EXIT
+trap 'rm -rf "$work" || echo "nx-base-test: could not remove $work; delete it by hand" >&2' EXIT
 
 fail() {
   echo "nx-base-test: $1 — fix scripts/nx-base.sh (or this test, if the rule changed on purpose)" >&2
   exit 1
 }
 
-git_q() { git -c user.name=t -c user.email=t@t -c init.defaultBranch=main "$@" >/dev/null 2>&1; }
+# Run one git setup step quietly; on failure, say which step and what git said.
+git_q() {
+  local said
+  said="$(git -c user.name=t -c user.email=t@t -c init.defaultBranch=main "$@" 2>&1)" || {
+    echo "nx-base-test: setup step \`git $*\` failed: $said — check that git works and \$TMPDIR is writable" >&2
+    exit 1
+  }
+}
+rev() { git -C "$repo" rev-parse "$1" 2>/dev/null || fail "setup could not resolve $1 in the scratch repository"; }
 
 # A repository whose `main` (mirrored as origin/main) forks into a branch that
 # is checked out, so the merge base differs from both tips.
@@ -34,8 +42,8 @@ git_q -C "$repo" commit --allow-empty -m on-main
 git_q -C "$repo" checkout -b feature HEAD~1
 git_q -C "$repo" commit --allow-empty -m on-feature
 git_q -C "$repo" update-ref refs/remotes/origin/main main
-fork_point="$(git -C "$repo" rev-parse HEAD~1)"
-main_tip="$(git -C "$repo" rev-parse main)"
+fork_point="$(rev HEAD~1)"
+main_tip="$(rev main)"
 
 # run <NX_BASE or "-" for unset>: sets $out, $err and $code.
 run() {
@@ -44,7 +52,8 @@ run() {
   else
     code=0; (cd "$repo" && NX_BASE="$1" bash "$script") >"$work/out" 2>"$work/err" || code=$?
   fi
-  out="$(cat "$work/out")"; err="$(cat "$work/err")"
+  out="$(cat "$work/out")" || fail "cannot read the captured stdout in $work"
+  err="$(cat "$work/err")" || fail "cannot read the captured stderr in $work"
 }
 
 expect_sha() { # label NX_BASE expected-sha

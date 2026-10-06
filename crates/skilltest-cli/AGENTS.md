@@ -31,7 +31,6 @@ the deterministic reference provider the e2e suites drive.
   The nx `build`/`lint` targets and the coverage run enable the feature; release
   builds do not. It implements the `CommandProvider` protocol deterministically —
   only the model is faked — which is why the whole pipeline is testable offline.
-  Its fixture conventions are in `tests/AGENTS.md`.
 - `tests/oneharness_integration.rs` stays here, `#[ignore]`d and out of the gate:
   the hermetic suite against the real `oneharness` binary (`just
   test-oneharness`, run in CI's `e2e-claude` workflow). Keeping one integration
