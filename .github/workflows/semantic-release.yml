@@ -34,8 +34,14 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.RELEASE_PAT }}
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust toolchain (pinned in rust-toolchain.toml)
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          # Channel, components and targets come from rust-toolchain.toml. Turn
+          # off this action's own cache (Swatinem/rust-cache runs where wanted)
+          # and its default RUSTFLAGS="-D warnings", which would change builds.
+          cache: false
+          rustflags: ""
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5

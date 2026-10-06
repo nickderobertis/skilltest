@@ -407,7 +407,9 @@ registry hiccup must not block the binary release, or vice versa.
 
 ## Conventions
 
-- Rust: stable toolchain, `rustfmt` defaults, `clippy -D warnings`. Errors use
+- Rust: the stable toolchain pinned in `rust-toolchain.toml` (channel, components,
+  release targets — every workflow installs from it), `rustfmt` defaults, `clippy
+  -D warnings`. Errors use
   `thiserror`; the boundary between library errors and process exit codes lives
   in the CLI, not the core.
 - Python packages: Python 3.12+, `uv`, `ruff`, `ty`, `pytest`. Public API is

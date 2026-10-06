@@ -7,7 +7,8 @@ test-framework package (Python: `sdks/python` + `plugins/pytest`; TypeScript:
 `sdks/typescript` + `plugins/vitest` in a pnpm workspace rooted at the repo), so
 `just` needs three toolchains on `PATH`:
 
-- **Rust** (stable) with `cargo`, plus [`cargo-nextest`](https://nexte.st).
+- **Rust** via `rustup`, which installs the toolchain `rust-toolchain.toml` pins
+  (run `rustup toolchain install` once), plus [`cargo-nextest`](https://nexte.st).
 - [**uv**](https://docs.astral.sh/uv/) for the Python packages.
 - **Node** 22+ and [**pnpm**](https://pnpm.io) for the TypeScript packages.
 

@@ -55,8 +55,14 @@ jobs:
             exit 1
           fi
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust toolchain (pinned in rust-toolchain.toml)
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          # Channel, components and targets come from rust-toolchain.toml. Turn
+          # off this action's own cache (Swatinem/rust-cache runs where wanted)
+          # and its default RUSTFLAGS="-D warnings", which would change builds.
+          cache: false
+          rustflags: ""
 
       - uses: Swatinem/rust-cache@v2
 
