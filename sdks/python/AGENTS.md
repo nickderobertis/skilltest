@@ -5,16 +5,15 @@ wrapper that runs the `skilltest` CLI as a subprocess and parses its JSON
 contract into Pydantic models. No framework code — pytest support lives in
 `plugins/pytest`.
 
-- **What it proves.** Its `test-e2e` target runs the pytest suite against the
-  real built CLI and the fake provider (`SKILLTEST_BIN`/`SKILLTEST_PROVIDER`
-  point at `target/debug`): `run_skill`, streaming, the case builders against the
-  kitchen-sink golden, mocks/spies, binary and oneharness resolution, and the
-  wheel's typing marker. `lint` (ruff), `format-check`, `typecheck` (ty).
+- **What it proves.** `pnpm exec nx run skilltest-sdk:test-e2e` runs the pytest
+  suite against the real built CLI and the fake provider
+  (`SKILLTEST_BIN`/`SKILLTEST_PROVIDER` point at `target/debug`): `run_skill`,
+  streaming, the case builders against the kitchen-sink golden, mocks/spies,
+  binary and oneharness resolution, and the wheel's typing marker. `lint`
+  (ruff), `format-check`, `typecheck` (ty).
 - **Depends on.** `skilltest-cli` (the binary it wraps; `test-e2e` builds it
   first) and `skilltest-contract` (its `_*.py` models are generated from
   `schemas/`). Depended on by `skilltest-pytest`.
-- **Run.** Its targets run through nx (`pnpm exec nx run skilltest-sdk:<target>`, any target its `project.json`
-  declares); `just check` runs them whenever a change reaches this project.
 
 ## Rules for this package
 

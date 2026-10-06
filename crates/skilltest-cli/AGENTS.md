@@ -4,16 +4,14 @@ Nx project `skilltest-cli` (`type:app`, `lang:rust`). The shipped artifact: the
 clap CLI (`run`, `validate`, `init`, `schema`), plus `skilltest-fake-provider`,
 the deterministic reference provider the e2e suites drive.
 
-- **What it proves.** Its `test` target runs the unit suites in `src/` (`kind(lib)
-  | kind(bin)`). The binary is proven end to end by the separate
-  `skilltest-cli-e2e` project (`crates/skilltest-cli-e2e/AGENTS.md`), and by the
-  SDKs' e2e suites, which shell out to it.
+- **What it proves.** `pnpm exec nx run skilltest-cli:test` runs the unit suites
+  in `src/` (`kind(lib) | kind(bin)`). Its `build` enables the `fake-provider`
+  feature, and every suite that drives the binary waits on it. The binary is
+  proven end to end by the separate `skilltest-cli-e2e` project
+  (`crates/skilltest-cli-e2e/AGENTS.md`), and by the SDKs' e2e suites, which
+  shell out to it.
 - **Depends on.** `skilltest-core`. Depended on by the CLI e2e project, both
   SDKs, and the live projects.
-- **Run.** Its targets run through nx (`pnpm exec nx run skilltest-cli:<target>`, any target its `project.json`
-  declares); `just check` runs them whenever a change reaches this project.
-  Every suite that drives the binary waits on its `build`, which enables the
-  `fake-provider` feature.
 
 ## Rules for this crate
 

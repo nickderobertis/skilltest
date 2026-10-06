@@ -286,22 +286,30 @@ def _condition(value: object, where: str) -> object:
             raise WorkflowError(f"{where} must be an expression string or a boolean")
 
 
-# The filters each modelled trigger may carry; list-valued ones must be strings.
-# Anything else would silently change the routing the simulation models.
-LIST_FILTERS = frozenset({"branches", "branches-ignore", "tags", "tags-ignore", "paths", "paths-ignore", "types"})
+# The filters `triggered()` simulates, per trigger. A filter outside this table
+# (paths, branches-ignore, a pull_request branch filter, ...) is refused rather
+# than ignored, so the model can never report routing Actions would not do; add
+# the filter to `triggered()` and here together. `inputs`/`secrets`/`outputs`
+# shape a call or dispatch, not whether it fires, so they are accepted as given.
+LIST_FILTERS: dict[str, frozenset[str]] = {
+    "push": frozenset({"branches", "tags"}),
+    "pull_request": frozenset({"types"}),
+    "pull_request_target": frozenset({"types"}),
+}
 MAP_FILTERS = frozenset({"inputs", "secrets", "outputs"})
 
 
-def _filters(spec: dict, where: str) -> dict[str, object]:
+def _filters(trigger: str, spec: dict, where: str) -> dict[str, object]:
+    lists = LIST_FILTERS.get(trigger, frozenset())
     for key, value in spec.items():
         match key, value:
-            case str(k), list(items) if k in LIST_FILTERS and all(isinstance(i, str) for i in items):
+            case str(k), list(items) if k in lists and all(isinstance(i, str) for i in items):
                 pass
             case str(k), (None | dict()) if k in MAP_FILTERS:
                 pass
             case _:
-                known = ", ".join(sorted(LIST_FILTERS | MAP_FILTERS))
-                raise WorkflowError(f"{where}.{key} is not a filter this model reads ({known}) of the right type")
+                allowed = ", ".join(sorted(lists | MAP_FILTERS))
+                raise WorkflowError(f"{where}.{key} is not a filter this model simulates for `{trigger}` ({allowed})")
     return spec
 
 
@@ -318,7 +326,7 @@ def _triggers(filename: str, on: object) -> dict[str, dict[str, object]]:
                     case "schedule", list():
                         out[name] = {}  # crons: no event modelled here reads them
                     case _, (None | dict()):
-                        out[name] = _filters(_mapping(spec, f"{filename}: on.{name}"), f"{filename}: on.{name}")
+                        out[name] = _filters(name, _mapping(spec, f"{filename}: on.{name}"), f"{filename}: on.{name}")
                     case _:
                         raise WorkflowError(f"{filename}: on.{name} must be a mapping of filters")
             return out
@@ -327,27 +335,37 @@ def _triggers(filename: str, on: object) -> dict[str, dict[str, object]]:
 
 
 def _matrix(value: object, where: str) -> dict[str, object]:
+    """A matrix in a form `_contexts()` expands exactly: one axis, or only `include` rows.
+
+    A cartesian product, `exclude`, or `include` merged into axes is refused
+    rather than mis-expanded."""
     matrix = _mapping(value, where)
-    for axis, values in matrix.items():
-        match axis, values:
-            case (("include" | "exclude"), list()) if all(isinstance(row, dict) for row in values):
-                pass
-            case (("include" | "exclude"), _):
-                raise WorkflowError(f"{where}.{axis} must be a list of mappings")
-            case _, list():
-                pass
-            case _:
+    match matrix:
+        case _ if not matrix:
+            pass
+        case {"include": list(rows)} if len(matrix) == 1 and all(isinstance(r, dict) for r in rows):
+            pass
+        case _ if len(matrix) == 1 and not {"include", "exclude"} & set(matrix):
+            axis, values = next(iter(matrix.items()))
+            if not isinstance(values, list):
                 raise WorkflowError(f"{where}.{axis} must be a list of values")
+        case _:
+            raise WorkflowError(
+                f"{where} must be one axis or only `include` rows; this model does not expand {list(matrix)}"
+            )
     return matrix
 
 
 def _steps(value: object, where: str) -> tuple[Step, ...]:
-    if value is None:
-        return ()
-    if not isinstance(value, list):
-        raise WorkflowError(f"{where}.steps must be a list")
+    match value:
+        case None:
+            return ()
+        case list(raw_steps):
+            pass
+        case _:
+            raise WorkflowError(f"{where}.steps must be a list")
     steps = []
-    for i, raw_step in enumerate(value):
+    for i, raw_step in enumerate(raw_steps):
         at = f"{where}.steps[{i}]"
         step = _mapping(raw_step, at)
         env = _mapping(step.get("env"), f"{at}.env")
@@ -484,12 +502,15 @@ def triggered(wf: Workflow, event: Event) -> bool:
             types = on[kind].get("types") or ["opened", "synchronize", "reopened"]
             return event.payload["action"] in types
         case "push" if "push" in on:
+            # Unfiltered, a push of any branch or tag fires it; with a `branches`
+            # or `tags` filter, only the refs the present filters match.
             spec = on["push"]
+            branches, tags = spec.get("branches"), spec.get("tags")
+            if branches is None and tags is None:
+                return True
             if event.ref.startswith("refs/tags/"):
-                return _matches(spec.get("tags"), event.ref.removeprefix("refs/tags/"))
-            if spec.get("branches") is None:
-                return "tags" not in spec
-            return _matches(spec.get("branches"), event.ref.removeprefix("refs/heads/"))
+                return _matches(tags, event.ref.removeprefix("refs/tags/"))
+            return _matches(branches, event.ref.removeprefix("refs/heads/"))
         case _:
             return False
 
@@ -548,7 +569,12 @@ def run_workflow(
         if runs:
             run.result = Result.SUCCESS
             if job.uses and job.uses.startswith("./.github/workflows/"):
-                run.called = run_workflow(WorkflowFile(job.uses.rsplit("/", 1)[-1]), wfs, event, fail)
+                callee = WorkflowFile(job.uses.rsplit("/", 1)[-1])
+                if callee not in wfs or "workflow_call" not in wfs[callee].triggers:
+                    raise WorkflowError(
+                        f"{filename}: jobs.{ready} calls {callee}, which declares no workflow_call trigger"
+                    )
+                run.called = run_workflow(callee, wfs, event, fail)
                 if any(r.result == Result.FAILURE for r in run.called.values()):
                     run.result = Result.FAILURE
             for step in job.steps:
@@ -753,7 +779,11 @@ def blind_spots(raw: dict[str, object], provisioned: set[str]) -> list[str]:
     for mutation in MUTATIONS:
         broken = copy.deepcopy(raw)
         mutation.apply(broken)
-        if not violations(parse_all(broken), provisioned):
+        try:
+            caught = bool(violations(parse_all(broken), provisioned))
+        except WorkflowError:
+            caught = True  # refusing to model the broken workflows also rejects them
+        if not caught:
             blind.append(mutation.label)
     return blind
 

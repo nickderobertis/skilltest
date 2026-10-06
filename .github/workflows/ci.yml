@@ -192,8 +192,8 @@ jobs:
       # check against the PR base — before anything is judged.
       - name: Validate llmlint config
         run: just lint-llm-config --diff-base origin/main
-      # Fail fast, before anything is installed or judged, when the credential
-      # for the harness this job installs is missing — never a green no-op.
+      # Fail fast, before the harness is installed or anything is judged, when
+      # its credential is missing — never a green no-op.
       - name: Require the harness credential
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}

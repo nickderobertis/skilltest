@@ -5,20 +5,19 @@ crate holding only `tests/`. It drives the **built** `skilltest` binary the way 
 user does — as a subprocess, asserting on exit codes and JSON — against the
 deterministic `skilltest-fake-provider`. Only the model is faked.
 
-- **What it proves.** `e2e.rs` (the representative journeys: single/multi-turn,
-  evals, mocks/spies, streaming, the JSON contract against the `schemas/`
-  goldens and the kitchen-sink case golden), `cli_errors.rs` (error
-  classification, exit codes, hints), `fake_provider.rs` (the reference
-  provider's protocol, malformed input included), plus two repository-consistency
-  gates: `pins.rs` (the oneharness pin across the installer, recipe and both
-  SDKs) and `release_assets.rs` (what `scripts/set-version.sh` rewrites).
+- **What it proves.** `pnpm exec nx run skilltest-cli-e2e:test` — which never
+  starts before `skilltest-cli:build` has produced the binary — runs `e2e.rs`
+  (the representative journeys: single/multi-turn, evals, mocks/spies,
+  streaming, the JSON contract against the `schemas/` goldens and the
+  kitchen-sink case golden), `cli_errors.rs` (error classification, exit codes,
+  hints), `fake_provider.rs` (the reference provider's protocol, malformed input
+  included), plus two repository-consistency gates: `pins.rs` (the oneharness
+  pin across the installer, recipe and both SDKs) and `release_assets.rs` (what
+  `scripts/set-version.sh` rewrites).
 - **Depends on.** `skilltest-cli` (the binary under test), `skilltest-core`
   (`e2e.rs` constructs the kitchen-sink case in Rust) and `skilltest-contract`
   (the goldens). Nothing may depend on it, so it is reachable only from a change
   to those or to itself.
-- **Run.** Its targets run through nx (`pnpm exec nx run skilltest-cli-e2e:<target>`, any target its `project.json`
-  declares); `just check` runs them whenever a change reaches this project.
-  Its suites never start before `skilltest-cli:build` has produced the binary.
 
 ## Rules for this crate
 
@@ -32,5 +31,5 @@ deterministic `skilltest-fake-provider`. Only the model is faked.
 - Never `#[ignore]` a test here: these suites are the deterministic gate. They
   also run inside `just coverage` (`cargo llvm-cov nextest --workspace`), which
   builds the CLI's binaries instrumented in its own target dir; that is how the
-  95% line floor measures the CLI through these journeys. `src/lib.rs` stays
-  code-free so this crate adds nothing to the measured lines.
+  95% line floor measures the CLI through these journeys. The crate has no
+  library target, so it adds no lines of its own to the measurement.

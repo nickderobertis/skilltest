@@ -84,6 +84,28 @@ CASES = (
         "unsupported function contains()",
     ),
     Case("an unreadable toolchain", lambda _wf, tc: tc.write_text("[toolchain\n"), 2, "cannot model the workflows"),
+    Case(
+        "a trigger filter the model does not simulate",
+        lambda wf, _tc: _replace(
+            wf / "ci.yml", "    branches: [main]\n", "    branches: [main]\n    paths: [src/**]\n"
+        ),
+        2,
+        "on.push.paths is not a filter this model simulates",
+    ),
+    Case(
+        "a matrix the model does not expand",
+        lambda wf, _tc: _replace(
+            wf / "ci.yml", "os: [ubuntu-latest, macos-latest]", "os: [ubuntu-latest]\n        rust: [a, b]"
+        ),
+        2,
+        "must be one axis or only `include` rows",
+    ),
+    Case(
+        "a called workflow without workflow_call",
+        lambda wf, _tc: _replace(wf / "e2e-codex.yml", "  workflow_call:\n", ""),
+        2,
+        "calls e2e-codex.yml, which declares no workflow_call trigger",
+    ),
 )
 
 

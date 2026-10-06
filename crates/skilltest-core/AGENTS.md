@@ -6,17 +6,14 @@ provider protocol and its backends, evals, tool mocking, the runner, the report 
 and the Rust types that are the single source of truth for the JSON contract
 (`schemas/` is generated from them).
 
-- **What it proves.** Its `test` target runs the unit suites inside `src/`
-  (`cargo nextest -p skilltest-core`, `kind(lib)`): the conversation loop, eval
-  scoring, mock compilation/matching, config and case parsing, provider response
-  parsing — against in-process fakes.
+- **What it proves.** `pnpm exec nx run skilltest-core:test` runs the unit
+  suites inside `src/`: the conversation loop, eval scoring, mock
+  compilation/matching, config and case parsing, provider response parsing —
+  against in-process fakes. The CLI's binary e2e and the whole-workspace
+  coverage floor prove it end to end.
 - **Depends on.** Nothing in this repo. Everything else depends on it, directly
   or through the CLI, so a change here selects the CLI, its e2e project, both
   SDKs and both framework packages.
-- **Run.** Its targets run through nx (`pnpm exec nx run skilltest-core:<target>`, any target its `project.json`
-  declares); `just check` runs them whenever a change reaches this project.
-  The CLI's binary e2e (`crates/skilltest-cli-e2e`) and the whole-workspace
-  coverage floor are what prove this crate end to end.
 
 ## Rules for this crate
 

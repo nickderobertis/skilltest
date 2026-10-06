@@ -4,14 +4,12 @@ Nx project `skilltest-pytest` (`type:plugin`, `lang:python`). pytest collection
 of `*.skilltest.yaml` files as test items, built on — and re-exporting —
 `skilltest-sdk`.
 
-- **What it proves.** Its `test-e2e` target runs pytest over the plugin against
-  the real built CLI and the fake provider: collection, a failing case's report,
-  the publish step, the uv workspace's single lock (including that
-  `scripts/set-version.sh` moves both members and the lock), and the wheel's
-  typing marker. `lint` (ruff), `format-check`, `typecheck` (ty).
+- **What it proves.** `pnpm exec nx run skilltest-pytest:test-e2e` runs pytest
+  over the plugin against the real built CLI and the fake provider: collection,
+  a failing case's report, the publish step, the uv workspace's single lock
+  (including that `scripts/set-version.sh` moves both members and the lock), and
+  the wheel's typing marker. `lint` (ruff), `format-check`, `typecheck` (ty).
 - **Depends on.** `skilltest-sdk` only; it reaches the CLI through the SDK.
-- **Run.** Its targets run through nx (`pnpm exec nx run skilltest-pytest:<target>`, any target its `project.json`
-  declares); `just check` runs them whenever a change reaches this project.
 
 ## Rules for this package
 

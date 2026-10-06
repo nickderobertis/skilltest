@@ -105,7 +105,7 @@ release-probe-live:
 # project's `type:*`/`lang:*` tags and every graph edge against the allowed
 # edges, read from the graph nx computes — plus the checker's own red/green test.
 boundaries-check:
-    @tmp="$(mktemp -d)" && trap 'rm -rf "$tmp"' EXIT && {{nx}} graph --file="$tmp/graph.json" >/dev/null && python3 scripts/check-project-boundaries.py "$tmp/graph.json" >/dev/null
+    @tmp="$(mktemp -d)" || { echo "boundaries-check: cannot create a scratch dir; check that \$TMPDIR is writable" >&2; exit 1; }; trap 'rm -rf "$tmp" || echo "boundaries-check: could not remove $tmp; delete it by hand" >&2' EXIT; {{nx}} graph --file="$tmp/graph.json" >/dev/null || { echo "boundaries-check: nx could not write the project graph; run \`pnpm exec nx graph --file=graph.json\` to see why" >&2; exit 1; }; python3 scripts/check-project-boundaries.py "$tmp/graph.json" >/dev/null
     @python3 scripts/check-project-boundaries-test.py >/dev/null
 
 # Workflow-routing gate (part of every `just check` tier; workspace-level): which

@@ -12,17 +12,13 @@ source every SDK's models are generated from:
   `tests/fixtures/contract/case_kitchen_sink.json`, which the Rust construction
   and both SDKs' case builders must each serialize to exactly.
 
-- **What it proves.** Its `contract-check` target (`scripts/gen-contract.sh
-  --check`) regenerates every artifact into a staging dir and fails on any drift
-  from what is committed — schemas and the generated SDK models alike. It is
-  uncached, and every `just check` tier runs it, because the contract spans
-  every stack.
+- **What it proves.** `just contract-check` fails when any committed schema or
+  generated SDK model differs from what the Rust types generate. Every `just
+  check` tier runs it, uncached, because the contract spans every stack.
 - **Depends on.** Nothing (a `type:contract` project may depend only on other
   contracts). Its inputs are this directory, `scripts/gen-contract.sh` and
   `tests/fixtures/contract/`, so a change to any of them selects it and its
   dependents — both SDKs and `skilltest-cli-e2e` — and not every project.
-- **Run.** After a contract type changes, regenerate with `just gen-contract`
-  and commit everything it rewrites; every `just check` tier verifies.
 
 ## Rules
 

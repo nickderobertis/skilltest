@@ -187,22 +187,10 @@ nx, which builds prerequisites in graph order.
   (`just release-targets-check`), module boundaries (`just boundaries-check`),
   workflow routing (`just workflows-check`), the base derivation's own test
   (`just base-check`) — and the Rust coverage floor.
-- `just test` / `just test-e2e` / `just lint` / `just format-check` / `just
-  typecheck` / `just build` — single affected-tier steps for iterating (`test`
-  includes the CLI e2e project); `just format` formats every project.
-- `just gen-contract` — regenerate `schemas/` and every SDK's generated models
-  after a contract type changes.
-- `just graph` — the interactive nx project graph.
-- `just upgrade` — upgrade every stack's dependencies, then `just check all`.
-- `just install-oneharness` / `just test-live` / `just test-judge-api` / `just
-  test-harness <id>` — the **live** suites (never in `just check`; real model or
-  API calls, credentials, network). `just test-oneharness` — the hermetic suite
-  against the real `oneharness` binary (deterministic, but needs the binary).
-- `just screenshots*` — terminal screenshots, informational (`screenshots/AGENTS.md`).
-
-`just` needs `cargo` (+ `cargo-nextest`, `cargo-llvm-cov`; the toolchain from
-`rust-toolchain.toml`), `uv`, `node`/`pnpm`, `jq` and `python3` 3.11+; nx is a
-root dev-dependency `just bootstrap` installs. See `docs/development.md`.
+- The **live** suites (`just test-live`, `just test-judge-api`, `just
+  test-harness <id>`) are never part of `just check`: real model or API calls,
+  credentials, network. `just test-oneharness` is deterministic but needs the
+  `oneharness` binary, so it stays out too.
 
 ## The provider boundary
 

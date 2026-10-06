@@ -4,16 +4,14 @@ Nx project `@skill-test/sdk` (`type:sdk`, `lang:typescript`). The TypeScript SDK
 the same thin CLI wrapper as the Python SDK, with type declarations generated
 from the contract. No framework code — vitest support lives in `plugins/vitest`.
 
-- **What it proves.** Its `test-e2e` target runs the vitest suite against the
-  real built CLI and the fake provider: `runSkill`, streaming, the case builders
-  against the kitchen-sink golden, mocks/spies through the real oneharness seam,
-  and binary resolution. `build`/`typecheck` (tsc), `lint`/`format-check`
-  (biome, one root config).
+- **What it proves.** `pnpm exec nx run @skill-test/sdk:test-e2e` runs the
+  vitest suite against the real built CLI and the fake provider: `runSkill`,
+  streaming, the case builders against the kitchen-sink golden, mocks/spies
+  through the real oneharness seam, and binary resolution. `build`/`typecheck`
+  (tsc), `lint`/`format-check` (biome, one root config).
 - **Depends on.** `skilltest-cli` (the binary it wraps), `skilltest-contract`
   (`src/generated/*.ts`) and the four `@skill-test/cli-*` carrier packages it
   declares as `optionalDependencies`. Depended on by `@skill-test/vitest`.
-- **Run.** Its targets run through nx (`pnpm exec nx run @skill-test/sdk:<target>`, any target its `project.json`
-  declares); `just check` runs them whenever a change reaches this project.
 
 ## Rules for this package
 
