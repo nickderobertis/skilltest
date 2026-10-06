@@ -59,7 +59,7 @@ class SkilltestFailure(Exception):
 
 
 class SkilltestFile(pytest.File):
-    def collect(self):  # type: ignore[override]
+    def collect(self):
         yield SkilltestItem.from_parent(self, name=self.path.stem)
 
 
@@ -77,10 +77,10 @@ class SkilltestItem(pytest.Item):
         if not report.passed:
             raise SkilltestFailure(report)
 
-    def repr_failure(self, excinfo, style=None):  # type: ignore[override]
+    def repr_failure(self, excinfo, style=None):
         if isinstance(excinfo.value, SkilltestFailure):
             return f"skilltest case failed:\n{excinfo.value}"
         return super().repr_failure(excinfo, style=style)
 
-    def reportinfo(self):  # type: ignore[override]
+    def reportinfo(self):
         return self.path, 0, f"skilltest: {self.name}"
