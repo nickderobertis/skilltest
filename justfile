@@ -28,9 +28,6 @@ affected := 'base="$(bash scripts/nx-base.sh)" && ' + nx + ' affected --base="$b
 # edit here. See AGENTS.md "Project graph".
 live := "tag:type:live"
 
-# The per-project targets the gate runs over the projects a tier selects.
-gate-targets := "format-check lint typecheck test test-e2e"
-
 # Renderer for the terminal screenshots (`just screenshots`). NOT part of the
 # gate or `just bootstrap`: screenshots are informational. CI's Visual-docs
 # workflow installs the same pinned version; `just screenshots-tools` installs it
@@ -67,7 +64,7 @@ check tier="affected":
     @just release-targets-check
     @just boundaries-check
     @just workflows-check
-    {{ if tier == "all" { nx + " run-many" } else { affected } }} -t {{gate-targets}} --exclude={{live}}
+    {{ if tier == "all" { "pnpm exec nx run-many" } else { affected } }} -t format-check lint typecheck test test-e2e --exclude={{live}}
     {{nx}} run-many -t lint format-check --projects={{live}}
     @just coverage
     @echo "check ({{tier}}): all gates passed"
