@@ -57,9 +57,10 @@ bootstrap:
 # but-skip: the live tier must not rot), but no live suite runs from this
 # recipe. Then the workspace-level gates, which run on every tier because they
 # span every stack, and the Rust coverage floor. just resolves the tier itself,
-# so a mistyped one aborts before anything runs.
+# so a mistyped one aborts before anything runs, and the affected tier derives
+# its base first, so a bad NX_BASE fails closed before any gate spends time.
 check tier="affected":
-    @{{ if tier == "affected" { "true" } else if tier == "all" { "true" } else { error("unknown tier '" + tier + "' — use 'affected' (the default) or 'all'") } }}
+    @{{ if tier == "affected" { "bash scripts/nx-base.sh >/dev/null" } else if tier == "all" { "true" } else { error("unknown tier '" + tier + "' — use 'affected' (the default) or 'all'") } }}
     @just contract-check
     @just release-targets-check
     @just boundaries-check
