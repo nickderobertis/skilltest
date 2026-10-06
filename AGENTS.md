@@ -46,6 +46,8 @@ follow-ups (see "After the main task").
    reproducible environment are usually how the user's feature ships with a low
    error rate.
 
+<!-- llmlint: ignore-block[agents_md_durable_and_terse] The create-repo baseline requires this section and its coverage/e2e record: check_repo_baseline.py checks that AGENTS.md names the references the repo composes, why each excluded one is excluded, and the coverage and e2e decisions. It is the audit record the next baseline alignment diffs against, not session history. -->
+
 ## Stack and composition
 
 Composed from the `create-repo` skill's references (dero-skills v1.47.3) rather
@@ -115,6 +117,8 @@ added. What was pulled in, and why:
 
 ## Layout
 
+<!-- llmlint: ignore-end[agents_md_durable_and_terse] -->
+
 | Path | What |
 | --- | --- |
 | `crates/skilltest-core` | Library: config, skill + case models, the provider protocol and backends, evals, mocking, runner, report; the source of truth for the JSON contract. |
@@ -139,17 +143,7 @@ added. What was pulled in, and why:
 ## Project graph
 
 Nx owns running targets; each ecosystem's workspace owns dependency resolution.
-The graph, with each project's `type:`/`lang:` tags:
-
-- `skilltest-core` (`type:lib`, rust) ← `skilltest-cli` (`type:app`, rust).
-- `skilltest-contract` (`type:contract`, json) — `schemas/` plus its inputs
-  `scripts/gen-contract.sh` and `tests/fixtures/contract/`.
-- `skilltest-cli-e2e` (`type:e2e`, rust) → cli, core, contract.
-- `skilltest-sdk` (`type:sdk`, python) and `@skill-test/sdk` (`type:sdk`,
-  typescript) → cli, contract (the TS SDK also → its four `type:carrier`
-  packages); `skilltest-pytest` / `@skill-test/vitest` (`type:plugin`) → their SDK.
-- `skilltest-live-claude`, `skilltest-live-judge-api`, `skilltest-live-harness`
-  (`type:live`) → cli and/or core.
+`just graph` shows the projects and their edges.
 
 **Module boundaries.** Every project carries exactly one `type:` and one `lang:`
 tag, and `just boundaries-check` (every `just check` tier) holds each graph edge
@@ -163,11 +157,9 @@ both tiers of `just check` (`--exclude=tag:type:live`); a live project added wit
 that tag stays out with no recipe edit. The gate still lints those projects
 (compile-but-skip), but no live suite runs from it.
 
-**Cache keys** (`nx.json`): `lint`, `typecheck`, `test` and `test-e2e` hash their
-own inputs **and** their dependencies' (`^default`), so a change to a Rust crate
-reruns the SDK and plugin targets downstream rather than replaying them.
-`schemas/` is the contract project's input, not a shared global, so a schema
-edit selects the contract and its dependents, not every project.
+**Cache keys must cover dependencies.** A target whose result depends on other
+projects' sources hashes them too (`^default` in `nx.json`), so a cached SDK or
+plugin result can never be replayed after the Rust crates it drives changed.
 
 ## Command surface
 
