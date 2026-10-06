@@ -13,10 +13,10 @@ and the Rust types that are the single source of truth for the JSON contract
 - **Depends on.** Nothing in this repo. Everything else depends on it, directly
   or through the CLI, so a change here selects the CLI, its e2e project, both
   SDKs and both framework packages.
-- **Run.** `pnpm exec nx run skilltest-core:<test|lint|format-check|format|build>`;
-  `just check` runs them when affected. The CLI's binary e2e
-  (`crates/skilltest-cli-e2e`) and the whole-workspace coverage floor in `just
-  coverage` are what prove this crate end to end.
+- **Run.** Its targets run through nx (`pnpm exec nx run skilltest-core:<target>`, any target its `project.json`
+  declares); `just check` runs them whenever a change reaches this project.
+  The CLI's binary e2e (`crates/skilltest-cli-e2e`) and the whole-workspace
+  coverage floor are what prove this crate end to end.
 
 ## Rules for this crate
 

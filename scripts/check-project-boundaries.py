@@ -119,8 +119,10 @@ def parse_graph(raw: object) -> Graph:
             raise GraphError(f"`dependencies.{source}` must be a list")
         for edge in out:
             match edge:
-                case {"target": str(target)}:
+                case {"target": str(target)} if target in projects or target.startswith("npm:"):
                     edges.append(Edge(ProjectId(source), ProjectId(target)))
+                case {"target": str(target)}:
+                    raise GraphError(f"an edge of `{source}` targets `{target}`, which is neither a node nor npm:*")
                 case _:
                     raise GraphError(f"an edge of `{source}` has no string `target`")
     return Graph(projects, tuple(edges))
@@ -158,7 +160,7 @@ def violations(graph: Graph) -> list[str]:
         problems += errs + lang_errs
     for edge in sorted(graph.edges, key=lambda e: (e.source, e.target)):
         if edge.target not in graph.projects:
-            continue  # an npm/external node, not a project of this repo
+            continue  # an npm:* external node (parse_graph refuses anything else)
         src, dst = kinds.get(edge.source), kinds.get(edge.target)
         if src is None or dst is None:
             continue  # already reported as a tag problem

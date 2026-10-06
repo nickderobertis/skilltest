@@ -16,10 +16,9 @@ deterministic `skilltest-fake-provider`. Only the model is faked.
   (`e2e.rs` constructs the kitchen-sink case in Rust) and `skilltest-contract`
   (the goldens). Nothing may depend on it, so it is reachable only from a change
   to those or to itself.
-- **Run.** `pnpm exec nx run skilltest-cli-e2e:test` — its `test` target depends on
-  `skilltest-cli:build`, so no suite starts before the binary exists. Also
-  `lint`, `format-check`, `format`. `just check` selects it on a change to the
-  core, the CLI, the contract or this crate.
+- **Run.** Its targets run through nx (`pnpm exec nx run skilltest-cli-e2e:<target>`, any target its `project.json`
+  declares); `just check` runs them whenever a change reaches this project.
+  Its suites never start before `skilltest-cli:build` has produced the binary.
 
 ## Rules for this crate
 

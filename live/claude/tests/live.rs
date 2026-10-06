@@ -128,14 +128,11 @@ fn live_respond_and_judge_boolean_and_numeric() {
         .map(|m| m["content"].as_str().unwrap_or("").to_lowercase())
         .collect();
     assert!(assistant.contains("pong"), "assistant said: {assistant}");
-    // Both a boolean and a numeric eval ran and passed.
     assert_eq!(run["evals"][0]["detail"]["kind"], "boolean");
     assert_eq!(run["evals"][1]["detail"]["kind"], "numeric");
 
-    // Normalized usage flowed through: every claude-code call reports tokens
-    // and cost, so the run *and* the report summary must carry usage with
-    // input/output token counts. cost_usd is omitted on subscription auth, so
-    // we only require it to be a number when present.
+    // Every claude-code call reports token counts, so the run *and* the report
+    // summary must carry usage with input/output tokens.
     let usage = &run["usage"];
     assert!(usage.is_object(), "expected per-run usage; got {usage}");
     assert!(
@@ -186,11 +183,10 @@ fn live_multi_turn_drives_simulated_user() {
 #[test]
 #[ignore = "live: needs oneharness + a real harness; run with --ignored"]
 fn live_streaming_emits_ndjson_and_a_terminal_result() {
-    // Exercises the *real* `oneharness run --stream` wire (the
-    // `OneharnessProvider::run_streaming` path the deterministic gate can only
-    // reach via the buffered-replay default): the CLI must emit NDJSON and finish
-    // with a `result` line carrying the same kind of report the buffered format
-    // returns.
+    // The real `oneharness run --stream` wire against a real harness (the gate
+    // drives `OneharnessProvider::run_streaming` only through scripted fake
+    // oneharness binaries): the CLI must emit NDJSON and finish with a `result`
+    // line carrying the same kind of report the buffered format returns.
     let out = run_live_fmt("pong.yaml", "json-stream");
     assert!(
         out.status.code() == Some(0) || out.status.code() == Some(1),

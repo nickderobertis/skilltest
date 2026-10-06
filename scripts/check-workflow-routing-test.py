@@ -40,7 +40,9 @@ class Case(NamedTuple):
 def _replace(path: Path, old: str, new: str) -> None:
     text = path.read_text()
     if old not in text:
-        raise SystemExit(f"check-workflow-routing-test: {path.name} no longer contains {old!r}; update this test's edit")
+        raise SystemExit(
+            f"check-workflow-routing-test: {path.name} no longer contains {old!r}; update this test's edit"
+        )
     path.write_text(text.replace(old, new, 1))
 
 

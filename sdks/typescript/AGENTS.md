@@ -12,7 +12,8 @@ from the contract. No framework code — vitest support lives in `plugins/vitest
 - **Depends on.** `skilltest-cli` (the binary it wraps), `skilltest-contract`
   (`src/generated/*.ts`) and the four `@skill-test/cli-*` carrier packages it
   declares as `optionalDependencies`. Depended on by `@skill-test/vitest`.
-- **Run.** `pnpm exec nx run @skill-test/sdk:<build|test-e2e|lint|format-check|typecheck|format>`.
+- **Run.** Its targets run through nx (`pnpm exec nx run @skill-test/sdk:<target>`, any target its `project.json`
+  declares); `just check` runs them whenever a change reaches this project.
 
 ## Rules for this package
 

@@ -10,9 +10,10 @@ the deterministic reference provider the e2e suites drive.
   SDKs' e2e suites, which shell out to it.
 - **Depends on.** `skilltest-core`. Depended on by the CLI e2e project, both
   SDKs, and the live projects.
-- **Run.** `pnpm exec nx run skilltest-cli:<build|test|lint|format-check|format>`.
-  `build` (`cargo build -p skilltest-cli --features fake-provider`) is what every
-  binary-driving suite waits on.
+- **Run.** Its targets run through nx (`pnpm exec nx run skilltest-cli:<target>`, any target its `project.json`
+  declares); `just check` runs them whenever a change reaches this project.
+  Every suite that drives the binary waits on its `build`, which enables the
+  `fake-provider` feature.
 
 ## Rules for this crate
 

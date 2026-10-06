@@ -10,7 +10,8 @@ of `*.skilltest.yaml` files as test items, built on — and re-exporting —
   `scripts/set-version.sh` moves both members and the lock), and the wheel's
   typing marker. `lint` (ruff), `format-check`, `typecheck` (ty).
 - **Depends on.** `skilltest-sdk` only; it reaches the CLI through the SDK.
-- **Run.** `pnpm exec nx run skilltest-pytest:<test-e2e|lint|format-check|typecheck|format>`.
+- **Run.** Its targets run through nx (`pnpm exec nx run skilltest-pytest:<target>`, any target its `project.json`
+  declares); `just check` runs them whenever a change reaches this project.
 
 ## Rules for this package
 

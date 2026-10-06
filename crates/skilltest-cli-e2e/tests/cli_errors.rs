@@ -272,8 +272,8 @@ fn json_stream_provider_error_emits_a_classified_terminal_line() {
 
 #[test]
 fn unclassified_provider_error_prints_generic_hint() {
-    // A provider command that simply crashes yields an *unclassified* provider
-    // error, which prints the generic "install / pass --provider" hint.
+    // A provider command that cannot even start yields an *unclassified*
+    // provider error, which prints the generic "install / pass --provider" hint.
     let out = Command::new(skilltest())
         .arg("run")
         .arg(fixtures().join("cases/greet_pass.yaml"))

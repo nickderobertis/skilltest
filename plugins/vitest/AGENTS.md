@@ -9,7 +9,8 @@ Nx project `@skill-test/vitest` (`type:plugin`, `lang:typescript`). The
   failing case's report, mocks and stub sequences, and the SDK re-export.
   `build`/`typecheck` (tsc), `lint`/`format-check` (biome).
 - **Depends on.** `@skill-test/sdk` only; it reaches the CLI through the SDK.
-- **Run.** `pnpm exec nx run @skill-test/vitest:<build|test-e2e|lint|format-check|typecheck|format>`.
+- **Run.** Its targets run through nx (`pnpm exec nx run @skill-test/vitest:<target>`, any target its `project.json`
+  declares); `just check` runs them whenever a change reaches this project.
 
 ## Rules for this package
 

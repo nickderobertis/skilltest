@@ -13,7 +13,8 @@ contract into Pydantic models. No framework code — pytest support lives in
 - **Depends on.** `skilltest-cli` (the binary it wraps; `test-e2e` builds it
   first) and `skilltest-contract` (its `_*.py` models are generated from
   `schemas/`). Depended on by `skilltest-pytest`.
-- **Run.** `pnpm exec nx run skilltest-sdk:<test-e2e|lint|format-check|typecheck|format>`.
+- **Run.** Its targets run through nx (`pnpm exec nx run skilltest-sdk:<target>`, any target its `project.json`
+  declares); `just check` runs them whenever a change reaches this project.
 
 ## Rules for this package
 

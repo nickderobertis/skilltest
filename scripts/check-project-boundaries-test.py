@@ -117,6 +117,9 @@ def cases() -> list[Case]:
     nodes, deps = CLEAN.parts()
     deps["cli"] = [{"source": "cli"}]
     no_target = nx_json(nodes, deps)
+    nodes, deps = CLEAN.parts()
+    deps["cli"] = [{"source": "cli", "target": "ghost", "type": "implicit"}]
+    unknown_target = nx_json(nodes, deps)
     return [
         graph_case("a clean graph", CLEAN.nx_json(), 0, "7 projects within their boundaries"),
         graph_case(
@@ -131,6 +134,7 @@ def cases() -> list[Case]:
         graph_case("a node without data", broken_node, 2, "node `core` needs a `data` object"),
         graph_case("edges from an unknown node", stray_source, 2, "`ghost`, which is not a node"),
         graph_case("an edge without a target", no_target, 2, "an edge of `cli` has no string `target`"),
+        graph_case("an edge to an unknown node", unknown_target, 2, "targets `ghost`, which is neither a node"),
         Case("invalid JSON", "{not json", 2, "cannot read the nx graph"),
         Case("no graph argument", None, 2, "usage: check-project-boundaries.py <nx-graph.json>"),
     ]

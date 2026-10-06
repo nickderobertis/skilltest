@@ -21,8 +21,8 @@ source every SDK's models are generated from:
   contracts). Its inputs are this directory, `scripts/gen-contract.sh` and
   `tests/fixtures/contract/`, so a change to any of them selects it and its
   dependents — both SDKs and `skilltest-cli-e2e` — and not every project.
-- **Run.** `just gen-contract` (write) / `just contract-check` (verify), i.e.
-  `pnpm exec nx run skilltest-contract:<gen-contract|contract-check>`.
+- **Run.** After a contract type changes, regenerate with `just gen-contract`
+  and commit everything it rewrites; every `just check` tier verifies.
 
 ## Rules
 

@@ -64,8 +64,6 @@ JobId = NewType("JobId", str)  # a job's key under `jobs:`
 EventName = Literal["push", "pull_request", "workflow_dispatch"]
 
 
-# --- the `${{ }}` expression subset these workflows use -----------------------
-
 TokenKind = Literal["str", "op", "ident"]
 _KINDS: dict[str, TokenKind] = {"str": "str", "op": "op", "ident": "ident"}
 
@@ -236,9 +234,6 @@ def interpolate(text: str, ctx: dict[str, object]) -> str:
     return re.sub(r"\$\{\{(.*?)\}\}", lambda m: str(evaluate(m.group(1), ctx)), text)
 
 
-# --- the workflows, validated into a model ------------------------------------------
-
-
 @dataclass(frozen=True)
 class Step:
     run: str | None
@@ -291,6 +286,25 @@ def _condition(value: object, where: str) -> object:
             raise WorkflowError(f"{where} must be an expression string or a boolean")
 
 
+# The filters each modelled trigger may carry; list-valued ones must be strings.
+# Anything else would silently change the routing the simulation models.
+LIST_FILTERS = frozenset({"branches", "branches-ignore", "tags", "tags-ignore", "paths", "paths-ignore", "types"})
+MAP_FILTERS = frozenset({"inputs", "secrets", "outputs"})
+
+
+def _filters(spec: dict, where: str) -> dict[str, object]:
+    for key, value in spec.items():
+        match key, value:
+            case str(k), list(items) if k in LIST_FILTERS and all(isinstance(i, str) for i in items):
+                pass
+            case str(k), (None | dict()) if k in MAP_FILTERS:
+                pass
+            case _:
+                known = ", ".join(sorted(LIST_FILTERS | MAP_FILTERS))
+                raise WorkflowError(f"{where}.{key} is not a filter this model reads ({known}) of the right type")
+    return spec
+
+
 def _triggers(filename: str, on: object) -> dict[str, dict[str, object]]:
     match on:
         case str():
@@ -304,7 +318,7 @@ def _triggers(filename: str, on: object) -> dict[str, dict[str, object]]:
                     case "schedule", list():
                         out[name] = {}  # crons: no event modelled here reads them
                     case _, (None | dict()):
-                        out[name] = _mapping(spec, f"{filename}: on.{name}")
+                        out[name] = _filters(_mapping(spec, f"{filename}: on.{name}"), f"{filename}: on.{name}")
                     case _:
                         raise WorkflowError(f"{filename}: on.{name} must be a mapping of filters")
             return out
@@ -355,6 +369,8 @@ def parse_workflow(filename: str, raw: object) -> Workflow:
     triggers = _triggers(filename, doc.get(True, doc.get("on")))  # YAML 1.1 reads a bare `on` as True
     jobs: dict[JobId, Job] = {}
     for job_id, raw_job in _mapping(doc.get("jobs"), f"{filename}: jobs").items():
+        if not isinstance(job_id, str):
+            raise WorkflowError(f"{filename}: job id {job_id!r} must be a string")
         where = f"{filename}: jobs.{job_id}"
         job = _mapping(raw_job, where)
         match job.get("needs", []):
@@ -391,26 +407,29 @@ def live_suites(wfs: dict[WorkflowFile, Workflow]) -> tuple[WorkflowFile, ...]:
 
 def toolchain_targets(path: Path) -> set[str]:
     """The `targets` rust-toolchain.toml provisions."""
-    targets = tomllib.loads(path.read_text()).get("toolchain", {}).get("targets")
-    if not isinstance(targets, list) or not all(isinstance(t, str) for t in targets):
+    match tomllib.loads(path.read_text()):
+        case {"toolchain": {"targets": list(targets)}}:
+            pass
+        case _:
+            raise WorkflowError(f"{path.name}: needs a [toolchain] table with a `targets` list")
+    if not all(isinstance(t, str) for t in targets):
         raise WorkflowError(f"{path.name}: [toolchain].targets must be a list of target triples")
     return set(targets)
 
 
 def matrix_targets(wfs: dict[WorkflowFile, Workflow]) -> dict[str, set[str]]:
-    """Each Rust target a workflow's build matrix names, with the workflows naming it."""
+    """Each Rust target a build matrix names — as a `target` axis or in `include`
+    rows — with the workflows naming it."""
     out: dict[str, set[str]] = {}
     for wf in wfs.values():
         for job in wf.jobs.values():
+            axis = job.matrix.get("target")
             rows = job.matrix.get("include")
-            for row in rows if isinstance(rows, list) else []:
-                target = row.get("target")
+            named = [*(axis if isinstance(axis, list) else []), *(r.get("target") for r in rows or [])]
+            for target in named:
                 if isinstance(target, str):
                     out.setdefault(target, set()).add(wf.filename)
     return out
-
-
-# --- events and their simulation -----------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -570,9 +589,6 @@ def _needs_closure(wf: Workflow, job_id: JobId) -> set[JobId]:
                 seen.add(n)
                 stack.append(n)
     return seen
-
-
-# --- the contract ---------------------------------------------------------------------
 
 
 def violations(wfs: dict[WorkflowFile, Workflow], provisioned: set[str]) -> list[str]:
