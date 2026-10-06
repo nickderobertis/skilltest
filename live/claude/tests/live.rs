@@ -1,6 +1,6 @@
 //! Live end-to-end tests against **real** oneharness + a real harness
-//! (claude-code by default). These are the only `#[ignore]` tests in the repo
-//! (see `tests/AGENTS.md`): they make real model calls — money, network,
+//! (claude-code by default). Like every live suite they are `#[ignore]`d (see
+//! `tests/AGENTS.md`): they make real model calls — money, network,
 //! non-determinism — so they must never be in the deterministic gate.
 //!
 //! Run them explicitly, pointing at a built oneharness:
@@ -232,13 +232,11 @@ fn live_streaming_emits_ndjson_and_a_terminal_result() {
     assert!(assistant.contains("pong"), "assistant said: {assistant}");
 }
 
-// ---------------------------------------------------------------------------
 // Tool mocking/spying against the REAL harness — the live drift alarm between
 // skilltest's mirrored decision engine (proven in the gate) and the hook-side
 // one inside oneharness. The toolrunner skill makes the model run one marked
 // shell command; the cases intercept or observe it. `ONEHARNESS_MODE=bypass`
 // lets the harness execute tools, exactly as a user configures approval.
-// ---------------------------------------------------------------------------
 
 #[test]
 #[ignore = "live: needs oneharness + a real harness; run with --ignored"]

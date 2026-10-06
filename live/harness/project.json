@@ -4,15 +4,26 @@
   "projectType": "application",
   "tags": ["type:live", "lang:bash"],
   "implicitDependencies": ["skilltest-cli"],
+  "namedInputs": {
+    "default": [
+      "{projectRoot}/**/*",
+      "sharedGlobals",
+      "{workspaceRoot}/scripts/e2e-harness.sh",
+      "{workspaceRoot}/scripts/e2e-lib.sh"
+    ]
+  },
   "targets": {
     "live": {
-      "command": "bash live/harness/e2e-harness.sh {args.harness}",
+      "command": "bash scripts/e2e-harness.sh {args.harness}",
       "dependsOn": [
         {
           "projects": ["skilltest-cli"],
           "target": "build"
         }
       ]
+    },
+    "lint": {
+      "command": "uvx --from shellcheck-py==0.11.0.1 shellcheck -x scripts/e2e-harness.sh scripts/e2e-lib.sh"
     }
   }
 }

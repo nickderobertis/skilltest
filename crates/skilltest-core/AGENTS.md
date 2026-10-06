@@ -4,7 +4,7 @@ Nx project `skilltest-core` (`type:lib`, `lang:rust`). The reusable Rust API the
 CLI builds on: config, the skill model + validation, the test-case model, the
 provider protocol and its backends, evals, tool mocking, the runner, the report —
 and the Rust types that are the single source of truth for the JSON contract
-(`schemas/` is generated from them; see `schemas/AGENTS.md`).
+(`schemas/` is generated from them).
 
 - **What it proves.** Its `test` target runs the unit suites inside `src/`
   (`cargo nextest -p skilltest-core`, `kind(lib)`): the conversation loop, eval
@@ -30,13 +30,12 @@ and the Rust types that are the single source of truth for the JSON contract
   an internally tagged enum). A typo'd key must never silently apply a default.
 - Changing a type that reaches `--format json` or the case input changes the
   contract: run `just gen-contract` and commit `schemas/` + the generated SDK
-  models in the same change (`schemas/AGENTS.md`).
+  models in the same change.
 
 ## The provider boundary
 
 `skilltest` never talks to a model directly. The `Provider` trait
-(`src/provider.rs`) has two real backends; the wire detail is
-[`docs/protocol.md`](../../docs/protocol.md).
+(`src/provider.rs`) has two real backends:
 
 - **`OneharnessProvider` (default).** Targets
   [`oneharness`](https://github.com/nickderobertis/oneharness) **v0.16.0** (the

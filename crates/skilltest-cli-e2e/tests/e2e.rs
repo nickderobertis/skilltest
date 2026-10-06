@@ -57,7 +57,6 @@ fn happy_path_single_turn_passes() {
     assert_eq!(report["passed"], Value::Bool(true));
     assert_eq!(report["summary"]["runs"], 1);
     assert_eq!(report["runs"][0]["turns"], 1);
-    // Both evals present and passing.
     assert_eq!(report["runs"][0]["evals"].as_array().unwrap().len(), 2);
 }
 
@@ -211,11 +210,9 @@ fn json_stream_short_circuits_when_the_consumer_stops_reading() {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Code-defined cases: the `--case-json` ingestion path the SDKs use to run a
 // case built in code (no YAML file on disk). Same conversation loop, evals,
 // and JSON contract — only the case's origin differs.
-// ---------------------------------------------------------------------------
 
 /// Write `json` to a temp `--case-json` file and run it against the fake
 /// provider, returning the process output.
@@ -450,12 +447,10 @@ fn case_json_typoed_eval_field_exits_two_naming_the_field() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // The input contract: `schemas/case.schema.json` is the golden the SDKs'
 // generated case models come from, and the kitchen-sink fixture is the shared
 // JSON every party pins — Rust serialization here, and each SDK's case
 // builders in their own suites. Drift in any direction breaks a named test.
-// ---------------------------------------------------------------------------
 
 /// Path to the shared kitchen-sink case golden.
 fn kitchen_sink_path() -> PathBuf {
@@ -591,7 +586,6 @@ fn kitchen_sink_golden_matches_rust_construction() {
          types — update the golden and every SDK's case builders together"
     );
 
-    // And the golden round-trips through the strict parse.
     let parsed: TestCase = serde_json::from_value(golden).expect("golden parses strictly");
     assert_eq!(parsed, case);
 }
@@ -818,12 +812,10 @@ fn init_refuses_to_overwrite() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // Tool mocking and spying (the `mocks:` block, `--mocks`, `--spy`, and the
 // deterministic `called`/`not_called` evals) — driven end to end through the
 // fake provider, which applies the same compiled ruleset the oneharness hook
 // would (one shared decision engine in skilltest-core).
-// ---------------------------------------------------------------------------
 
 #[test]
 fn mock_stub_intercepts_and_call_evals_pass() {
@@ -1203,7 +1195,6 @@ fn spy_flag_records_calls_without_any_mocks() {
     assert!(json(&without)["runs"][0]["mock_calls"].is_null());
 }
 
-// ---------------------------------------------------------------------------
 // Run history: the OneharnessProvider path can't be reached through the fake
 // *provider* (a CommandProvider records no history), so these drive the built
 // CLI against a fake *oneharness* binary via `--oneharness-bin` — the same
@@ -1211,7 +1202,6 @@ fn spy_flag_records_calls_without_any_mocks() {
 // built-binary path: default oneharness provider → --history flags → the
 // report's `history_command` and the human `history:` line. Unix-only, like the
 // provider subprocess suite (the crate ships to a Linux/macOS matrix).
-// ---------------------------------------------------------------------------
 
 /// A fake `oneharness` that echoes a recorded `history_file` on skill runs (the
 /// ones carrying `--history`) and a JSON verdict on judge/user runs (which do

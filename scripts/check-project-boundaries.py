@@ -9,10 +9,10 @@ idea for every language here:
 
 * every project carries exactly one known `type:*` tag and one known `lang:*` tag;
 * every dependency edge goes from a type to a type that type may depend on
-  (`ALLOWED` below). Nothing may depend on an `e2e` or `live` project, and a
-  `contract` project depends only on other contracts — so a schema edit selects
-  its consumers, never the reverse, and an expensive suite stays behind an edge
-  no library can draw back.
+  (`ALLOWED` below — the one source for these rules). Nothing may depend on an
+  `e2e` or `live` project, and a `contract` project depends only on other
+  contracts, so a schema edit selects its consumers, never the reverse, and an
+  expensive suite stays behind an edge no library can draw back.
 
 Quiet on success, one line. On failure it names each violation and the fix.
 Python 3.11+ standard library only.
@@ -22,63 +22,137 @@ from __future__ import annotations
 
 import json
 import sys
+from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
+from typing import TypeVar
 
-# Which project types each type may depend on. The rationale per row lives in
-# AGENTS.md ("Project graph"); change the two together.
-ALLOWED: dict[str, frozenset[str]] = {
-    "contract": frozenset({"contract"}),
-    "lib": frozenset({"lib", "contract"}),
-    "app": frozenset({"lib", "contract"}),
-    "sdk": frozenset({"app", "contract", "carrier"}),
-    "plugin": frozenset({"sdk"}),
-    "carrier": frozenset(),
-    "e2e": frozenset({"app", "lib", "contract"}),
-    "live": frozenset({"app", "lib", "contract"}),
+
+class Kind(StrEnum):
+    """A project's `type:*` tag."""
+
+    CONTRACT = "contract"
+    LIB = "lib"
+    APP = "app"
+    SDK = "sdk"
+    PLUGIN = "plugin"
+    CARRIER = "carrier"
+    E2E = "e2e"
+    LIVE = "live"
+
+
+class Lang(StrEnum):
+    """A project's `lang:*` tag."""
+
+    RUST = "rust"
+    PYTHON = "python"
+    TYPESCRIPT = "typescript"
+    BASH = "bash"
+    JSON = "json"
+
+
+# Which project kinds each kind may depend on.
+ALLOWED: dict[Kind, frozenset[Kind]] = {
+    Kind.CONTRACT: frozenset({Kind.CONTRACT}),
+    Kind.LIB: frozenset({Kind.LIB, Kind.CONTRACT}),
+    Kind.APP: frozenset({Kind.LIB, Kind.CONTRACT}),
+    Kind.SDK: frozenset({Kind.APP, Kind.CONTRACT, Kind.CARRIER}),
+    Kind.PLUGIN: frozenset({Kind.SDK}),
+    Kind.CARRIER: frozenset(),
+    Kind.E2E: frozenset({Kind.APP, Kind.LIB, Kind.CONTRACT}),
+    Kind.LIVE: frozenset({Kind.APP, Kind.LIB, Kind.CONTRACT}),
 }
-LANGS = frozenset({"rust", "python", "typescript", "bash", "json"})
 
 
-def _one_tag(name: str, tags: list[str], prefix: str, known: frozenset[str] | dict) -> tuple[str | None, list[str]]:
-    values = [t.removeprefix(prefix) for t in tags if t.startswith(prefix)]
+class GraphError(ValueError):
+    """The file is not the project graph `nx graph --file` writes."""
+
+
+@dataclass(frozen=True)
+class Project:
+    name: str
+    tags: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class Edge:
+    source: str
+    target: str
+
+
+@dataclass(frozen=True)
+class Graph:
+    projects: dict[str, Project]
+    edges: tuple[Edge, ...]
+
+
+def parse_graph(raw: object) -> Graph:
+    """Validate the `nx graph --file` JSON into a `Graph`, naming what is malformed."""
+    if not isinstance(raw, dict) or not isinstance(raw.get("graph"), dict):
+        raise GraphError("top level must be an object with a `graph` object")
+    nodes, deps = raw["graph"].get("nodes"), raw["graph"].get("dependencies", {})
+    if not isinstance(nodes, dict) or not isinstance(deps, dict):
+        raise GraphError("`graph.nodes` and `graph.dependencies` must be objects")
+    projects: dict[str, Project] = {}
+    for name, node in nodes.items():
+        tags = node.get("data", {}).get("tags", []) if isinstance(node, dict) else None
+        if not isinstance(tags, list) or not all(isinstance(t, str) for t in tags):
+            raise GraphError(f"node `{name}` has no list of string tags at `data.tags`")
+        projects[name] = Project(name, tuple(tags))
+    edges: list[Edge] = []
+    for source, out in deps.items():
+        if not isinstance(out, list):
+            raise GraphError(f"`dependencies.{source}` must be a list")
+        for edge in out:
+            if not isinstance(edge, dict) or not isinstance(edge.get("target"), str):
+                raise GraphError(f"an edge of `{source}` has no string `target`")
+            edges.append(Edge(source, edge["target"]))
+    return Graph(projects, tuple(edges))
+
+
+E = TypeVar("E", Kind, Lang)
+
+
+def _one_tag(project: Project, prefix: str, known: type[E]) -> tuple[E | None, list[str]]:
+    values = [t.removeprefix(prefix) for t in project.tags if t.startswith(prefix)]
+    choices = ", ".join(prefix + k.value for k in known)
     if len(values) != 1:
+        found = ", ".join(values) or "none"
         return None, [
-            f"{name}: needs exactly one `{prefix}*` tag, has {len(values)} ({', '.join(values) or 'none'}); "
-            f"set `tags` in its project.json to one of: {', '.join(prefix + k for k in sorted(known))}"
+            f"{project.name}: needs exactly one `{prefix}*` tag, has {len(values)} ({found}); "
+            f"set `tags` in its project.json to one of: {choices}"
         ]
-    if values[0] not in known:
+    try:
+        return known(values[0]), []
+    except ValueError:
         return None, [
-            f"{name}: unknown tag `{prefix}{values[0]}`; use one of: {', '.join(prefix + k for k in sorted(known))}"
-            " (or add it to scripts/check-project-boundaries.py and AGENTS.md together)"
+            f"{project.name}: unknown tag `{prefix}{values[0]}`; use one of: {choices}"
+            " (or add it to scripts/check-project-boundaries.py)"
         ]
-    return values[0], []
 
 
-def violations(graph: dict) -> list[str]:
+def violations(graph: Graph) -> list[str]:
     """Every rule the graph breaks, as one actionable line each."""
-    nodes = graph["nodes"]
     problems: list[str] = []
-    types: dict[str, str | None] = {}
-    for name in sorted(nodes):
-        tags = nodes[name].get("data", {}).get("tags", []) or []
-        kind, errs = _one_tag(name, tags, "type:", ALLOWED)
-        _, lang_errs = _one_tag(name, tags, "lang:", LANGS)
-        types[name] = kind
+    kinds: dict[str, Kind | None] = {}
+    for name in sorted(graph.projects):
+        kind, errs = _one_tag(graph.projects[name], "type:", Kind)
+        _, lang_errs = _one_tag(graph.projects[name], "lang:", Lang)
+        kinds[name] = kind
         problems += errs + lang_errs
-    for source in sorted(graph.get("dependencies", {})):
-        for edge in graph["dependencies"][source]:
-            target = edge["target"]
-            if target not in nodes:
-                continue  # an npm/external node, not a project of this repo
-            src_t, dst_t = types.get(source), types.get(target)
-            if src_t is None or dst_t is None:
-                continue  # already reported as a tag problem
-            if dst_t not in ALLOWED[src_t]:
-                problems.append(
-                    f"{source} (type:{src_t}) -> {target} (type:{dst_t}): a type:{src_t} project may depend only on "
-                    f"{', '.join('type:' + t for t in sorted(ALLOWED[src_t])) or 'nothing'}; "
-                    "remove the edge (implicitDependencies / the manifest dependency) or move the code"
-                )
+    for edge in sorted(graph.edges, key=lambda e: (e.source, e.target)):
+        if edge.target not in graph.projects:
+            continue  # an npm/external node, not a project of this repo
+        src, dst = kinds.get(edge.source), kinds.get(edge.target)
+        if src is None or dst is None:
+            continue  # already reported as a tag problem
+        if dst not in ALLOWED[src]:
+            allowed = ", ".join(f"type:{k.value}" for k in sorted(ALLOWED[src])) or "nothing"
+            problems.append(
+                f"{edge.source} (type:{src.value}) -> {edge.target} (type:{dst.value}): a type:{src.value} "
+                f"project may depend only on {allowed}; remove the edge (implicitDependencies / the "
+                "manifest dependency) or move the code"
+            )
     return problems
 
 
@@ -87,8 +161,8 @@ def main(argv: list[str]) -> int:
         print("usage: check-project-boundaries.py <nx-graph.json>  (from `nx graph --file=...`)", file=sys.stderr)
         return 2
     try:
-        graph = json.loads(Path(argv[1]).read_text())["graph"]
-    except (OSError, ValueError, KeyError) as exc:
+        graph = parse_graph(json.loads(Path(argv[1]).read_text()))
+    except (OSError, ValueError) as exc:
         print(
             f"check-project-boundaries: cannot read the nx graph from {argv[1]}: {exc}; "
             "regenerate it with `pnpm exec nx graph --file=<path>.json`",
@@ -101,7 +175,7 @@ def main(argv: list[str]) -> int:
         for p in problems:
             print(f"  - {p}", file=sys.stderr)
         return 1
-    print(f"check-project-boundaries: {len(graph['nodes'])} projects within their boundaries")
+    print(f"check-project-boundaries: {len(graph.projects)} projects within their boundaries")
     return 0
 
 

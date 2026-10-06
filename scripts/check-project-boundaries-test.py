@@ -3,9 +3,10 @@
 """Test of scripts/check-project-boundaries.py, driven as a subprocess.
 
 A gate nobody has watched fail is not known to work, so this runs the checker
-over graphs shaped like `nx graph --file` output: green on a clean graph, and
+over graphs in the shape `nx graph --file` writes: green on a clean graph, and
 red — naming the offending edge or tag — on each kind of violation it exists to
-catch. Quiet on success, one line. Python 3.11+ standard library only.
+catch, and on a file that is not a graph at all. Quiet on success, one line.
+Python 3.11+ standard library only.
 """
 
 from __future__ import annotations
@@ -14,87 +15,87 @@ import json
 import subprocess
 import sys
 import tempfile
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 CHECKER = Path(__file__).resolve().parent / "check-project-boundaries.py"
+FIX = "fix scripts/check-project-boundaries.py (or this test, if the rule changed on purpose)"
 
 
-def node(tags: list[str]) -> dict:
-    return {"type": "lib", "data": {"root": "x", "tags": tags}}
+@dataclass(frozen=True)
+class Fixture:
+    """A project graph: each project's tags, and its edges as (source, target)."""
+
+    tags: dict[str, tuple[str, ...]]
+    edges: tuple[tuple[str, str], ...] = field(default=())
+
+    def nx_json(self) -> dict:
+        """The graph in the shape `nx graph --file` writes."""
+        deps: dict[str, list[dict[str, str]]] = {name: [] for name in self.tags}
+        for source, target in self.edges:
+            deps.setdefault(source, []).append({"source": source, "target": target, "type": "implicit"})
+        nodes = {name: {"type": "lib", "data": {"root": name, "tags": list(t)}} for name, t in self.tags.items()}
+        return {"graph": {"nodes": nodes, "dependencies": deps}}
+
+    def with_tags(self, name: str, *tags: str) -> Fixture:
+        return replace(self, tags={**self.tags, name: tags})
+
+    def with_edge(self, source: str, target: str) -> Fixture:
+        return replace(self, edges=(*self.edges, (source, target)))
 
 
-def clean_graph() -> dict:
-    return {
-        "nodes": {
-            "core": node(["type:lib", "lang:rust"]),
-            "cli": node(["type:app", "lang:rust"]),
-            "contract": node(["type:contract", "lang:json"]),
-            "sdk": node(["type:sdk", "lang:python"]),
-            "plugin": node(["type:plugin", "lang:python"]),
-            "cli-e2e": node(["type:e2e", "lang:rust"]),
-            "live": node(["type:live", "lang:rust"]),
-        },
-        "dependencies": {
-            "cli": [{"source": "cli", "target": "core", "type": "implicit"}],
-            "sdk": [
-                {"source": "sdk", "target": "cli", "type": "implicit"},
-                {"source": "sdk", "target": "contract", "type": "implicit"},
-                # An external (npm) node is not a project here and is skipped.
-                {"source": "sdk", "target": "npm:left-pad", "type": "static"},
-            ],
-            "plugin": [{"source": "plugin", "target": "sdk", "type": "implicit"}],
-            "cli-e2e": [{"source": "cli-e2e", "target": "cli", "type": "implicit"}],
-            "live": [{"source": "live", "target": "cli", "type": "implicit"}],
-        },
-    }
+CLEAN = Fixture(
+    tags={
+        "core": ("type:lib", "lang:rust"),
+        "cli": ("type:app", "lang:rust"),
+        "contract": ("type:contract", "lang:json"),
+        "sdk": ("type:sdk", "lang:python"),
+        "plugin": ("type:plugin", "lang:python"),
+        "cli-e2e": ("type:e2e", "lang:rust"),
+        "live": ("type:live", "lang:rust"),
+    },
+    edges=(
+        ("cli", "core"),
+        ("sdk", "cli"),
+        ("sdk", "contract"),
+        ("sdk", "npm:left-pad"),  # an external node, not a project here: skipped
+        ("plugin", "sdk"),
+        ("cli-e2e", "cli"),
+        ("live", "cli"),
+    ),
+)
 
 
-def run(graph: dict) -> subprocess.CompletedProcess[str]:
+def run(raw: object) -> subprocess.CompletedProcess[str]:
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "graph.json"
-        path.write_text(json.dumps({"graph": graph}))
+        path.write_text(json.dumps(raw))
         return subprocess.run([sys.executable, str(CHECKER), str(path)], capture_output=True, text=True, check=False)
 
 
-def expect_red(label: str, graph: dict, needle: str) -> None:
-    out = run(graph)
-    if out.returncode != 1 or needle not in out.stderr:
+def expect(label: str, raw: object, code: int, needle: str) -> None:
+    out = run(raw)
+    if out.returncode != code or needle not in out.stdout + out.stderr:
         sys.exit(
-            f"check-project-boundaries-test: {label}: expected exit 1 naming {needle!r}, "
-            f"got exit {out.returncode}:\n{out.stdout}{out.stderr}"
+            f"check-project-boundaries-test: {label}: expected exit {code} naming {needle!r}, "
+            f"got exit {out.returncode}:\n{out.stdout}{out.stderr}\n{FIX}"
         )
 
 
 def main() -> None:
-    out = run(clean_graph())
-    if out.returncode != 0:
-        sys.exit(f"check-project-boundaries-test: a clean graph must pass, got exit {out.returncode}:\n{out.stderr}")
-
-    g = clean_graph()
-    g["dependencies"]["contract"] = [{"source": "contract", "target": "cli", "type": "implicit"}]
-    expect_red("contract -> app", g, "contract (type:contract) -> cli (type:app)")
-
-    g = clean_graph()
-    g["dependencies"]["core"] = [{"source": "core", "target": "live", "type": "implicit"}]
-    expect_red("lib -> live", g, "core (type:lib) -> live (type:live)")
-
-    g = clean_graph()
-    g["dependencies"]["cli"].append({"source": "cli", "target": "cli-e2e", "type": "implicit"})
-    expect_red("app -> e2e", g, "cli (type:app) -> cli-e2e (type:e2e)")
-
-    g = clean_graph()
-    g["nodes"]["core"] = node(["type:lib"])
-    expect_red("missing lang tag", g, "core: needs exactly one `lang:*` tag")
-
-    g = clean_graph()
-    g["nodes"]["core"] = node(["type:lib", "type:app", "lang:rust"])
-    expect_red("two type tags", g, "core: needs exactly one `type:*` tag, has 2")
-
-    g = clean_graph()
-    g["nodes"]["core"] = node(["type:utils", "lang:rust"])
-    expect_red("unknown type", g, "core: unknown tag `type:utils`")
-
-    print("check-project-boundaries-test: clean graph passes; 6 violation kinds each fail")
+    expect("a clean graph", CLEAN.nx_json(), 0, "7 projects within their boundaries")
+    red = [
+        ("contract -> app", CLEAN.with_edge("contract", "cli"), "contract (type:contract) -> cli (type:app)"),
+        ("lib -> live", CLEAN.with_edge("core", "live"), "core (type:lib) -> live (type:live)"),
+        ("app -> e2e", CLEAN.with_edge("cli", "cli-e2e"), "cli (type:app) -> cli-e2e (type:e2e)"),
+        ("missing lang tag", CLEAN.with_tags("core", "type:lib"), "core: needs exactly one `lang:*` tag"),
+        ("two type tags", CLEAN.with_tags("core", "type:lib", "type:app", "lang:rust"), "has 2"),
+        ("unknown type", CLEAN.with_tags("core", "type:utils", "lang:rust"), "core: unknown tag `type:utils`"),
+    ]
+    for label, fixture, needle in red:
+        expect(label, fixture.nx_json(), 1, needle)
+    expect("not a graph", {"nodes": {}}, 2, "top level must be an object with a `graph` object")
+    print(f"check-project-boundaries-test: clean graph passes; {len(red)} violation kinds and a malformed graph fail")
 
 
 if __name__ == "__main__":

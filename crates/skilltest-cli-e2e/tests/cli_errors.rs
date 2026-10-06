@@ -288,7 +288,6 @@ fn unclassified_provider_error_prints_generic_hint() {
 
 #[test]
 fn explicit_config_flag_is_loaded() {
-    // `--config <path>` takes the explicit-load branch (vs the default lookup).
     let dir = temp_dir("config");
     let cfg = dir.join("custom.yaml");
     std::fs::write(
@@ -332,7 +331,6 @@ fn explicit_config_missing_file_exits_two() {
 
 #[test]
 fn run_human_format_prints_a_summary() {
-    // The default (human) format prints the PASS line and the run tally.
     let out = run_passing_case(&[]);
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -375,7 +373,7 @@ fn init_into_a_path_under_a_file_is_an_io_error() {
     let dir = temp_dir("init-io");
     let blocker = dir.join("blocker");
     std::fs::write(&blocker, "i am a file, not a dir").unwrap();
-    let target = blocker.join("nested"); // parent is a file
+    let target = blocker.join("nested");
     let out = Command::new(skilltest())
         .arg("init")
         .arg(&target)

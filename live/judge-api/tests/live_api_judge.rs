@@ -70,7 +70,7 @@ fn exercise(vendor: ApiVendor) {
     let provider = provider(vendor);
     let transcript = pong_transcript();
 
-    // 1. Boolean verdict — true case. Strict JSON guarantees a clean bool.
+    // Strict JSON guarantees a clean bool.
     let yes = provider
         .judge(
             &model,
@@ -88,14 +88,12 @@ fn exercise(vendor: ApiVendor) {
         "{vendor:?} should judge the pong criterion true; reason: {}",
         yes.reason
     );
-    // Usage flowed through from the real response.
     let usage = yes.usage.expect("the API reports usage");
     assert!(
         usage.input_tokens.unwrap_or(0) > 0 && usage.output_tokens.unwrap_or(0) > 0,
         "{vendor:?} usage should carry token counts; got {usage:?}"
     );
 
-    // 2. Boolean verdict — false case.
     let no = provider
         .judge(
             &model,
@@ -114,7 +112,6 @@ fn exercise(vendor: ApiVendor) {
         no.reason
     );
 
-    // 3. Numeric verdict — a real number within the requested scale.
     let scored = provider
         .judge(
             &model,
@@ -135,7 +132,7 @@ fn exercise(vendor: ApiVendor) {
         other => panic!("{vendor:?} expected a numeric verdict, got {other:?}"),
     }
 
-    // 4. Simulated user — free-form (never schema-constrained) and non-empty.
+    // The simulated user's reply is free-form: never schema-constrained.
     let user = provider
         .simulate_user(
             &model,

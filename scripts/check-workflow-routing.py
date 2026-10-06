@@ -13,9 +13,9 @@ reads the committed workflows, evaluates each event the way Actions does —
 trigger filters, `if:` expressions (implicit `success()` over `needs`), called
 workflows — and asserts the routing:
 
-* a pull request runs the affected tier (`just check` with an explicit NX_BASE
-  from nx-set-shas) and reports the fixed required contexts, and triggers none
-  of the live e2e suites, which no required job needs;
+* a pull request runs the affected tier (`just check affected` after
+  nx-set-shas exports an explicit NX_BASE) and reports the fixed required
+  contexts, and triggers none of the live e2e suites, which no required job needs;
 * an ordinary push to main runs the full sweep (`just check all`) and every live
   suite, and reaches the release only through their success — a failure induced
   in the sweep or in any one live suite leaves the release skipped;
@@ -33,8 +33,11 @@ import copy
 import fnmatch
 import re
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from enum import StrEnum
 from pathlib import Path
+from typing import Literal
 
 import yaml
 
@@ -46,28 +49,37 @@ LIVE = tuple(
     f"e2e-{n}.yml" for n in ("claude", "codex", "copilot", "crush", "cursor", "goose", "opencode", "qwen", "judge-api")
 )
 NO_RELEASE_COMMIT = ("ci.yml", *LIVE, "bundle-smoke.yml", "visual-docs.yml")
+FIX = 'fix the workflow named (AGENTS.md "Commits, releases, and merging" states the intended routing)'
+
+
+class WorkflowError(ValueError):
+    """A workflow file, or an expression in one, this model cannot read."""
 
 
 # --- the `${{ }}` expression subset these workflows use -----------------------
 
-_TOKEN = re.compile(
-    r"\s*(?:(?P<str>'(?:[^']|'')*')|(?P<op>==|!=|&&|\|\||!|\(|\)|,)|(?P<ident>[A-Za-z_][A-Za-z0-9_.\-]*))"
-)
+TokenKind = Literal["str", "op", "ident"]
+_KINDS: dict[str, TokenKind] = {"str": "str", "op": "op", "ident": "ident"}
 
 
-class ExprError(ValueError):
-    pass
+@dataclass(frozen=True)
+class Token:
+    kind: TokenKind
+    text: str
 
 
-def _tokens(src: str) -> list[tuple[str, str]]:
-    out, pos = [], 0
-    src = src.strip()
+_TOKEN = re.compile(r"\s*(?:(?P<str>'(?:[^']|'')*')|(?P<op>==|!=|&&|\|\||!|\(|\)|,)|(?P<ident>[A-Za-z_][\w.\-]*))")
+
+
+def _tokens(src: str) -> list[Token]:
+    out: list[Token] = []
+    pos, src = 0, src.strip()
     while pos < len(src):
         m = _TOKEN.match(src, pos)
-        if not m or m.end() == pos:
-            raise ExprError(f"cannot parse expression at {src[pos:]!r}")
-        kind = m.lastgroup or ""
-        out.append((kind, m.group(kind)))
+        if not m or m.end() == pos or m.lastgroup not in _KINDS:
+            raise WorkflowError(f"cannot parse expression at {src[pos:]!r}")
+        kind = _KINDS[m.lastgroup]
+        out.append(Token(kind, m.group(kind)))
         pos = m.end()
         while pos < len(src) and src[pos].isspace():
             pos += 1
@@ -85,21 +97,25 @@ def _eq(a: object, b: object) -> bool:
 
 
 class _Parser:
-    def __init__(self, src: str, ctx: dict, status: dict[str, bool]) -> None:
+    def __init__(self, src: str, ctx: dict[str, object], status: dict[str, bool]) -> None:
         self.toks, self.i, self.ctx, self.status = _tokens(src), 0, ctx, status
 
     def peek(self) -> str | None:
-        return self.toks[self.i][1] if self.i < len(self.toks) else None
+        return self.toks[self.i].text if self.i < len(self.toks) else None
 
-    def take(self) -> tuple[str, str]:
+    def take(self, expect: str | None = None) -> Token:
+        if self.i >= len(self.toks):
+            raise WorkflowError(f"expression ends early{f', expected {expect!r}' if expect else ''}")
         tok = self.toks[self.i]
+        if expect is not None and tok.text != expect:
+            raise WorkflowError(f"expected {expect!r}, found {tok.text!r}")
         self.i += 1
         return tok
 
     def parse(self) -> object:
         v = self.or_()
         if self.i != len(self.toks):
-            raise ExprError(f"trailing tokens: {self.toks[self.i :]}")
+            raise WorkflowError(f"trailing tokens: {[t.text for t in self.toks[self.i :]]}")
         return v
 
     def or_(self) -> object:
@@ -121,7 +137,7 @@ class _Parser:
     def cmp(self) -> object:
         v = self.unary()
         while self.peek() in ("==", "!="):
-            op = self.take()[1]
+            op = self.take().text
             rhs = self.unary()
             v = _eq(v, rhs) if op == "==" else not _eq(v, rhs)
         return v
@@ -133,33 +149,38 @@ class _Parser:
         return self.atom()
 
     def atom(self) -> object:
-        kind, text = self.take()
-        if text == "(":
-            v = self.or_()
-            self.take()
-            return v
-        if kind == "str":
-            return text[1:-1].replace("''", "'")
-        if self.peek() == "(":
-            self.take()
-            args = []
-            while self.peek() != ")":
-                args.append(self.or_())
-                if self.peek() == ",":
-                    self.take()
-            self.take()
-            return self.call(text, args)
-        if text in ("true", "false"):
-            return text == "true"
-        return self.lookup(text)
+        tok = self.take()
+        match tok:
+            case Token(kind="op", text="("):
+                v = self.or_()
+                self.take(")")
+                return v
+            case Token(kind="str", text=text):
+                return text[1:-1].replace("''", "'")
+            case Token(kind="ident", text=("true" | "false") as text):
+                return text == "true"
+            case Token(kind="ident", text=name) if self.peek() == "(":
+                self.take("(")
+                args: list[object] = []
+                while self.peek() != ")":
+                    args.append(self.or_())
+                    if self.peek() == ",":
+                        self.take(",")
+                self.take(")")
+                return self.call(name, args)
+            case Token(kind="ident", text=path):
+                return self.lookup(path)
+            case _:
+                raise WorkflowError(f"unexpected {tok.text!r}")
 
     def call(self, name: str, args: list[object]) -> object:
-        if name == "startsWith":
-            a, b = ("" if x is None else str(x) for x in args)
-            return a.lower().startswith(b.lower())
-        if name in self.status:
-            return self.status[name]
-        raise ExprError(f"unsupported function {name}()")
+        match name, args:
+            case "startsWith", [a, b]:
+                return ("" if a is None else str(a)).lower().startswith(("" if b is None else str(b)).lower())
+            case _ if name in self.status and not args:
+                return self.status[name]
+            case _:
+                raise WorkflowError(f"unsupported function {name}() with {len(args)} argument(s)")
 
     def lookup(self, path: str) -> object:
         cur: object = self.ctx
@@ -170,43 +191,129 @@ class _Parser:
         return cur
 
 
-def evaluate(expr: object, ctx: dict, status: dict[str, bool] | None = None) -> object:
+def evaluate(expr: object, ctx: dict[str, object], status: dict[str, bool] | None = None) -> object:
+    """An `if:` value: a bare expression or one `${{ }}`, else the literal itself."""
     if not isinstance(expr, str):
         return expr
-    s = expr.strip()
-    m = re.fullmatch(r"\$\{\{(.*)\}\}", s, re.S)
-    return _Parser(m.group(1) if m else s, ctx, status or {}).parse()
+    m = re.fullmatch(r"\s*\$\{\{(.*)\}\}\s*", expr, re.S)
+    return _Parser(m.group(1) if m else expr, ctx, status or {}).parse()
 
 
-def interpolate(text: str, ctx: dict) -> str:
+def interpolate(text: str, ctx: dict[str, object]) -> str:
+    """A string value: literal text with each `${{ }}` replaced by its value."""
     return re.sub(r"\$\{\{(.*?)\}\}", lambda m: str(evaluate(m.group(1), ctx)), text)
 
 
-# --- events ----------------------------------------------------------------------
+# --- the workflows, validated into a model ------------------------------------------
 
 
-@dataclass
+@dataclass(frozen=True)
+class Step:
+    run: str | None
+    uses: str | None
+    cond: object
+    env: dict[str, str]
+
+
+@dataclass(frozen=True)
+class Job:
+    id: str
+    name: str | None
+    needs: tuple[str, ...]
+    cond: object
+    uses: str | None
+    matrix: dict[str, object]
+    steps: tuple[Step, ...]
+
+
+@dataclass(frozen=True)
+class Workflow:
+    filename: str
+    triggers: dict[str, dict[str, object]]
+    jobs: dict[str, Job]
+
+
+def _mapping(value: object, where: str) -> dict:
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise WorkflowError(f"{where} must be a mapping")
+    return value
+
+
+def _optional_str(value: object, where: str) -> str | None:
+    if value is not None and not isinstance(value, str):
+        raise WorkflowError(f"{where} must be a string")
+    return value
+
+
+def parse_workflow(filename: str, raw: object) -> Workflow:
+    doc = _mapping(raw, filename)
+    on = doc.get(True, doc.get("on"))  # YAML 1.1 reads a bare `on` key as True
+    match on:
+        case str():
+            triggers: dict[str, dict[str, object]] = {on: {}}
+        case list():
+            triggers = {str(k): {} for k in on}
+        case dict():
+            # A trigger's filters are a mapping; `schedule` alone is a list of crons,
+            # which no event modelled here reads.
+            triggers = {
+                str(k): {} if isinstance(v, list) else _mapping(v, f"{filename}: on.{k}") for k, v in on.items()
+            }
+        case _:
+            raise WorkflowError(f"{filename}: `on` must be a string, list or mapping")
+    jobs: dict[str, Job] = {}
+    for job_id, raw_job in _mapping(doc.get("jobs"), f"{filename}: jobs").items():
+        where = f"{filename}: jobs.{job_id}"
+        job = _mapping(raw_job, where)
+        needs = job.get("needs", [])
+        needs = [needs] if isinstance(needs, str) else needs
+        if not isinstance(needs, list) or not all(isinstance(n, str) for n in needs):
+            raise WorkflowError(f"{where}.needs must be a job id or a list of them")
+        steps = []
+        for i, raw_step in enumerate(job.get("steps") or []):
+            step = _mapping(raw_step, f"{where}.steps[{i}]")
+            env = {str(k): str(v) for k, v in _mapping(step.get("env"), f"{where}.steps[{i}].env").items()}
+            run = _optional_str(step.get("run"), f"{where}.steps[{i}].run")
+            uses = _optional_str(step.get("uses"), f"{where}.steps[{i}].uses")
+            steps.append(Step(run, uses, step.get("if", True), env))
+        strategy = _mapping(job.get("strategy"), f"{where}.strategy")
+        jobs[job_id] = Job(
+            id=job_id,
+            name=_optional_str(job.get("name"), f"{where}.name"),
+            needs=tuple(needs),
+            cond=job.get("if"),
+            uses=_optional_str(job.get("uses"), f"{where}.uses"),
+            matrix=_mapping(strategy.get("matrix"), f"{where}.strategy.matrix"),
+            steps=tuple(steps),
+        )
+    return Workflow(filename, triggers, jobs)
+
+
+def load_raw(directory: Path = WORKFLOWS) -> dict[str, object]:
+    return {path.name: yaml.safe_load(path.read_text()) for path in sorted(directory.glob("*.yml"))}
+
+
+def parse_all(raw: dict[str, object]) -> dict[str, Workflow]:
+    return {name: parse_workflow(name, doc) for name, doc in raw.items()}
+
+
+# --- events and their simulation -----------------------------------------------------
+
+
+@dataclass(frozen=True)
 class Event:
     label: str
     name: str  # github.event_name
     ref: str
-    payload: dict = field(default_factory=dict)
+    payload: dict[str, object] = field(default_factory=dict)
     dispatch: str | None = None  # the workflow file a workflow_dispatch targets
 
-    def ctx(self, matrix: dict | None = None) -> dict:
-        ref_name = (
-            self.ref.rsplit("/", 1)[-1] if self.ref.startswith("refs/heads/") else self.ref.removeprefix("refs/tags/")
-        )
-        return {
-            "github": {
-                "event_name": self.name,
-                "ref": self.ref,
-                "ref_name": ref_name,
-                "repository": REPO,
-                "event": self.payload,
-            },
-            "matrix": matrix or {},
-        }
+    def ctx(self, matrix: dict[str, object] | None = None) -> dict[str, object]:
+        ref_name = self.ref.removeprefix("refs/heads/").removeprefix("refs/tags/")
+        github = {"event_name": self.name, "ref": self.ref, "ref_name": ref_name, "repository": REPO}
+        return {"github": {**github, "event": self.payload}, "matrix": matrix or {}}
 
 
 def pull_request(action: str = "synchronize", fork: bool = False) -> Event:
@@ -220,177 +327,163 @@ def pull_request(action: str = "synchronize", fork: bool = False) -> Event:
 
 
 def push_main(message: str) -> Event:
-    return Event(
-        f"push to main ({message.splitlines()[0]})", "push", "refs/heads/main", {"head_commit": {"message": message}}
-    )
+    return Event(f"push to main ({message})", "push", "refs/heads/main", {"head_commit": {"message": message}})
 
 
 def push_tag(tag: str) -> Event:
     return Event(f"push tag {tag}", "push", f"refs/tags/{tag}", {"head_commit": {"message": "chore(release): 0.13.0"}})
 
 
-# --- workflows -------------------------------------------------------------------
+def dispatch(filename: str) -> Event:
+    return Event(f"workflow_dispatch {filename}", "workflow_dispatch", "refs/heads/main", dispatch=filename)
 
 
-def load_workflows(directory: Path = WORKFLOWS) -> dict[str, dict]:
-    out = {}
-    for path in sorted(directory.glob("*.yml")):
-        doc = yaml.safe_load(path.read_text())
-        doc["on"] = doc.pop(True, doc.get("on"))  # YAML 1.1 reads a bare `on` key as True
-        out[path.name] = doc
-    return out
+def _matches(patterns: object, name: str) -> bool:
+    return isinstance(patterns, list) and any(fnmatch.fnmatch(name, str(p)) for p in patterns)
 
 
-def _triggers(doc: dict) -> dict:
-    on = doc.get("on")
-    if isinstance(on, str):
-        return {on: None}
-    if isinstance(on, list):
-        return {k: None for k in on}
-    return on or {}
-
-
-def triggered(doc: dict, event: Event, filename: str) -> bool:
-    on = _triggers(doc)
-    if event.name == "workflow_dispatch":
-        return "workflow_dispatch" in on and event.dispatch == filename
-    if event.name == "pull_request":
-        kinds = [k for k in ("pull_request", "pull_request_target") if k in on]
-        if not kinds:
+def triggered(wf: Workflow, event: Event) -> bool:
+    on = wf.triggers
+    match event.name:
+        case "workflow_dispatch":
+            return "workflow_dispatch" in on and event.dispatch == wf.filename
+        case "pull_request":
+            kind = next((k for k in ("pull_request", "pull_request_target") if k in on), None)
+            if kind is None:
+                return False
+            types = on[kind].get("types") or ["opened", "synchronize", "reopened"]
+            return event.payload["action"] in types
+        case "push" if "push" in on:
+            spec = on["push"]
+            if event.ref.startswith("refs/tags/"):
+                return _matches(spec.get("tags"), event.ref.removeprefix("refs/tags/"))
+            if spec.get("branches") is None:
+                return "tags" not in spec
+            return _matches(spec.get("branches"), event.ref.removeprefix("refs/heads/"))
+        case _:
             return False
-        types = (on[kinds[0]] or {}).get("types") or ["opened", "synchronize", "reopened"]
-        return event.payload["action"] in types
-    if event.name == "push" and "push" in on:
-        spec = on["push"] or {}
-        if event.ref.startswith("refs/tags/"):
-            pats = spec.get("tags")
-            return pats is not None and any(fnmatch.fnmatch(event.ref[len("refs/tags/") :], p) for p in pats)
-        pats = spec.get("branches")
-        if pats is None:
-            return "tags" not in spec
-        return any(fnmatch.fnmatch(event.ref[len("refs/heads/") :], p) for p in pats)
-    return False
 
 
-def _contexts(job_id: str, job: dict, event: Event) -> list[str]:
-    name = job.get("name", job_id)
-    matrix = (job.get("strategy") or {}).get("matrix") or {}
-    rows = (
-        [{k: v} for k, vals in matrix.items() if k != "include" for v in vals]
-        or list(matrix.get("include", []))
-        or [{}]
-    )
-    out = []
-    for row in rows:
-        shown = interpolate(name, event.ctx(row))
-        if "name" not in job and row:
-            shown = f"{shown} ({', '.join(str(v) for v in row.values())})"
-        out.append(shown)
-    return out
+class Result(StrEnum):
+    SUCCESS = "success"
+    FAILURE = "failure"
+    SKIPPED = "skipped"
 
 
 @dataclass
 class JobRun:
     workflow: str
     job: str
-    result: str  # success | failure | skipped
+    result: Result
     contexts: list[str]
-    commands: list[str]
+    commands: list[str] = field(default_factory=list)
     called: dict[str, JobRun] = field(default_factory=dict)
 
 
-def run_workflow(filename: str, docs: dict[str, dict], event: Event, fail: frozenset[str]) -> dict[str, JobRun]:
+def _contexts(job: Job, event: Event) -> list[str]:
+    rows: list[dict[str, object]] = [
+        {k: v} for k, vals in job.matrix.items() if k != "include" and isinstance(vals, list) for v in vals
+    ]
+    include = job.matrix.get("include")
+    rows = rows or (list(include) if isinstance(include, list) else []) or [{}]
+    out = []
+    for row in rows:
+        shown = interpolate(job.name or job.id, event.ctx(row))
+        if job.name is None and row:
+            shown = f"{shown} ({', '.join(str(v) for v in row.values())})"
+        out.append(shown)
+    return out
+
+
+def run_workflow(filename: str, wfs: dict[str, Workflow], event: Event, fail: frozenset[str]) -> dict[str, JobRun]:
     """Every job's outcome for `event`, failing the `workflow:job` keys in `fail`."""
-    jobs = docs[filename].get("jobs", {})
+    jobs = wfs[filename].jobs
     results: dict[str, JobRun] = {}
     pending = list(jobs)
     while pending:
-        for job_id in pending:
-            job = jobs[job_id]
-            needs = job.get("needs", [])
-            needs = [needs] if isinstance(needs, str) else needs
-            if all(n in results for n in needs):
-                break
-        else:
-            raise ExprError(f"{filename}: needs cycle among {pending}")
-        pending.remove(job_id)
-        ok = all(results[n].result == "success" for n in needs)
+        ready = next((j for j in pending if all(n in results for n in jobs[j].needs)), None)
+        if ready is None:
+            raise WorkflowError(f"{filename}: needs cycle or unknown job among {pending}")
+        pending.remove(ready)
+        job = jobs[ready]
+        ok = all(results[n].result == Result.SUCCESS for n in job.needs)
         status = {
             "success": ok,
             "always": True,
-            "failure": any(results[n].result == "failure" for n in needs),
+            "failure": any(results[n].result == Result.FAILURE for n in job.needs),
             "cancelled": False,
         }
-        cond = job.get("if")
-        uses_status = isinstance(cond, str) and re.search(r"\b(success|always|failure|cancelled)\(", cond)
-        runs = _truthy(evaluate(cond, event.ctx(), status)) if cond is not None else True
+        uses_status = isinstance(job.cond, str) and re.search(r"\b(success|always|failure|cancelled)\(", job.cond)
+        runs = _truthy(evaluate(job.cond, event.ctx(), status)) if job.cond is not None else True
         if not uses_status:
-            runs = runs and ok
-        run = JobRun(filename, job_id, "skipped", _contexts(job_id, job, event), [])
+            runs = runs and ok  # Actions' implicit `success() &&`
+        run = JobRun(filename, ready, Result.SKIPPED, _contexts(job, event))
         if runs:
-            run.result = "success"
-            uses = job.get("uses", "")
-            if uses.startswith("./.github/workflows/"):
-                called = uses.rsplit("/", 1)[-1]
-                run.called = run_workflow(called, docs, event, fail)
-                if any(r.result == "failure" for r in run.called.values()):
-                    run.result = "failure"
-            for step in job.get("steps", []):
-                if "run" in step and _truthy(evaluate(step.get("if", True), event.ctx(), status)):
-                    env = {k: interpolate(str(v), event.ctx()) for k, v in (step.get("env") or {}).items()}
+            run.result = Result.SUCCESS
+            if job.uses and job.uses.startswith("./.github/workflows/"):
+                run.called = run_workflow(job.uses.rsplit("/", 1)[-1], wfs, event, fail)
+                if any(r.result == Result.FAILURE for r in run.called.values()):
+                    run.result = Result.FAILURE
+            for step in job.steps:
+                if not _truthy(evaluate(step.cond, event.ctx(), status)):
+                    continue
+                if step.run is not None:
+                    env = {k: interpolate(v, event.ctx()) for k, v in step.env.items()}
                     # Substitute the step's own env into `"$VAR"`, as the shell would.
                     run.commands.append(
-                        re.sub(r'"\$(\w+)"', lambda m: env.get(m.group(1), m.group(0)), step["run"]).strip()
+                        re.sub(r'"\$(\w+)"', lambda m: env.get(m.group(1), m.group(0)), step.run).strip()
                     )
-                elif "uses" in step and _truthy(evaluate(step.get("if", True), event.ctx(), status)):
-                    run.commands.append(f"uses {step['uses']}")
-            if f"{filename}:{job_id}" in fail:
-                run.result = "failure"
-        results[job_id] = run
+                elif step.uses is not None:
+                    run.commands.append(f"uses {step.uses}")
+            if f"{filename}:{ready}" in fail:
+                run.result = Result.FAILURE
+        results[ready] = run
     return results
 
 
-def simulate(docs: dict[str, dict], event: Event, fail: frozenset[str] = frozenset()) -> dict[str, dict[str, JobRun]]:
-    return {f: run_workflow(f, docs, event, fail) for f in docs if triggered(docs[f], event, f)}
+def simulate(
+    wfs: dict[str, Workflow], event: Event, fail: frozenset[str] = frozenset()
+) -> dict[str, dict[str, JobRun]]:
+    return {f: run_workflow(f, wfs, event, fail) for f, wf in wfs.items() if triggered(wf, event)}
 
 
 def _ran(runs: dict[str, dict[str, JobRun]], filename: str) -> list[str]:
-    return [j for j, r in runs.get(filename, {}).items() if r.result != "skipped"]
+    return [j for j, r in runs.get(filename, {}).items() if r.result != Result.SKIPPED]
 
 
-def _needs_closure(doc: dict, job_id: str) -> set[str]:
-    seen, stack = set(), [job_id]
+def _needs_closure(wf: Workflow, job_id: str) -> set[str]:
+    seen: set[str] = set()
+    stack = [job_id]
     while stack:
-        needs = doc["jobs"][stack.pop()].get("needs", [])
-        for n in [needs] if isinstance(needs, str) else needs:
+        for n in wf.jobs[stack.pop()].needs:
             if n not in seen:
                 seen.add(n)
                 stack.append(n)
     return seen
 
 
-# --- the contract ------------------------------------------------------------------
+# --- the contract ---------------------------------------------------------------------
 
 
-def violations(docs: dict[str, dict]) -> list[str]:
+def violations(wfs: dict[str, Workflow]) -> list[str]:
     bad: list[str] = []
-    ci = docs["ci.yml"]
+    ci = wfs["ci.yml"]
 
     # Pull requests: the affected tier against an explicit base, every required
     # context reported, no live suite. Same-repo and fork heads alike.
     for event in (pull_request("opened"), pull_request("synchronize"), pull_request("synchronize", fork=True)):
-        runs = simulate(docs, event)
-        reported = {c for wf in runs.values() for r in wf.values() if r.result != "skipped" for c in r.contexts}
-        for ctx in REQUIRED_CONTEXTS:
-            if ctx not in reported:
-                bad.append(f"{event.label}: required context `{ctx}` is not reported")
-        for live in LIVE:
-            if live in runs:
-                bad.append(f"{event.label}: live suite {live} is triggered")
+        runs = simulate(wfs, event)
+        reported = {c for wf in runs.values() for r in wf.values() if r.result != Result.SKIPPED for c in r.contexts}
+        bad += [
+            f"{event.label}: required context `{c}` is not reported" for c in REQUIRED_CONTEXTS if c not in reported
+        ]
+        bad += [f"{event.label}: live suite {live} is triggered" for live in LIVE if live in runs]
         for job_id, r in runs.get("ci.yml", {}).items():
-            for sub in r.called.values():
-                if sub.result != "skipped" and sub.workflow in LIVE:
-                    bad.append(f"{event.label}: ci.yml:{job_id} runs live suite {sub.workflow}")
+            bad += [
+                f"{event.label}: ci.yml:{job_id} runs live suite {sub.workflow}"
+                for sub in r.called.values()
+                if sub.result != Result.SKIPPED and sub.workflow in LIVE
+            ]
         check = runs.get("ci.yml", {}).get("check")
         cmds = check.commands if check else []
         if "just check affected" not in cmds:
@@ -399,119 +492,107 @@ def violations(docs: dict[str, dict]) -> list[str]:
             )
         if "uses nrwl/nx-set-shas@v4" not in cmds:
             bad.append(f"{event.label}: ci.yml `check` derives no explicit NX_BASE (nx-set-shas) before `just check`")
-    # No required-context job may wait on a live suite or on notignored.
-    for job_id, job in ci["jobs"].items():
-        if job_id in ("check", "llmlint"):
-            closure = _needs_closure(ci, job_id)
-            for n in closure:
-                uses = ci["jobs"][n].get("uses", "")
-                if any(uses.endswith(live) for live in LIVE):
-                    bad.append(f"ci.yml:{job_id} (a required context) needs live suite job {n}")
+    # No required-context job may wait on a live suite.
+    for job_id in ("check", "llmlint"):
+        for n in _needs_closure(ci, job_id):
+            if any((ci.jobs[n].uses or "").endswith(live) for live in LIVE):
+                bad.append(f"ci.yml:{job_id} (a required context) needs live suite job {n}")
 
     # An ordinary push to main: the sweep, every live suite, then the release.
     feat = push_main("feat: something (#99)")
-    runs = simulate(docs, feat)
+    runs = simulate(wfs, feat)
     check = runs.get("ci.yml", {}).get("check")
-    if not check or check.result != "success" or "just check all" not in check.commands:
+    if not check or check.result != Result.SUCCESS or "just check all" not in check.commands:
         bad.append(f"{feat.label}: ci.yml `check` does not run the full sweep (`just check all`)")
-    live_jobs = {}
-    for job_id, r in runs.get("ci.yml", {}).items():
-        for sub in r.called.values():
-            if sub.workflow in LIVE and sub.result == "success":
-                live_jobs[sub.workflow] = f"{sub.workflow}:{sub.job}"
-    for live in LIVE:
-        if live not in live_jobs:
-            bad.append(f"{feat.label}: live suite {live} does not run")
+    live_jobs = {
+        sub.workflow: f"{sub.workflow}:{sub.job}"
+        for r in runs.get("ci.yml", {}).values()
+        for sub in r.called.values()
+        if sub.workflow in LIVE and sub.result == Result.SUCCESS
+    }
+    bad += [f"{feat.label}: live suite {live} does not run" for live in LIVE if live not in live_jobs]
     release = runs.get("ci.yml", {}).get("release")
-    if (
-        not release
-        or release.result != "success"
-        or not any(s.workflow == "semantic-release.yml" and s.result == "success" for s in release.called.values())
-    ):
+    released = release is not None and any(
+        s.workflow == "semantic-release.yml" and s.result == Result.SUCCESS for s in release.called.values()
+    )
+    if not released:
         bad.append(f"{feat.label}: the release (semantic-release.yml) does not run after a green sweep")
     if "semantic-release.yml" in runs:
         bad.append(f"{feat.label}: semantic-release.yml is triggered directly, not after the sweep")
     for broken in ["ci.yml:check", *live_jobs.values()]:
-        r = simulate(docs, feat, frozenset({broken})).get("ci.yml", {}).get("release")
-        if r and r.result != "skipped":
+        r = simulate(wfs, feat, frozenset({broken})).get("ci.yml", {}).get("release")
+        if r is not None and r.result != Result.SKIPPED:
             bad.append(f"{feat.label}: with {broken} failing, the release still runs")
 
     # The release commit: nothing gated again; the tag still fires the builds.
     rel = push_main("chore(release): 0.13.0 [bot]")
-    runs = simulate(docs, rel)
-    for wf in NO_RELEASE_COMMIT:
-        if _ran(runs, wf):
-            bad.append(f"{rel.label}: {wf} runs {_ran(runs, wf)}")
+    runs = simulate(wfs, rel)
+    bad += [f"{rel.label}: {wf} runs {_ran(runs, wf)}" for wf in NO_RELEASE_COMMIT if _ran(runs, wf)]
     for wf, rs in runs.items():
-        for r in rs.values():
-            if any(s.result != "skipped" for s in r.called.values()):
-                bad.append(f"{rel.label}: {wf}:{r.job} calls a workflow")
+        bad += [
+            f"{rel.label}: {wf}:{r.job} calls a workflow"
+            for r in rs.values()
+            if any(s.result != Result.SKIPPED for s in r.called.values())
+        ]
     tag = push_tag("v0.13.0")
-    runs = simulate(docs, tag)
-    for wf in ("release.yml", "publish.yml"):
-        if not _ran(runs, wf):
-            bad.append(f"{tag.label}: {wf} does not run")
-    for wf in NO_RELEASE_COMMIT:
-        if _ran(runs, wf):
-            bad.append(f"{tag.label}: {wf} runs on the tag")
+    runs = simulate(wfs, tag)
+    bad += [f"{tag.label}: {wf} does not run" for wf in ("release.yml", "publish.yml") if not _ran(runs, wf)]
+    bad += [f"{tag.label}: {wf} runs on the tag" for wf in NO_RELEASE_COMMIT if _ran(runs, wf)]
 
     # Each live suite is still runnable by hand.
-    for live in LIVE:
-        ev = Event(f"workflow_dispatch {live}", "workflow_dispatch", "refs/heads/main", dispatch=live)
-        if not _ran(simulate(docs, ev), live):
-            bad.append(f"{ev.label}: does not run")
+    bad += [f"{dispatch(live).label}: does not run" for live in LIVE if not _ran(simulate(wfs, dispatch(live)), live)]
     return bad
 
 
-def _mutations(docs: dict[str, dict]) -> list[tuple[str, dict[str, dict]]]:
-    """Broken copies of the workflows, each of which the contract must reject."""
-    out = []
+# Deliberately broken edits of the raw workflow documents (YAML 1.1 parses the
+# bare `on` key as True), each of which the contract must reject.
+Mutation = Callable[[dict], None]
 
-    def m(label: str, fn) -> None:
-        d = copy.deepcopy(docs)
-        fn(d)
-        out.append((label, d))
 
-    m("a live suite triggered on pull_request", lambda d: d["e2e-claude.yml"]["on"].update({"pull_request": None}))
-    m(
-        "the release not waiting on one live suite",
-        lambda d: d["ci.yml"]["jobs"]["release"]["needs"].remove("live-qwen"),
-    )
-    m("the release not waiting on the sweep", lambda d: d["ci.yml"]["jobs"]["release"]["needs"].remove("check"))
-    m("bundle-smoke without the release-commit guard", lambda d: d["bundle-smoke.yml"]["jobs"]["smoke"].pop("if"))
-    m("ci's check running on the release commit", lambda d: d["ci.yml"]["jobs"]["check"].update({"if": "true"}))
-    m(
-        "no explicit NX_BASE on a pull request",
-        lambda d: d["ci.yml"]["jobs"]["check"]["steps"].__setitem__(
-            slice(None), [s for s in d["ci.yml"]["jobs"]["check"]["steps"] if "nx-set-shas" not in s.get("uses", "")]
-        ),
-    )
-    m(
-        "the sweep tier dropped at merge-to-main",
-        lambda d: [
-            s["env"].update({"TIER": "affected"})
-            for s in d["ci.yml"]["jobs"]["check"]["steps"]
-            if "TIER" in (s.get("env") or {})
-        ],
-    )
-    m(
-        "llmlint skipped on a fork pull request",
-        lambda d: d["ci.yml"]["jobs"]["llmlint"].update(
-            {"if": "github.event.pull_request.head.repo.full_name == github.repository"}
-        ),
-    )
-    m(
+def _drop_step(job: dict, needle: str) -> None:
+    job["steps"] = [s for s in job["steps"] if needle not in s.get("uses", "")]
+
+
+def _set_tier(job: dict, tier: str) -> None:
+    for step in job["steps"]:
+        if "TIER" in (step.get("env") or {}):
+            step["env"]["TIER"] = tier
+
+
+def _jobs(d: dict, workflow: str) -> dict:
+    return d[workflow]["jobs"]
+
+
+FORK_GUARD = "github.event.pull_request.head.repo.full_name == github.repository"
+MUTATIONS: tuple[tuple[str, Mutation], ...] = (
+    ("a live suite triggered on pull_request", lambda d: d["e2e-claude.yml"][True].update({"pull_request": None})),
+    ("the release not waiting on one live suite", lambda d: _jobs(d, "ci.yml")["release"]["needs"].remove("live-qwen")),
+    ("the release not waiting on the sweep", lambda d: _jobs(d, "ci.yml")["release"]["needs"].remove("check")),
+    ("bundle-smoke without the release-commit guard", lambda d: _jobs(d, "bundle-smoke.yml")["smoke"].pop("if")),
+    ("ci's check running on the release commit", lambda d: _jobs(d, "ci.yml")["check"].update({"if": "true"})),
+    ("no explicit NX_BASE on a pull request", lambda d: _drop_step(_jobs(d, "ci.yml")["check"], "nx-set-shas")),
+    ("the sweep tier dropped at merge-to-main", lambda d: _set_tier(_jobs(d, "ci.yml")["check"], "affected")),
+    ("llmlint skipped on a fork pull request", lambda d: _jobs(d, "ci.yml")["llmlint"].update({"if": FORK_GUARD})),
+    (
         "a required context needing a live suite",
-        lambda d: d["ci.yml"]["jobs"]["llmlint"].update({"needs": ["live-claude"]}),
-    )
-    m(
-        "semantic-release triggered directly on push",
-        lambda d: d["semantic-release.yml"].update({"on": {"push": {"branches": ["main"]}}}),
-    )
-    return out
+        lambda d: _jobs(d, "ci.yml")["llmlint"].update({"needs": ["live-claude"]}),
+    ),
+    ("semantic-release triggered on push", lambda d: d["semantic-release.yml"].update({True: {"push": None}})),
+)
 
 
-def report(docs: dict[str, dict]) -> None:
+def blind_spots(raw: dict[str, object]) -> list[str]:
+    """The mutations the contract fails to reject."""
+    blind = []
+    for label, mutate in MUTATIONS:
+        broken = copy.deepcopy(raw)
+        mutate(broken)
+        if not violations(parse_all(broken)):
+            blind.append(label)
+    return blind
+
+
+def report(wfs: dict[str, Workflow]) -> None:
     events = [
         pull_request("synchronize"),
         pull_request("synchronize", fork=True),
@@ -521,39 +602,48 @@ def report(docs: dict[str, dict]) -> None:
     ]
     for event in events:
         print(f"== {event.label}")
-        for wf, rs in simulate(docs, event).items():
+        for wf, rs in simulate(wfs, event).items():
             for r in rs.values():
                 called = "".join(f" -> {s.workflow}:{s.job} {s.result}" for s in r.called.values())
                 cmd = next((c for c in r.commands if c.startswith("just check")), "")
-                print(f"  {wf}:{r.job:<10} {r.result:<8} {cmd}{called}")
+                print(f"  {wf + ':' + r.job:<34} {r.result:<8} {cmd}{called}")
     feat = push_main("feat: something (#99)")
     for broken in ("ci.yml:check", "e2e-qwen.yml:live"):
-        r = simulate(docs, feat, frozenset({broken}))["ci.yml"]["release"]
+        r = simulate(wfs, feat, frozenset({broken}))["ci.yml"]["release"]
         print(f"== {feat.label}, {broken} induced to fail: ci.yml:release {r.result}")
 
 
 def main(argv: list[str]) -> int:
-    docs = load_workflows()
-    if "--report" in argv:
-        report(docs)
-    problems = violations(docs)
+    unknown = [a for a in argv if a != "--report"]
+    if unknown:
+        print(f"check-workflow-routing: unknown argument(s) {unknown}; the only option is --report", file=sys.stderr)
+        return 2
+    try:
+        raw = load_raw()
+        wfs = parse_all(raw)
+        if "--report" in argv:
+            report(wfs)
+        problems = violations(wfs)
+        blind = [] if problems else blind_spots(raw)
+    except (OSError, yaml.YAMLError, WorkflowError) as exc:
+        print(f"check-workflow-routing: cannot model .github/workflows: {exc}; {FIX}", file=sys.stderr)
+        return 2
     if problems:
         print(f"check-workflow-routing: {len(problems)} routing violation(s):", file=sys.stderr)
         for p in problems:
             print(f"  - {p}", file=sys.stderr)
-        print('  fix the workflow named (see AGENTS.md "Commits, releases, and merging")', file=sys.stderr)
+        print(f"  {FIX}", file=sys.stderr)
         return 1
-    blind = [label for label, broken in _mutations(docs) if not violations(broken)]
     if blind:
         print(
-            f"check-workflow-routing: the contract no longer catches: {', '.join(blind)}; "
-            "a check in scripts/check-workflow-routing.py stopped seeing what it guards",
+            f"check-workflow-routing: the contract no longer catches: {', '.join(blind)}; restore the assertion in "
+            "violations() that guards it (or update MUTATIONS if the routing changed on purpose)",
             file=sys.stderr,
         )
         return 1
     print(
-        f"check-workflow-routing: {len(docs)} workflows route as the release model requires; "
-        f"{len(_mutations(docs))} broken variants each rejected"
+        f"check-workflow-routing: {len(wfs)} workflows route as the release model requires; "
+        f"{len(MUTATIONS)} broken variants each rejected"
     )
     return 0
 

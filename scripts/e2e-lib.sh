@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# Shared helpers for the live, per-harness e2e checks (live/harness/e2e-harness.sh).
+# Shared helpers for the live, per-harness e2e checks (scripts/e2e-harness.sh).
 # This file is sourced (no shebang); the directive above tells shellcheck the
 # target shell.
 #
@@ -34,8 +34,8 @@ skip() { printf 'SKIP: %s\n' "$*"; exit 0; }
 E2E_JUDGE_PLATFORM="claude-code"
 E2E_JUDGE_MODEL="${SKILLTEST_E2E_JUDGE_MODEL:-haiku}"
 
-# Repo root (this file lives in live/harness/).
-e2e_repo_root() { cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd; }
+# Repo root (this file lives in scripts/).
+e2e_repo_root() { cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd; }
 
 # Resolve (building if needed) the skilltest binary. Honor SKILLTEST_BIN like the
 # plugin suites do, so CI can point at a prebuilt one and skip the rebuild.

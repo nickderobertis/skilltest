@@ -4,7 +4,7 @@ name: E2E (Goose)
 # the built skilltest binary, scored by the fixed claude-code judge. Needs network
 # and two secrets: OPENAI_API_KEY (Goose's provider key) and CLAUDE_CODE_OAUTH_TOKEN
 # (the judge). Goose ignores oneharness's --model and reads its provider/model from
-# the environment, so live/harness/e2e-lib.sh exports GOOSE_PROVIDER + GOOSE_MODEL. The
+# the environment, so scripts/e2e-lib.sh exports GOOSE_PROVIDER + GOOSE_MODEL. The
 # skill reaches the model via Goose's native `--system` flag. See docs/e2e.md.
 #
 # Security: gated to the canonical repo and non-fork PRs (defense in depth around

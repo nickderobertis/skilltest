@@ -33,4 +33,4 @@ from the contract. No framework code — vitest support lives in `plugins/vitest
   config `provider.bin` or a caller-set var still wins), falling back to
   `oneharness` on `PATH` — `node_modules/.bin` need not be on `PATH`.
 - The pnpm workspace is rooted at the repo (`pnpm-workspace.yaml`, one
-  `pnpm-lock.yaml`); see the root AGENTS.md for why it is pnpm.
+  `pnpm-lock.yaml`), never a lockfile per package.

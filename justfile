@@ -10,7 +10,7 @@
 # the AFFECTED tier (the projects a change can reach, against an explicitly
 # derived base) and `just check all` the BROADER tier (every project). Both add
 # the workspace-level gates that always run — contract drift, release targets,
-# module boundaries, workflow routing, Rust coverage. `just bootstrap` must work
+# module boundaries, workflow routing, the base derivation, Rust coverage. `just bootstrap` must work
 # from a clean clone. Requires `cargo` (+ `cargo-nextest`, `cargo-llvm-cov`),
 # `uv`, `pnpm`/`node`, `jq`, and `python3` 3.11+.
 
@@ -65,6 +65,7 @@ check tier="affected":
     @just release-targets-check
     @just boundaries-check
     @just workflows-check
+    @just base-check
     {{ if tier == "all" { "pnpm exec nx run-many" } else { affected } }} -t format-check lint typecheck test test-e2e --exclude={{live}}
     {{nx}} run-many -t lint format-check --projects={{live}}
     @just coverage
@@ -113,6 +114,12 @@ boundaries-check:
 # nothing, the tag workflows — plus its own red/green test. Needs `uv`.
 workflows-check:
     @uv run --quiet --script scripts/check-workflow-routing.py >/dev/null
+
+# The affected tier's base derivation (part of every `just check` tier;
+# workspace-level): scripts/nx-base.sh against throwaway git repositories, every
+# way NX_BASE resolves and every way it must fail closed.
+base-check:
+    @bash scripts/nx-base-test.sh >/dev/null
 
 # The `test` target of affected projects: the Rust unit suites and the CLI's
 # binary e2e project (`skilltest-cli-e2e`, which builds the CLI first).

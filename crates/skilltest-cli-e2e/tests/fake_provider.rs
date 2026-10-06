@@ -105,14 +105,12 @@ fn judge_boolean_requires_all_backtick_substrings() {
         { "role": "user", "content": "hi" },
         { "role": "assistant", "content": "Hello, Dr. Smith!" },
     ]);
-    // Both required substrings present -> true.
     let present = json!({
         "op": "judge", "kind": "boolean",
         "criterion": "greets `Dr. Smith` and says `Hello`",
         "messages": messages,
     });
     assert_eq!(response(&present.to_string())["value"], Value::Bool(true));
-    // A required substring missing -> false.
     let missing = json!({
         "op": "judge", "kind": "boolean",
         "criterion": "mentions `appointment`",

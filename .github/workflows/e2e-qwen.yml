@@ -3,7 +3,7 @@ name: E2E (Qwen)
 # Live end-to-end check that drives the real `qwen` (Qwen Code) CLI through
 # oneharness via the built skilltest binary, scored by the fixed claude-code judge.
 # Needs network and two secrets: OPENAI_API_KEY (Qwen speaks an OpenAI-compatible
-# API) and CLAUDE_CODE_OAUTH_TOKEN (the judge). live/harness/e2e-lib.sh points Qwen at
+# API) and CLAUDE_CODE_OAUTH_TOKEN (the judge). scripts/e2e-lib.sh points Qwen at
 # OpenAI with OPENAI_BASE_URL + OPENAI_MODEL=gpt-4o-mini (the gpt-5 family rejects
 # qwen-code's `max_tokens`). Qwen has no system flag, so the skill is prepended to
 # the prompt. See docs/e2e.md.

@@ -87,12 +87,10 @@ added. What was pulled in, and why:
   python-cli.md` — the Python package is a thin SDK/library wrapping the Rust
   CLI, with no console entry point of its own.
 - **TypeScript package manager: pnpm.** `typescript.md` defaults to bun and
-  allows pnpm/npm only where a constraint rules bun out. skilltest's pnpm
-  workspace predates that default (the TypeScript side was stood up on pnpm on
-  2026-06-10/11; the bun default dates from 2026-06-14), and no constraint
-  ruling bun out is known — none is recorded in history. A migration would have
-  to re-prove the pnpm behaviour the release path relies on (`pnpm publish`
-  rewriting `workspace:*`, `pnpm/action-setup` in CI).
+  allows pnpm/npm only where a constraint rules bun out. The pnpm workspace
+  predates that default, and no constraint ruling bun out is known, so moving
+  to bun is open. A migration has to re-prove what the release path relies on:
+  `pnpm publish` rewriting `workspace:*`, and `pnpm/action-setup` in CI.
 
 ### Coverage and e2e (the gate's depth)
 
@@ -101,8 +99,8 @@ added. What was pulled in, and why:
   --fail-under-lines 95` and fails the gate below 95% line coverage of the Rust
   core's sources (`skilltest-core` + the `skilltest` CLI, the fake provider
   included); the measured files are the two crates' `src/`, and the test-only
-  crates contribute no lines. The figure is ~96% (6886 lines, 96.37%). It runs
-  over the **whole Rust workspace** on every gate, not only when nx calls a Rust
+  crates contribute no lines. It runs over the **whole Rust workspace** on every
+  gate, not only when nx calls a Rust
   project affected: the binary is the published artifact, so its floor is proven
   on every run. The Python/TS SDKs are proven by their `test-e2e` targets and the
   bundled-binary install smoke; no coverage bar is enforced on them.
@@ -157,14 +155,12 @@ The graph, with each project's `type:`/`lang:` tags:
 - `skilltest-live-claude`, `skilltest-live-judge-api`, `skilltest-live-harness`
   (`type:live`) → cli and/or core.
 
-**Allowed edges** (`scripts/check-project-boundaries.py`, run by every `just
-check` tier, fails on any other): `contract` → contract only; `lib` → lib,
-contract; `app` → lib, contract; `sdk` → app, contract, carrier; `plugin` → sdk;
-`carrier` → nothing; `e2e` and `live` → app, lib, contract. Nothing may depend on
-an `e2e` or `live` project, so an expensive suite stays behind an edge no library
-can draw back, and the contract never depends on its consumers. Every project
-carries exactly one `type:` and one `lang:` tag. Change the rule table and this
-paragraph together.
+**Module boundaries.** Every project carries exactly one `type:` and one `lang:`
+tag, and `just boundaries-check` (every `just check` tier) holds each graph edge
+to the `ALLOWED` table in `scripts/check-project-boundaries.py` — the one source
+for which type may depend on which. Its intent: nothing may depend on an `e2e`
+or `live` project, so an expensive suite stays behind an edge no library can
+draw back, and a `contract` depends only on contracts, never on its consumers.
 
 **The live selection rule:** every project tagged `type:live` is excluded from
 both tiers of `just check` (`--exclude=tag:type:live`); a live project added with
@@ -193,7 +189,8 @@ nx, which builds prerequisites in graph order.
   Both tiers exclude the live projects and then run the workspace-level gates
   that span every stack — contract drift (`just contract-check`), release targets
   (`just release-targets-check`), module boundaries (`just boundaries-check`),
-  workflow routing (`just workflows-check`) — and the Rust coverage floor.
+  workflow routing (`just workflows-check`), the base derivation's own test
+  (`just base-check`) — and the Rust coverage floor.
 - `just test` / `just test-e2e` / `just lint` / `just format-check` / `just
   typecheck` / `just build` — single affected-tier steps for iterating (`test`
   includes the CLI e2e project); `just format` formats every project.
