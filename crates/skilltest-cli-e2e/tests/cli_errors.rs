@@ -8,6 +8,8 @@
 
 #![cfg(unix)]
 
+mod common;
+
 use std::io::Write as _;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::PathBuf;
@@ -17,14 +19,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use serde_json::Value;
 
 fn skilltest() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_skilltest"))
+    common::built_bin("skilltest")
 }
 
 fn fake_provider() -> PathBuf {
-    skilltest()
-        .parent()
-        .expect("binary has a parent dir")
-        .join("skilltest-fake-provider")
+    common::built_bin("skilltest-fake-provider")
 }
 
 fn fixtures() -> PathBuf {

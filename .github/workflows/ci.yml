@@ -1,13 +1,26 @@
-# Prove the artifact from a clean checkout: bootstrap, then the full gate.
+# Prove the artifact from a clean checkout: bootstrap, then the gate — at the
+# tier the event is for. One `check` job and one recipe (`just check <tier>`), so
+# local and CI cannot drift; the tier is a flag on it (see AGENTS.md "Commits,
+# releases, and merging"):
 #
-# skilltest ships a cross-platform CLI plus Python and TypeScript SDKs and
-# test-framework packages, so the matrix covers Linux and macOS. Each job
-# installs only what `just bootstrap` + `just check` need — Rust (+ nextest +
-# llvm-cov for the coverage gate), uv, and pnpm/Node — then runs `just
-# bootstrap` and `just check` (format, lint, type check, unit, e2e, and the 95%
-# Rust line-coverage gate). The gate job is named `check`, so its required
-# status contexts are `check (ubuntu-latest)` and `check (macos-latest)`. See
-# references/ci.md.
+#   * pull_request: the AFFECTED tier — the projects the diff can reach, against
+#     the merge base nx-set-shas derives (exported as NX_BASE, which the recipe
+#     validates). This is what branch protection requires: the job is named
+#     `check`, so its contexts are `check (ubuntu-latest)`/`check (macos-latest)`.
+#   * push to main: the BROADER tier — the full `just check all` sweep, plus every
+#     live e2e suite (external contact promotes them out of the PR tier), and
+#     then the release. skilltest releases on merge (semantic-release), so the
+#     merged commit IS the released commit: the sweep runs here, once, and the
+#     release job runs only if the sweep and every live suite succeeded.
+#
+# The `chore(release): X.Y.Z` commit semantic-release pushes differs from the
+# commit it swept only in version strings, so every push job below skips it
+# (gate a given commit once). The tag it pushes still fires release.yml and
+# publish.yml, which build and publish without re-gating.
+#
+# Each job installs only what `just bootstrap` + `just check` need — Rust (from
+# rust-toolchain.toml, + nextest + llvm-cov for the coverage gate), uv, and
+# pnpm/Node. See references/ci.md.
 
 name: ci
 
@@ -16,12 +29,23 @@ on:
     branches: [main]
   pull_request:
 
+# Least privilege: read-only by default; only the release job widens it.
+permissions:
+  contents: read
+
+# A superseded PR run is cancelled. Runs on main queue instead: cancelling one
+# mid-release could interrupt semantic-release between its commit and its tag.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   check:
+    # Every pull request (the required contexts), and every push to main except
+    # the release bot's own version-bump commit.
+    if: >-
+      github.event_name == 'pull_request' ||
+      !startsWith(github.event.head_commit.message, 'chore(release):')
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -30,7 +54,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # nx affected diffs against a base ref; fetch history so it can.
+          # The affected tier resolves its merge base from history; fetch it all.
           fetch-depth: 0
 
       - name: Install just
@@ -68,19 +92,111 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
 
-      # Derive the base/head SHAs nx uses to compute the affected project set
-      # (last successful run on push, the PR base on pull_request).
-      - name: Derive nx affected SHAs
+      # Derive the PR's merge base EXPLICITLY and export it as NX_BASE, which
+      # `just check` validates (a plain ref/SHA that resolves, else it fails
+      # closed) — never Nx's implicit default base.
+      - name: Derive the affected tier's base (NX_BASE)
+        if: github.event_name == 'pull_request'
         uses: nrwl/nx-set-shas@v4
 
       - name: Bootstrap
         run: just bootstrap
 
-      # On a PR, gate only the affected projects (vs the PR base); on push to
-      # main, nx-set-shas points at the last green commit. `check-all` (run-many)
-      # remains available locally to force every project.
-      - name: Check
-        run: just check
+      - name: Check (affected tier on a PR, full sweep at merge-to-main)
+        env:
+          TIER: ${{ github.event_name == 'push' && 'all' || 'affected' }}
+        run: just check "$TIER"
+
+  # The live e2e suites: external contact promotes them out of the PR tier into
+  # the broader tier, so they run here, on every ordinary push to main, each in
+  # its own workflow (credential fail-fast and fork guard live there). None is a
+  # required context and no PR job needs them.
+  live-claude:
+    if: >-
+      github.event_name == 'push' &&
+      !startsWith(github.event.head_commit.message, 'chore(release):')
+    uses: ./.github/workflows/e2e-claude.yml
+    secrets: inherit
+
+  live-codex:
+    if: >-
+      github.event_name == 'push' &&
+      !startsWith(github.event.head_commit.message, 'chore(release):')
+    uses: ./.github/workflows/e2e-codex.yml
+    secrets: inherit
+
+  live-copilot:
+    if: >-
+      github.event_name == 'push' &&
+      !startsWith(github.event.head_commit.message, 'chore(release):')
+    uses: ./.github/workflows/e2e-copilot.yml
+    secrets: inherit
+
+  live-crush:
+    if: >-
+      github.event_name == 'push' &&
+      !startsWith(github.event.head_commit.message, 'chore(release):')
+    uses: ./.github/workflows/e2e-crush.yml
+    secrets: inherit
+
+  live-cursor:
+    if: >-
+      github.event_name == 'push' &&
+      !startsWith(github.event.head_commit.message, 'chore(release):')
+    uses: ./.github/workflows/e2e-cursor.yml
+    secrets: inherit
+
+  live-goose:
+    if: >-
+      github.event_name == 'push' &&
+      !startsWith(github.event.head_commit.message, 'chore(release):')
+    uses: ./.github/workflows/e2e-goose.yml
+    secrets: inherit
+
+  live-opencode:
+    if: >-
+      github.event_name == 'push' &&
+      !startsWith(github.event.head_commit.message, 'chore(release):')
+    uses: ./.github/workflows/e2e-opencode.yml
+    secrets: inherit
+
+  live-qwen:
+    if: >-
+      github.event_name == 'push' &&
+      !startsWith(github.event.head_commit.message, 'chore(release):')
+    uses: ./.github/workflows/e2e-qwen.yml
+    secrets: inherit
+
+  live-judge-api:
+    if: >-
+      github.event_name == 'push' &&
+      !startsWith(github.event.head_commit.message, 'chore(release):')
+    uses: ./.github/workflows/e2e-judge-api.yml
+    secrets: inherit
+
+  # The release, after the broader tier: semantic-release runs only once this
+  # commit's full sweep (both OSes) and every live suite succeeded, so a red
+  # sweep or live suite cuts no release. Its own repository and `chore(release):`
+  # guards repeat inside the called workflow.
+  release:
+    needs:
+      - check
+      - live-claude
+      - live-codex
+      - live-copilot
+      - live-crush
+      - live-cursor
+      - live-goose
+      - live-opencode
+      - live-qwen
+      - live-judge-api
+    if: >-
+      github.event_name == 'push' &&
+      !startsWith(github.event.head_commit.message, 'chore(release):')
+    permissions:
+      contents: write
+    uses: ./.github/workflows/semantic-release.yml
+    secrets: inherit
 
   llmlint:
     if: github.event_name == 'pull_request'

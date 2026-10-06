@@ -2,6 +2,7 @@
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
   "name": "skilltest-core",
   "projectType": "library",
+  "tags": ["type:lib", "lang:rust"],
   "targets": {
     "build": {
       "command": "cargo build -p skilltest-core"

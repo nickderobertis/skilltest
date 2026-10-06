@@ -1,0 +1,27 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "skilltest-live-claude",
+  "projectType": "application",
+  "tags": ["type:live", "lang:rust"],
+  "implicitDependencies": ["skilltest-cli", "skilltest-core"],
+  "targets": {
+    "live": {
+      "command": "cargo test -p skilltest-live-claude --test live -- --ignored",
+      "dependsOn": [
+        {
+          "projects": ["skilltest-cli"],
+          "target": "build"
+        }
+      ]
+    },
+    "lint": {
+      "command": "cargo clippy -p skilltest-live-claude --all-targets -- -D warnings"
+    },
+    "format-check": {
+      "command": "cargo fmt -p skilltest-live-claude --check"
+    },
+    "format": {
+      "command": "cargo fmt -p skilltest-live-claude"
+    }
+  }
+}

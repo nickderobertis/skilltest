@@ -11,8 +11,8 @@ mirroring the live checks in
 
 ```bash
 just install-oneharness          # prebuilt oneharness on PATH (checksum-verified)
-just test-live                   # deep claude-code suite (crates/skilltest-cli/tests/live.rs)
-just test-harness claude-code    # generic per-harness smoke (scripts/e2e-harness.sh)
+just test-live                   # deep claude-code suite (live/claude/tests/live.rs)
+just test-harness claude-code    # generic per-harness smoke (live/harness/e2e-harness.sh)
 just test-harness goose          # any harness id; skips loudly if it can't run here
 ```
 
@@ -40,7 +40,7 @@ Three layers, all driving the real binary as a subprocess:
 - **`test-harness <id>`** — the generic, allowlister-style breadth check. Runs the
   harness-agnostic `tests/fixtures/live/cases/smoke.yaml`, asserts the run
   passed and the reply contained `pong`, then runs the **mock phase** matched to
-  the harness's hook capability (`H_MOCK` in `scripts/e2e-lib.sh`): the stub
+  the harness's hook capability (`H_MOCK` in `live/harness/e2e-lib.sh`): the stub
   case on rewrite-capable harnesses (claude-code, codex, opencode, crush,
   cursor), the deny case on goose (deny-only — its protocol has no rewrite
   verdict), and a loud explained skip for qwen (its hooks fire only at user
@@ -88,10 +88,10 @@ in CI:
 | qwen         | `OPENAI_API_KEY` ✅          | `gpt-4o-mini` (OpenAI-compat)  | **green** — in CI | skipped (user-scope-only hooks; no one-shot delivery) | prepended to prompt; raw text |
 | copilot      | `COPILOT_GITHUB_TOKEN` ✅    | CLI default                    | **green** — in CI | skipped (hooks never fire headlessly) | prepended to prompt; raw text |
 
-`scripts/e2e-harness.sh` still **skips** (never falsely passes) when a harness
+`live/harness/e2e-harness.sh` still **skips** (never falsely passes) when a harness
 binary, `oneharness`, or a secret is missing — and a future not-yet-drivable
 harness should be added with `H_DRIVABLE=0` + a precise `H_BLOCKED` reason in
-`scripts/e2e-lib.sh`.
+`live/harness/e2e-lib.sh`.
 
 ### How the skill reaches each harness, and how the reply comes back
 
@@ -134,7 +134,7 @@ see the message itself rather than any harness's wrapper noise.
 
 1. **Credential.** Add the harness's secret to Bitwarden, then add it to
    `gh-secrets.json` (`secrets[]`) and run `gh-secrets manifest sync`.
-2. **Config.** Confirm `scripts/e2e-lib.sh` has the harness in
+2. **Config.** Confirm `live/harness/e2e-lib.sh` has the harness in
    `e2e_harness_config` with the right model / auth env / extra env. When
    oneharness can carry the skill to it, set `H_DRIVABLE=1` and drop `H_BLOCKED`.
 3. **Validate locally:** `just test-harness <id>` (it builds the CLI, drives the

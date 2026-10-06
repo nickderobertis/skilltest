@@ -2,6 +2,7 @@
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
   "name": "skilltest-cli",
   "projectType": "application",
+  "tags": ["type:app", "lang:rust"],
   "implicitDependencies": ["skilltest-core"],
   "targets": {
     "build": {
@@ -18,10 +19,6 @@
     },
     "test": {
       "command": "cargo nextest run -p skilltest-cli --no-tests=pass -E 'kind(lib) | kind(bin)'"
-    },
-    "test-e2e": {
-      "command": "cargo nextest run -p skilltest-cli --no-tests=pass -E 'kind(test)'",
-      "dependsOn": ["build"]
     }
   }
 }

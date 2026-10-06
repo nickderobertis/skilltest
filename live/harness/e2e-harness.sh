@@ -11,8 +11,8 @@
 # cheap model call.
 #
 # Usage:
-#   scripts/e2e-harness.sh <harness-id> [case-file]
-#     harness-id: claude-code | opencode | goose | codex   (see scripts/e2e-lib.sh)
+#   live/harness/e2e-harness.sh <harness-id> [case-file]
+#     harness-id: claude-code | opencode | goose | codex   (see live/harness/e2e-lib.sh)
 #     case-file:  defaults to tests/fixtures/live/cases/smoke.yaml
 #
 # Env overrides:
@@ -29,7 +29,7 @@ id="${1:-}"
 case_file="${2:-}"
 [ -n "$id" ] || { echo "usage: $0 <harness-id> [case-file]" >&2; exit 2; }
 
-# shellcheck source=scripts/e2e-lib.sh
+# shellcheck source=live/harness/e2e-lib.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/e2e-lib.sh"
 
 e2e_harness_config "$id"

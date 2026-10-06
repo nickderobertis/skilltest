@@ -32,7 +32,7 @@
       "Bash(just test-live)",
       "Bash(just test-harness:*)",
       "Bash(just test-claude)",
-      "Bash(bash scripts/e2e-harness.sh:*)",
+      "Bash(bash live/harness/e2e-harness.sh:*)",
       "Bash(bash scripts/install-oneharness.sh:*)",
       "Bash(oneharness list)",
       "Bash(oneharness detect)",

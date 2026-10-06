@@ -26,6 +26,11 @@ permissions:
 
 jobs:
   visual-docs:
+    # Skip the release bot's `chore(release):` commit: its tree differs from the
+    # commit already checked only in version strings (gate a given commit once).
+    if: >-
+      github.event_name != 'push' ||
+      !startsWith(github.event.head_commit.message, 'chore(release):')
     uses: nickderobertis/screencomp/.github/workflows/visual-docs-reusable.yml@v0.4.2
     with:
       # Strict gate (the safe default): CI FAILS if the capture drifts from the

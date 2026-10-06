@@ -7,7 +7,7 @@
 //!
 //! ```bash
 //! SKILLTEST_ONEHARNESS_BIN=/path/to/oneharness \
-//!   cargo test -p skilltest-cli --test live -- --ignored
+//!   just test-live   # nx run skilltest-live-claude:live — builds the CLI first
 //! ```
 //!
 //! Knobs (all optional): `SKILLTEST_LIVE_PLATFORM` (default `claude-code`),
@@ -20,8 +20,24 @@ use std::process::{Command, Output};
 
 use serde_json::Value;
 
+/// The `skilltest` binary `skilltest-cli:build` produced. A crate other than the
+/// binary's own gets no `CARGO_BIN_EXE_*`, so resolve it beside this test
+/// executable (`<target>/<profile>/deps/..`), where cargo puts workspace binaries.
 fn skilltest() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_skilltest"))
+    let exe = std::env::current_exe().expect("the test executable has a path");
+    let path = exe
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("test executables live in <target>/<profile>/deps")
+        .join("skilltest");
+    assert!(
+        path.is_file(),
+        "{} is missing: build the CLI first (`cargo build -p skilltest-cli`, or run \
+         this suite through `just test-live`, whose nx target depends on \
+         `skilltest-cli:build`)",
+        path.display()
+    );
+    path
 }
 
 fn live_fixtures() -> PathBuf {

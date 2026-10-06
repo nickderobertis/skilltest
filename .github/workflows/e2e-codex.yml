@@ -9,17 +9,19 @@ name: E2E (Codex)
 # reachable by untrusted fork code (GitHub already withholds them from fork PRs;
 # the `if` is defense in depth).
 
+# Never on a pull request: this suite contacts a paid external service, so it
+# runs at the broader tier — ci.yml calls it on every ordinary push to main, and
+# semantic-release cuts no release from that commit unless it succeeds (the
+# `chore(release):` commit calls nothing). Also runnable by hand.
 on:
-  push:
-    branches: [main]
-  pull_request:
+  workflow_call:
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: e2e-codex-${{ github.ref }}
+  group: e2e-codex-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:

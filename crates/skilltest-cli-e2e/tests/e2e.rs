@@ -7,22 +7,21 @@
 //! Exit codes under test (see `skilltest_core::ExitCode`): 0 success, 1 a test
 //! case / skill failed, 2 bad input, 3 provider failure.
 
+mod common;
+
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
 use serde_json::Value;
 
-/// Path to the built `skilltest` binary (provided by Cargo for integration tests).
+/// Path to the built `skilltest` binary (`skilltest-cli:build`).
 fn skilltest() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_skilltest"))
+    common::built_bin("skilltest")
 }
 
-/// Path to the fake provider, which Cargo builds into the same directory.
+/// Path to the fake provider, which the same build puts beside it.
 fn fake_provider() -> PathBuf {
-    skilltest()
-        .parent()
-        .expect("binary has a parent dir")
-        .join("skilltest-fake-provider")
+    common::built_bin("skilltest-fake-provider")
 }
 
 /// Absolute path to the shared fixtures directory at the repo root.

@@ -11,7 +11,7 @@
 //!
 //! ```bash
 //! ANTHROPIC_API_KEY=... OPENAI_API_KEY=... \
-//!   cargo test -p skilltest-cli --test live_api_judge -- --ignored
+//!   just test-judge-api   # nx run skilltest-live-judge-api:live
 //! ```
 //!
 //! Model knobs (optional): `SKILLTEST_ANTHROPIC_JUDGE_MODEL` (default

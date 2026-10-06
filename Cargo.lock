@@ -343,6 +343,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "skilltest-cli-e2e"
+version = "0.12.0"
+dependencies = [
+ "serde_json",
+ "skilltest-core",
+]
+
+[[package]]
 name = "skilltest-core"
 version = "0.12.0"
 dependencies = [
@@ -352,6 +360,21 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "thiserror",
+]
+
+[[package]]
+name = "skilltest-live-claude"
+version = "0.12.0"
+dependencies = [
+ "serde_json",
+ "skilltest-core",
+]
+
+[[package]]
+name = "skilltest-live-judge-api"
+version = "0.12.0"
+dependencies = [
+ "skilltest-core",
 ]
 
 [[package]]

@@ -58,14 +58,14 @@ skilltest run cases/greet.yaml --provider oneharness -p claude-code -m claude-op
 ## Live tests against real oneharness
 
 The gate is deterministic (fake provider), so real model calls are never in it.
-The live suite (`crates/skilltest-cli/tests/live.rs`) drives the skilltest CLI
+The live suite (`live/claude/tests/live.rs`, nx project `skilltest-live-claude`) drives the skilltest CLI
 through **real** oneharness + a real harness, and is `#[ignore]`d so it only runs
 when you ask. Build [oneharness](https://github.com/nickderobertis/oneharness),
 then:
 
 ```bash
 SKILLTEST_ONEHARNESS_BIN=/path/to/oneharness/target/debug/oneharness \
-  cargo test -p skilltest-cli --test live -- --ignored
+  just test-live   # nx run skilltest-live-claude:live (builds the CLI first)
 ```
 
 It uses near-deterministic fixtures (`tests/fixtures/live/`) — a skill that always

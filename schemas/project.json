@@ -1,0 +1,24 @@
+{
+  "$schema": "../node_modules/nx/schemas/project-schema.json",
+  "name": "skilltest-contract",
+  "projectType": "library",
+  "tags": ["type:contract", "lang:json"],
+  "namedInputs": {
+    "default": [
+      "{projectRoot}/**/*",
+      "sharedGlobals",
+      "{workspaceRoot}/scripts/gen-contract.sh",
+      "{workspaceRoot}/tests/fixtures/contract/**/*"
+    ]
+  },
+  "targets": {
+    "contract-check": {
+      "command": "bash scripts/gen-contract.sh --check",
+      "cache": false
+    },
+    "gen-contract": {
+      "command": "bash scripts/gen-contract.sh",
+      "cache": false
+    }
+  }
+}
