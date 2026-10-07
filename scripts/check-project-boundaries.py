@@ -104,12 +104,10 @@ def _project(name: str, node: object) -> Project:
 def parse_graph(raw: object) -> Graph:
     """Validate the `nx graph --file` JSON into a `Graph`, naming what is malformed."""
     match raw:
-        case {"graph": {"nodes": dict(nodes), **rest}}:
-            deps = rest.get("dependencies", {})
+        case {"graph": {"nodes": dict(nodes), "dependencies": dict(deps)}}:
+            pass
         case _:
-            raise GraphError("top level must be an object with a `graph.nodes` object")
-    if not isinstance(deps, dict):
-        raise GraphError("`graph.dependencies` must be an object")
+            raise GraphError("top level must be an object with `graph.nodes` and `graph.dependencies` objects")
     projects = {ProjectId(name): _project(name, node) for name, node in nodes.items()}
     edges: list[Edge] = []
     for source, out in deps.items():

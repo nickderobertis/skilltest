@@ -108,6 +108,7 @@ def graph_case(label: str, raw: object, exit_code: int, needle: str) -> Case:
 
 
 def cases() -> list[Case]:
+    missing_deps: dict[str, object] = {"graph": {"nodes": CLEAN.parts()[0]}}
     nodes, deps = CLEAN.parts()
     nodes["core"]["data"] = None
     broken_node = nx_json(nodes, deps)
@@ -130,8 +131,11 @@ def cases() -> list[Case]:
         graph_case("missing lang tag", CLEAN.with_tags("core", "type:lib").nx_json(), 1, "exactly one `lang:*` tag"),
         graph_case("two type tags", CLEAN.with_tags("core", "type:lib", "type:app", "lang:rust").nx_json(), 1, "has 2"),
         graph_case("unknown type", CLEAN.with_tags("core", "type:utils", "lang:rust").nx_json(), 1, "`type:utils`"),
-        graph_case("not a graph", {"nodes": {}}, 2, "top level must be an object with a `graph.nodes` object"),
+        graph_case(
+            "not a graph", {"nodes": {}}, 2, "top level must be an object with `graph.nodes` and `graph.dependencies`"
+        ),
         graph_case("a node without data", broken_node, 2, "node `core` needs a `data` object"),
+        graph_case("a graph without dependencies", missing_deps, 2, "`graph.dependencies` objects"),
         graph_case("edges from an unknown node", stray_source, 2, "`ghost`, which is not a node"),
         graph_case("an edge without a target", no_target, 2, "an edge of `cli` has no string `target`"),
         graph_case("an edge to an unknown node", unknown_target, 2, "targets `ghost`, which is neither a node"),

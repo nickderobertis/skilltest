@@ -78,6 +78,12 @@ CASES = (
         "expected ')'",
     ),
     Case(
+        "an if: with arguments missing their comma",
+        lambda wf, _tc: _replace(wf / "pr-title.yml", "if: github.repository ==", "if: startsWith('a' 'b') ||"),
+        2,
+        "expected ')'",
+    ),
+    Case(
         "an if: calling an unsupported function",
         lambda wf, _tc: _replace(wf / "pr-title.yml", "if: github.repository ==", "if: contains(github.ref) ||"),
         2,

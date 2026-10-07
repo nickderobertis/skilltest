@@ -194,10 +194,11 @@ class _Parser:
             case Token(kind="ident", text=name) if self.peek() == "(":
                 self.take("(")
                 args: list[object] = []
-                while self.peek() != ")":
+                if self.peek() != ")":
                     args.append(self.or_())
-                    if self.peek() == ",":
+                    while self.peek() == ",":
                         self.take(",")
+                        args.append(self.or_())
                 self.take(")")
                 return self.call(name, args)
             case Token(kind="ident", text=path):
