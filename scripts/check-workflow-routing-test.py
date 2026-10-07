@@ -119,6 +119,16 @@ CASES = (
         "live/harness/no-such-harness/project.json does not exist",
     ),
     Case(
+        "a job that tolerates its own failure",
+        lambda wf, _tc: _replace(
+            wf / "ci.yml",
+            "    runs-on: ${{ matrix.os }}\n",
+            "    runs-on: ${{ matrix.os }}\n    continue-on-error: true\n",
+        ),
+        2,
+        "jobs.check.continue-on-error is not simulated",
+    ),
+    Case(
         "a called workflow without workflow_call",
         lambda wf, _tc: _replace(wf / "e2e-codex.yml", "  workflow_call:\n", ""),
         2,

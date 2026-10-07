@@ -279,6 +279,13 @@ def _required_mapping(value: object, where: str) -> dict:
     return _mapping(value, where)
 
 
+def _no_continue_on_error(spec: dict, where: str) -> None:
+    """`continue-on-error` changes how a failure propagates to `needs`; the model
+    does not simulate it, so it is refused rather than silently ignored."""
+    if "continue-on-error" in spec:
+        raise WorkflowError(f"{where}.continue-on-error is not simulated by this model; remove it or model it here")
+
+
 def _optional_str(value: object, where: str) -> str | None:
     match value:
         case None | str():
@@ -377,6 +384,7 @@ def _steps(value: object, where: str) -> tuple[Step, ...]:
     for i, raw_step in enumerate(raw_steps):
         at = f"{where}.steps[{i}]"
         step = _required_mapping(raw_step, at)
+        _no_continue_on_error(step, at)
         env = _mapping(step.get("env"), f"{at}.env")
         if not all(isinstance(v, str | int | float | bool) for v in env.values()):
             raise WorkflowError(f"{at}.env values must be scalars")
@@ -400,6 +408,7 @@ def parse_workflow(filename: str, raw: object) -> Workflow:
             raise WorkflowError(f"{filename}: job id {job_id!r} must be a string")
         where = f"{filename}: jobs.{job_id}"
         job = _required_mapping(raw_job, where)
+        _no_continue_on_error(job, where)
         match job.get("needs", []):
             case str(one):
                 needs: list[str] = [one]
