@@ -89,7 +89,7 @@ afterAll(() => {
   rmSync(work, { recursive: true, force: true });
 });
 
-// llmlint: ignore[shell_test_tiers_stay_split] no nx project owns scripts/stage-npm-binary.sh; it stages this SDK's own platform packages, so its pack test runs in this project's tier, as test_platform_wheels.py does for the wheel scripts
+// llmlint: ignore-block[shell_test_tiers_stay_split] no nx project owns scripts/stage-npm-binary.sh; it stages this SDK's own platform packages, so its pack test runs in this project's tier, as test_platform_wheels.py does for the wheel scripts
 describe("Windows platform packages", () => {
   for (const pkg of WINDOWS) {
     it(`${pkg.name} packs the staged CLI at bin/skilltest.exe`, () => {
@@ -138,3 +138,4 @@ describe("Windows platform packages", () => {
     expect(ran.stderr).toContain("unsupported target: x86_64-unknown-freebsd");
   });
 });
+// llmlint: ignore-end[shell_test_tiers_stay_split]

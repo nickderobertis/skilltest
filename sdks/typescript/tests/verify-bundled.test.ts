@@ -38,6 +38,7 @@ const work = realpathSync(mkdtempSync(join(tmpdir(), "skilltest-verify-bundled-"
 const consumer = join(work, "consumer");
 let version = "";
 
+// llmlint: ignore-block[shell_test_tiers_stay_split] this tier is the one that drives the built CLI by design (every suite here runs target/debug/skilltest via SKILLTEST_BIN); the script under test is this SDK's own install proof, and it needs only node and the SDK's own tsc build
 beforeAll(() => {
   const cli = process.env.SKILLTEST_BIN ?? SKILLTEST_BIN;
   version = execFileSync(cli, ["--version"], { encoding: "utf8" }).trim().replace("skilltest ", "");
@@ -92,7 +93,6 @@ function verify(args: string[], options: { cwd?: string; path?: string } = {}) {
   });
 }
 
-// llmlint: ignore[shell_test_tiers_stay_split] this tier is the one that drives the built CLI by design (every suite here runs target/debug/skilltest via SKILLTEST_BIN); the script under test is this SDK's own install proof, and it needs only node and the SDK's own tsc build
 describe("verify-bundled.mjs", () => {
   it("passes on an install whose bundled CLI reports the release and validates a skill", () => {
     const ran = verify([version, GREETER]);
@@ -204,3 +204,4 @@ describe("verify-bundled.mjs", () => {
     }
   });
 });
+// llmlint: ignore-end[shell_test_tiers_stay_split]

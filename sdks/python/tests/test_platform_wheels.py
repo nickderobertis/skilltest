@@ -104,7 +104,8 @@ def wheel_tags(wheel: Path) -> list[str]:
 # Not a marker-deselected tier: this runs unconditionally in the project's `test-e2e`
 # target, which is its whole test tier by design; the builds are local (`uv build`,
 # `uvx wheel`), as in test_wheel_typed.py.
-# llmlint: ignore[test_tiers_split_by_project_not_by_marker, shell_test_tiers_stay_split] no nx project owns scripts/; they package this member's wheel, so they run in its own tier  # noqa: E501
+# llmlint: ignore-block[shell_test_tiers_stay_split] no nx project owns scripts/; every test, fixture and helper below builds or installs this member's own wheel with them, so they run in its own tier  # noqa: E501
+# llmlint: ignore[test_tiers_split_by_project_not_by_marker] no nx project owns scripts/; they package this member's wheel, so they run in its own tier  # noqa: E501
 def test_dist_builds_a_tagged_wheel_per_platform_plus_pure_wheel_and_sdist(
     tmp_path: Path,
 ) -> None:
@@ -179,7 +180,6 @@ class Consumer(NamedTuple):
     wheel: Path
 
 
-# llmlint: ignore[shell_test_tiers_stay_split] builds this member's own wheel with the release script and installs it as a consumer would; no nx project owns scripts/, so it runs in this member's tier like the tests it serves  # noqa: E501
 @pytest.fixture(scope="module")
 def consumer(tmp_path_factory: pytest.TempPathFactory) -> Consumer:
     """The host's platform wheel, built by the release script around the CLI the
@@ -220,7 +220,7 @@ def verify(
     return run([str(python), str(VERIFY), *args], REPO_ROOT, env=env or consumer_env())
 
 
-# llmlint: ignore[test_tiers_split_by_project_not_by_marker, shell_test_tiers_stay_split] the journey the Windows lane and release proof run, on this member's own tier  # noqa: E501
+# llmlint: ignore[test_tiers_split_by_project_not_by_marker] the journey the Windows lane and release proof run, on this member's own tier  # noqa: E501
 def test_installed_platform_wheel_runs_its_bundled_cli(consumer: Consumer) -> None:
     verified = verify(consumer.python, consumer.version, str(SKILLS / "greeter"))
 
@@ -346,7 +346,7 @@ def test_verify_refuses_an_environment_without_the_sdk(tmp_path: Path) -> None:
     assert "install skilltest-sdk into this environment" in verified.stderr
 
 
-# llmlint: ignore[test_tiers_split_by_project_not_by_marker, shell_test_tiers_stay_split] the failure path of the journey above, on the same tier  # noqa: E501
+# llmlint: ignore[test_tiers_split_by_project_not_by_marker] the failure path of the journey above, on the same tier  # noqa: E501
 def test_verify_refuses_the_pure_wheel_which_bundles_no_cli(tmp_path: Path) -> None:
     copy_workspace(tmp_path)
     out = tmp_path / "out"
@@ -359,3 +359,6 @@ def test_verify_refuses_the_pure_wheel_which_bundles_no_cli(tmp_path: Path) -> N
 
     assert verified.returncode == 1
     assert "carries no" in verified.stderr and "py3-none-any" in verified.stderr
+
+
+# llmlint: ignore-end[shell_test_tiers_stay_split]
