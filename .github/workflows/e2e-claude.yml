@@ -87,7 +87,7 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
 
       - name: Install workspace dependencies (nx)
-        run: pnpm install --frozen-lockfile
+        run: just bootstrap-node
 
       # The live check drives claude through oneharness; install the pinned
       # prebuilt and put it on PATH for the run step.

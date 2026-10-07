@@ -47,6 +47,11 @@ bootstrap:
     cargo fetch
     uv sync
 
+# Install nx and the TS workspace exactly as locked — the slice of `bootstrap` a
+# CI job needs to run an nx recipe (the live suites) without the Python stack.
+bootstrap-node:
+    pnpm install --frozen-lockfile
+
 # The quality gate; fails on any issue (no warnings-only mode). `tier` selects
 # which projects run the per-project targets (format, lint, type check, unit,
 # the CLI's binary e2e project, the SDK/plugin e2e):

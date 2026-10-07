@@ -83,7 +83,7 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
 
       - name: Install workspace dependencies (nx)
-        run: pnpm install --frozen-lockfile
+        run: just bootstrap-node
 
       - name: Install oneharness (drives the live check)
         env:

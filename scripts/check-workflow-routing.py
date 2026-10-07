@@ -473,8 +473,11 @@ def nx_recipes(justfile: Path) -> frozenset[str]:
     return frozenset(found)
 
 
+WORKSPACE_INSTALLS = frozenset({"bootstrap", "bootstrap-node"})  # the recipes that install the locked workspace
+
+
 def _installs_workspace(step: Step) -> bool:
-    return step.run is not None and ("pnpm install --frozen-lockfile" in step.run or "just bootstrap" in step.run)
+    return any(r in WORKSPACE_INSTALLS for r in _JUST_CALL.findall(step.run or ""))
 
 
 def nx_without_install(wfs: dict[WorkflowFile, Workflow], recipes: frozenset[str]) -> list[str]:
@@ -490,7 +493,7 @@ def nx_without_install(wfs: dict[WorkflowFile, Workflow], recipes: frozenset[str
                     if recipe in recipes and not installed:
                         bad.append(
                             f"{wf.filename}:{job.id} runs `just {recipe}`, which invokes nx, before installing "
-                            "pnpm (pnpm/action-setup) and the locked workspace (pnpm install --frozen-lockfile)"
+                            "pnpm (pnpm/action-setup) and the locked workspace (`just bootstrap-node` or `just bootstrap`)"
                         )
     return bad
 
@@ -913,7 +916,7 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
         "a live suite reaching nx before installing the workspace",
         lambda d: _jobs(d, "e2e-judge-api.yml")["live"].update(
-            steps=[s for s in _jobs(d, "e2e-judge-api.yml")["live"]["steps"] if "pnpm install" not in s.get("run", "")]
+            steps=[s for s in _jobs(d, "e2e-judge-api.yml")["live"]["steps"] if "bootstrap" not in s.get("run", "")]
         ),
     ),
     Mutation(
@@ -974,7 +977,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--workflows", type=Path, default=WORKFLOWS, help="workflow directory (default: the repo's)")
     parser.add_argument("--toolchain", type=Path, default=TOOLCHAIN, help="rust-toolchain.toml (default: the repo's)")
     parser.add_argument("--justfile", type=Path, default=JUSTFILE, help="justfile (default: the repo's)")
-    args = parser.parse_args(argv)  # an unknown argument exits 2 with the usage
+    args = parser.parse_args(argv)
     try:
         raw = load_raw(args.workflows)
         wfs = parse_all(raw)

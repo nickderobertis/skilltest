@@ -11,8 +11,8 @@ against the **real** Anthropic and OpenAI APIs (no oneharness, no harness CLI).
   `ANTHROPIC_API_KEY` and/or `OPENAI_API_KEY` (each vendor's test self-skips
   locally without its key). CI runs it from
   `.github/workflows/e2e-judge-api.yml`, which `ci.yml` calls on every ordinary
-  push to main ahead of the release; that workflow fails fast unless at least
-  one key is present.
+  push to main ahead of the release; that workflow fails fast unless both keys
+  are present, so neither vendor's test can pass by skipping.
 
 ## Rules
 

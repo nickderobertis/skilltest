@@ -134,7 +134,7 @@ CASES = (
     Case(
         "a live suite reaching nx before installing the workspace",
         lambda wf, _tc: _replace(
-            wf / "e2e-goose.yml", "        run: pnpm install --frozen-lockfile\n", "        run: echo skipped\n"
+            wf / "e2e-goose.yml", "        run: just bootstrap-node\n", "        run: echo skipped\n"
         ),
         1,
         "e2e-goose.yml:live runs `just test-harness`, which invokes nx, before installing pnpm",

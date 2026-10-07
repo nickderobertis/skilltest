@@ -31,7 +31,11 @@ git_q() {
     exit 1
   }
 }
-rev() { git -C "$repo" rev-parse "$1" 2>/dev/null || fail "setup could not resolve $1 in the scratch repository"; }
+rev() {
+  local said
+  said="$(git -C "$repo" rev-parse "$1" 2>&1)" || fail "setup could not resolve $1 in the scratch repository: $said"
+  echo "$said"
+}
 
 # A repository whose `main` (mirrored as origin/main) forks into a branch that
 # is checked out, so the merge base differs from both tips.
