@@ -115,8 +115,8 @@ describe("oneharness resolution", () => {
     const optionalDependencies = (path: string): string[] => {
       const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
       const deps =
-        typeof parsed === "object" && parsed !== null
-          ? (parsed as { optionalDependencies?: unknown }).optionalDependencies
+        typeof parsed === "object" && parsed !== null && "optionalDependencies" in parsed
+          ? parsed.optionalDependencies
           : undefined;
       if (typeof deps !== "object" || deps === null || Array.isArray(deps)) {
         throw new Error(
