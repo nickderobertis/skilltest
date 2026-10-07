@@ -18,10 +18,10 @@ err() {
 }
 
 usage="usage: verify-release-archive.sh <dir> <target> <bin> <version>; pass the download directory, a target triple, skilltest or skilltest.exe, and the release version X.Y.Z"
-[ $# -eq 4 ] && [ -d "$1" ] || err "$usage"
+[ "$#" -eq 4 ] && [ -d "$1" ] || err "$usage"
 dir="$1" target="$2" bin="$3" version="$4"
-[[ $target =~ ^[A-Za-z0-9_]+(-[A-Za-z0-9_]+)+$ ]] || err "target '$target' is not a target triple; $usage"
-[[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]] || err "version '$version' is not X.Y.Z; $usage"
+[[ "$target" =~ ^[A-Za-z0-9_]+(-[A-Za-z0-9_]+)+$ ]] || err "target '$target' is not a target triple; $usage"
+[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]] || err "version '$version' is not X.Y.Z; $usage"
 case "$bin" in
   skilltest.exe) asset="skilltest-$target.zip" ;;
   skilltest) asset="skilltest-$target.tar.gz" ;;

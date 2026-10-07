@@ -7,13 +7,14 @@
  * `bundledBin()` is undefined and the runner falls back — exactly how the e2e
  * suite reaches the locally built CLI via `$SKILLTEST_BIN`.
  */
-import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   ENV_BIN,
   ENV_ONEHARNESS_BIN,
+  ONEHARNESS_PACKAGES,
   bundledBin,
   bundledOneharness,
   childEnv,
@@ -105,6 +106,22 @@ describe("oneharness resolution", () => {
   it("points SKILLTEST_ONEHARNESS_BIN at the bundled launcher when unset", () => {
     delete process.env[ENV_ONEHARNESS_BIN];
     expect(childEnv()[ENV_ONEHARNESS_BIN]).toBe(bundledOneharness());
+  });
+
+  it("maps every platform the SDK ships to a package oneharness-cli publishes", () => {
+    const manifest = (path: string): { optionalDependencies?: Record<string, string> } =>
+      JSON.parse(readFileSync(path, "utf8"));
+    const shipped = Object.keys(
+      manifest(require.resolve("../package.json")).optionalDependencies ?? {},
+    ).map((name) => name.replace("@skill-test/cli-", ""));
+    const published = Object.keys(
+      manifest(require.resolve("oneharness-cli/package.json")).optionalDependencies ?? {},
+    );
+
+    expect(shipped.length).toBeGreaterThan(0);
+    for (const platform of shipped) {
+      expect(published, `oneharness-cli for ${platform}`).toContain(ONEHARNESS_PACKAGES[platform]);
+    }
   });
 
   it("leaves a caller-set SKILLTEST_ONEHARNESS_BIN untouched", () => {

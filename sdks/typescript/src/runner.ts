@@ -137,12 +137,13 @@ export function resolveBin(bin: string | undefined): string {
  * carries the prebuilt native binary (a transitive optional dependency of
  * `oneharness-cli`). Mirrors the map in the oneharness-cli launcher.
  */
-const ONEHARNESS_PACKAGES: Record<string, string | undefined> = {
+export const ONEHARNESS_PACKAGES: Record<string, string | undefined> = {
   "linux-x64": "@oneharness/cli-linux-x64",
   "linux-arm64": "@oneharness/cli-linux-arm64",
   "darwin-x64": "@oneharness/cli-darwin-x64",
   "darwin-arm64": "@oneharness/cli-darwin-arm64",
   "win32-x64": "@oneharness/cli-win32-x64",
+  "win32-arm64": "@oneharness/cli-win32-arm64",
 };
 
 /**
