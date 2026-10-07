@@ -525,7 +525,7 @@ wheels = [
 
 [[package]]
 name = "skilltest-pytest"
-version = "0.12.1"
+version = "0.12.2"
 source = { editable = "plugins/pytest" }
 dependencies = [
     { name = "pytest" },
@@ -552,7 +552,7 @@ dev = [
 
 [[package]]
 name = "skilltest-sdk"
-version = "0.12.1"
+version = "0.12.2"
 source = { editable = "sdks/python" }
 dependencies = [
     { name = "oneharness-cli" },

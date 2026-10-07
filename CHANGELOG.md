@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.12.2](https://github.com/nickderobertis/skilltest/compare/v0.12.1...v0.12.2) (2026-10-07)
+
+### Bug Fixes
+
+* **e2e:** justify the deterministic tier's fake provider for the judged lint ([#68](https://github.com/nickderobertis/skilltest/issues/68)) ([23cf804](https://github.com/nickderobertis/skilltest/commit/23cf804d9a4c21e1ac3d8d1b0b922ef890212bb4))
+
 ## [0.12.1](https://github.com/nickderobertis/skilltest/compare/v0.12.0...v0.12.1) (2026-10-07)
 
 ### Bug Fixes
