@@ -59,11 +59,12 @@ perl -i -pe 's/^version = "[^"]*"/version = "'"$VERSION"'"/' plugins/pytest/pypr
 perl -i -pe 's/"skilltest-sdk[^"]*"/"skilltest-sdk=='"$VERSION"'"/' plugins/pytest/pyproject.toml
 run "refresh uv.lock" uv lock --quiet
 
-# --- TypeScript: SDK + framework + every optional platform package, then lock ------
-# The platform packages (@skill-test/cli-<os>-<arch>) carry the binary; the SDK
-# pins them via `workspace:*`, so they must stay on the same version. The SDK's
-# `workspace:*` optional deps and vitest's `workspace:*` dep are left alone (pnpm
-# rewrites them to the version on publish).
+# The TypeScript SDK, the framework package and every optional platform package
+# take the version, then the lock refreshes. The platform packages
+# (@skill-test/cli-<os>-<arch>) carry the binary; the SDK pins them via
+# `workspace:*`, so they must stay on the same version. The SDK's `workspace:*`
+# optional deps and vitest's `workspace:*` dep are left alone (pnpm rewrites
+# them to the version on publish).
 perl -i -pe 's/"version": "[^"]*"/"version": "'"$VERSION"'"/' sdks/typescript/package.json
 perl -i -pe 's/"version": "[^"]*"/"version": "'"$VERSION"'"/' plugins/vitest/package.json
 for pkg in sdks/typescript/platforms/*/package.json; do

@@ -9,10 +9,10 @@ each platform wheel must carry its platform tag and exactly its bundled binary
 (``skilltest.exe`` on Windows, the name the runner resolves there), and the pure
 wheel and sdist must still be produced, carrying no binary.
 
-A last journey installs the host's platform wheel, built around the real CLI,
-into a fresh environment and runs ``scripts/verify-bundled-sdk.py`` — the check
-the Windows PR lane and the release-time install proof run — so the bundled
-binary is shown to be what the SDK resolves; the pure wheel is its failure path.
+The rest install the host's platform wheel, built around the real CLI, into a
+fresh environment and drive ``scripts/verify_bundled.py`` — the check the
+Windows PR lane and the release-time install proof run — through its pass and
+through each way it must refuse.
 """
 
 from __future__ import annotations
@@ -23,33 +23,46 @@ import shutil
 import subprocess
 import zipfile
 from pathlib import Path
+from typing import NamedTuple
 
 import pytest
 
 PROJECT = Path(__file__).resolve().parents[1]
 REPO_ROOT = PROJECT.parents[1]
 MEMBERS = ("sdks/python", "plugins/pytest")
-SCRIPTS = ("build-python-dist.sh", "build-python-wheel.sh", "verify-bundled-sdk.py")
-SKILL = REPO_ROOT / "tests" / "fixtures" / "smoke" / "greeter"
+PACKAGING = ("build-python-dist.sh", "build-python-wheel.sh")
+VERIFY = PROJECT / "scripts" / "verify_bundled.py"
+SKILLS = REPO_ROOT / "tests" / "fixtures" / "skills"
 
-#: Rust target -> (wheel platform tag, bundled file name). The release ships
-#: these; release-platforms.toml states them and the release-target gate holds
-#: the scripts to it.
-PLATFORMS = {
-    "x86_64-unknown-linux-gnu": ("manylinux_2_17_x86_64", "skilltest"),
-    "aarch64-unknown-linux-gnu": ("manylinux_2_17_aarch64", "skilltest"),
-    "x86_64-apple-darwin": ("macosx_10_12_x86_64", "skilltest"),
-    "aarch64-apple-darwin": ("macosx_11_0_arm64", "skilltest"),
-    "x86_64-pc-windows-msvc": ("win_amd64", "skilltest.exe"),
-    "aarch64-pc-windows-msvc": ("win_arm64", "skilltest.exe"),
-}
 
-#: (system, machine) of a host this suite runs on -> its Rust target.
-HOST_TARGETS = {
-    ("Linux", "x86_64"): "x86_64-unknown-linux-gnu",
-    ("Linux", "aarch64"): "aarch64-unknown-linux-gnu",
-    ("Darwin", "x86_64"): "x86_64-apple-darwin",
-    ("Darwin", "arm64"): "aarch64-apple-darwin",
+class Platform(NamedTuple):
+    """One platform the release ships a wheel for (release-platforms.toml)."""
+
+    target: str
+    wheel_tag: str
+    exe: str
+
+
+class Host(NamedTuple):
+    system: str
+    machine: str
+
+
+PLATFORMS = (
+    Platform("x86_64-unknown-linux-gnu", "manylinux_2_17_x86_64", "skilltest"),
+    Platform("aarch64-unknown-linux-gnu", "manylinux_2_17_aarch64", "skilltest"),
+    Platform("x86_64-apple-darwin", "macosx_10_12_x86_64", "skilltest"),
+    Platform("aarch64-apple-darwin", "macosx_11_0_arm64", "skilltest"),
+    Platform("x86_64-pc-windows-msvc", "win_amd64", "skilltest.exe"),
+    Platform("aarch64-pc-windows-msvc", "win_arm64", "skilltest.exe"),
+)
+
+#: The hosts this suite runs on, mapped to the platform whose wheel they install.
+HOST_PLATFORMS = {
+    Host("Linux", "x86_64"): PLATFORMS[0],
+    Host("Linux", "aarch64"): PLATFORMS[1],
+    Host("Darwin", "x86_64"): PLATFORMS[2],
+    Host("Darwin", "arm64"): PLATFORMS[3],
 }
 
 
@@ -73,7 +86,7 @@ def copy_workspace(scratch: Path) -> None:
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy(REPO_ROOT / name, destination)
     (scratch / "scripts").mkdir()
-    for script in SCRIPTS:
+    for script in PACKAGING:
         shutil.copy(REPO_ROOT / "scripts" / script, scratch / "scripts" / script)
 
 
@@ -98,10 +111,10 @@ def test_dist_builds_a_tagged_wheel_per_platform_plus_pure_wheel_and_sdist(
 ) -> None:
     copy_workspace(tmp_path)
     binaries = tmp_path / "artifacts"
-    for target, (_, exe) in PLATFORMS.items():
-        stand_in = binaries / f"skilltest-{target}" / exe
+    for plat in PLATFORMS:
+        stand_in = binaries / f"skilltest-{plat.target}" / plat.exe
         stand_in.parent.mkdir(parents=True)
-        stand_in.write_bytes(f"stand-in for {target}".encode())
+        stand_in.write_bytes(f"stand-in for {plat.target}".encode())
     out = tmp_path / "out"
 
     built = run(["bash", "scripts/build-python-dist.sh", "artifacts", str(out)], tmp_path)
@@ -110,12 +123,12 @@ def test_dist_builds_a_tagged_wheel_per_platform_plus_pure_wheel_and_sdist(
 
     wheels = sorted(out.glob("*.whl"))
     by_tag = {w.name.rsplit("-", 1)[1].removesuffix(".whl"): w for w in wheels}
-    assert sorted(by_tag) == sorted([tag for tag, _ in PLATFORMS.values()] + ["any"]), wheels
-    for target, (tag, exe) in PLATFORMS.items():
-        wheel = by_tag[tag]
-        assert wheel_tags(wheel) == [f"py3-none-{tag}"], wheel.name
+    assert sorted(by_tag) == sorted([p.wheel_tag for p in PLATFORMS] + ["any"]), wheels
+    for plat in PLATFORMS:
+        wheel = by_tag[plat.wheel_tag]
+        assert wheel_tags(wheel) == [f"py3-none-{plat.wheel_tag}"], wheel.name
         assert bin_members(wheel) == {
-            f"skilltest_sdk/_bin/{exe}": f"stand-in for {target}".encode()
+            f"skilltest_sdk/_bin/{plat.exe}": f"stand-in for {plat.target}".encode()
         }, wheel.name
 
     assert bin_members(by_tag["any"]) == {}, "the pure wheel must bundle no binary"
@@ -138,78 +151,117 @@ def test_wheel_script_refuses_a_target_with_no_platform_tag(tmp_path: Path) -> N
     assert not (tmp_path / "out").exists()
 
 
-def fresh_install(tmp_path: Path, wheel: Path) -> Path:
-    venv = tmp_path / "consumer"
+def fresh_install(scratch: Path, wheel: Path) -> Path:
+    venv = scratch / "consumer"
     for command in (
         ["uv", "venv", "--quiet", str(venv)],
         ["uv", "pip", "install", "--quiet", "--python", str(venv / "bin" / "python"), str(wheel)],
     ):
-        done = run(command, tmp_path)
+        done = run(command, scratch)
         assert done.returncode == 0, done.stderr
     return venv / "bin" / "python"
 
 
-def consumer_env() -> dict[str, str]:
+def consumer_env(extra_path: Path | None = None) -> dict[str, str]:
     """The caller's environment without the gate's SKILLTEST_BIN, as a consumer has."""
-    return {k: v for k, v in os.environ.items() if k not in ("SKILLTEST_BIN", "VIRTUAL_ENV")}
+    env = {k: v for k, v in os.environ.items() if k not in ("SKILLTEST_BIN", "VIRTUAL_ENV")}
+    if extra_path is not None:
+        env["PATH"] = f"{extra_path}{os.pathsep}{env.get('PATH', '')}"
+    return env
 
 
-def host_target() -> str:
-    target = HOST_TARGETS.get((platform.system(), platform.machine()))
-    if target is None:
-        pytest.fail(
-            f"no release target is mapped for this host {platform.system()}/{platform.machine()}"
-        )
-    return target
+class Consumer(NamedTuple):
+    python: Path
+    version: str
 
 
-def cli_version(cli: str) -> str:
-    out = subprocess.run([cli, "--version"], check=True, capture_output=True, text=True)
-    return out.stdout.strip().removeprefix("skilltest ")
-
-
-# The SDK's test-e2e target exports SKILLTEST_BIN as the freshly built CLI; that is
-# the binary bundled here. Installing resolves the wheel's dependencies through uv.
-# llmlint: ignore[test_tiers_split_by_project_not_by_marker, shell_test_tiers_stay_split] the journey the Windows lane and release proof run, on this member's own tier  # noqa: E501
-def test_installed_platform_wheel_runs_its_bundled_cli(tmp_path: Path) -> None:
+@pytest.fixture(scope="module")
+def consumer(tmp_path_factory: pytest.TempPathFactory) -> Consumer:
+    """The host's platform wheel, built by the release script around the CLI the
+    project's test-e2e target exports as SKILLTEST_BIN, installed fresh."""
     cli = os.environ.get("SKILLTEST_BIN")
-    assert cli and Path(cli).is_file(), (
-        "run through the project's test-e2e target, which builds the CLI"
-    )
-    copy_workspace(tmp_path)
-    target = host_target()
-    tag, _ = PLATFORMS[target]
-
-    built = run(["bash", "scripts/build-python-wheel.sh", target, cli, "out"], tmp_path)
+    assert cli and Path(cli).is_file(), "run through the project's test-e2e target"
+    plat = HOST_PLATFORMS.get(Host(platform.system(), platform.machine()))
+    if plat is None:
+        pytest.fail(f"no release platform is mapped for {platform.system()}/{platform.machine()}")
+    scratch = tmp_path_factory.mktemp("host-wheel")
+    copy_workspace(scratch)
+    built = run(["bash", "scripts/build-python-wheel.sh", plat.target, cli, "out"], scratch)
     assert built.returncode == 0, built.stderr
-    (wheel,) = (tmp_path / "out").glob(f"*-py3-none-{tag}.whl")
-    python = fresh_install(tmp_path, wheel)
-
-    verified = run(
-        [str(python), "scripts/verify-bundled-sdk.py", cli_version(cli), str(SKILL)],
-        tmp_path,
-        env=consumer_env(),
+    (wheel,) = (scratch / "out").glob(f"*-py3-none-{plat.wheel_tag}.whl")
+    version = subprocess.run([cli, "--version"], check=True, capture_output=True, text=True)
+    return Consumer(
+        fresh_install(scratch, wheel), version.stdout.strip().removeprefix("skilltest ")
     )
+
+
+def verify(
+    python: Path, *args: str, env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
+    return run([str(python), str(VERIFY), *args], REPO_ROOT, env=env or consumer_env())
+
+
+# Installing resolves the wheel's dependencies through uv, as a consumer's install does.
+# llmlint: ignore[test_tiers_split_by_project_not_by_marker, shell_test_tiers_stay_split] the journey the Windows lane and release proof run, on this member's own tier  # noqa: E501
+def test_installed_platform_wheel_runs_its_bundled_cli(consumer: Consumer) -> None:
+    verified = verify(consumer.python, consumer.version, str(SKILLS / "greeter"))
 
     assert verified.returncode == 0, verified.stderr
+    assert f"skilltest {consumer.version} bundled at" in verified.stdout, verified.stdout
     assert "_bin/skilltest" in verified.stdout, verified.stdout
+
+
+def test_verify_refuses_a_bundle_of_another_release(consumer: Consumer) -> None:
+    verified = verify(consumer.python, "9.9.9", str(SKILLS / "greeter"))
+
+    assert verified.returncode == 1
+    assert "not 'skilltest 9.9.9'" in verified.stderr
+    assert "install skilltest-sdk==9.9.9" in verified.stderr
+
+
+def test_verify_refuses_when_a_skilltest_on_path_could_answer(
+    consumer: Consumer, tmp_path: Path
+) -> None:
+    impostor = tmp_path / "skilltest"
+    impostor.write_text("#!/bin/sh\necho skilltest 0.0.0\n")
+    impostor.chmod(0o755)
+
+    verified = verify(
+        consumer.python,
+        consumer.version,
+        str(SKILLS / "greeter"),
+        env=consumer_env(extra_path=tmp_path),
+    )
+
+    assert verified.returncode == 1
+    assert f"a skilltest is on PATH ({impostor})" in verified.stderr
+
+
+def test_verify_refuses_a_skill_the_bundled_cli_finds_invalid(consumer: Consumer) -> None:
+    verified = verify(consumer.python, consumer.version, str(SKILLS / "invalid"))
+
+    assert verified.returncode == 1
+    assert "missing a non-empty `description`" in verified.stderr
+
+
+def test_verify_refuses_malformed_arguments(consumer: Consumer, tmp_path: Path) -> None:
+    for args in ((consumer.version,), (consumer.version, str(tmp_path / "absent"))):
+        verified = verify(consumer.python, *args)
+
+        assert verified.returncode == 1, args
+        assert "usage: verify_bundled.py <expected-version> <skill-dir>" in verified.stderr
 
 
 # llmlint: ignore[test_tiers_split_by_project_not_by_marker, shell_test_tiers_stay_split] the failure path of the journey above, on the same tier  # noqa: E501
 def test_verify_refuses_the_pure_wheel_which_bundles_no_cli(tmp_path: Path) -> None:
     copy_workspace(tmp_path)
-    built = run(
-        ["uv", "build", "--wheel", "--out-dir", str(tmp_path / "out")], tmp_path / "sdks/python"
-    )
+    out = tmp_path / "out"
+    built = run(["uv", "build", "--wheel", "--out-dir", str(out)], tmp_path / "sdks/python")
     assert built.returncode == 0, built.stderr
-    (wheel,) = (tmp_path / "out").glob("*-py3-none-any.whl")
+    (wheel,) = out.glob("*-py3-none-any.whl")
     python = fresh_install(tmp_path, wheel)
 
-    verified = run(
-        [str(python), "scripts/verify-bundled-sdk.py", "0.0.0", str(SKILL)],
-        tmp_path,
-        env=consumer_env(),
-    )
+    verified = verify(python, "0.0.0", str(SKILLS / "greeter"))
 
     assert verified.returncode == 1
-    assert "carries no" in verified.stderr and "install a platform wheel" in verified.stderr
+    assert "carries no" in verified.stderr and "py3-none-any" in verified.stderr

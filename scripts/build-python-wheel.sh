@@ -56,7 +56,10 @@ cleanup() { rm -rf "$bindir"; }
 trap cleanup EXIT
 
 mkdir -p "$bindir"
-install -m 0755 "$binary" "$bindir/$exe"
+install -m 0755 "$binary" "$bindir/$exe" || {
+  echo "error: could not copy $binary into $bindir/$exe; check that sdks/python is writable" >&2
+  exit 1
+}
 
 # Build the (nominally pure) wheel containing the binary, then relabel its tag.
 ( cd sdks/python && rm -rf build && uv build --wheel --out-dir "$outdir" >/dev/null )

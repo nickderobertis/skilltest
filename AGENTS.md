@@ -135,7 +135,7 @@ a single template. What was pulled in, and why:
 | `scripts/stage-npm-binary.sh` | Stages a built binary into its `@skill-test/cli-*` package's `bin/` for packing/publishing. |
 | `scripts/build-python-wheel.sh`, `scripts/build-python-dist.sh` | Build a platform-tagged `skilltest-sdk` wheel that bundles the CLI (the former, one target); assemble the full dist — every platform wheel + pure wheel + sdist (the latter). |
 | `scripts/smoke-python-bundle.sh`, `scripts/smoke-npm-bundle.sh` | Bundle smoke: install the publish-shape package with the binary bundled into a fresh consumer project and run a case through the plugin with `SKILLTEST_BIN` unset, so a pass can only come from the bundled binary. Driven per platform by `bundle-smoke.yml`. |
-| `scripts/verify-bundled-sdk.py`, `scripts/verify-bundled-npm.mjs` | Run inside a fresh consumer environment: the installed SDK must resolve its own bundled CLI, which must report the expected version and validate a skill. Used by `windows-build.yml` (a locally built wheel) and `publish.yml`'s `verify-windows` (the published packages), where `bundle-smoke.yml`'s POSIX/`sh` scripts cannot run. |
+| `sdks/python/scripts/verify_bundled.py`, `sdks/typescript/scripts/verify-bundled.mjs` | Run inside a fresh consumer install: the SDK must resolve its own bundled CLI, which must report the expected version and validate a skill. Used where `bundle-smoke.yml`'s POSIX/`sh` scripts cannot run — `windows-build.yml` and `publish.yml`'s `verify-windows`. Not shipped. |
 | `scripts/install-oneharness.sh` | Installs the prebuilt `oneharness` the live e2e drives (verifies checksum). |
 | `scripts/e2e-lib.sh`, `scripts/e2e-harness.sh` | Live, per-harness e2e: drive the built CLI against a *real* harness through oneharness. See `docs/e2e.md`. |
 | `release-targets.toml` | The onevcs release-target declaration: which registry artifacts a dependent can wait on, by id and short name. The short names are a cross-repository contract; see "Publishing". |
@@ -150,7 +150,7 @@ a single template. What was pulled in, and why:
 | `.github/workflows/publish.yml` | Tag-triggered registry publish (crates.io, PyPI, npm) in dependency order; skips any version already live, so re-fired tags are idempotent. A `binaries` matrix builds the CLI per target so the npm/PyPI jobs can bundle it into the per-platform packages/wheels. See "Publishing". |
 | `.github/workflows/pr-title.yml` | Enforces a Conventional-Commits PR title (the squash-merge subject semantic-release parses). |
 | `.github/workflows/bundle-smoke.yml` | On PR + push to `main`, proves the SDKs run the **bundled** CLI (not `$SKILLTEST_BIN`): builds the CLI per target, installs the publish-shape packages, and runs a case through each plugin on a native runner. Covers linux x64/arm64 + darwin arm64; the Intel-macOS (`macos-13`) runner is skipped here (unreliable queue) though that binary is still built/published. Windows is proven by `windows-build.yml` instead. |
-| `.github/workflows/windows-build.yml` | On PRs touching the Rust sources, Cargo manifests/lockfile, packaging scripts or release config only: for `x86_64-pc-windows-msvc` (`windows-latest`) and `aarch64-pc-windows-msvc` (`windows-11-arm`), builds `skilltest.exe`, builds the platform wheel with `scripts/build-python-wheel.sh`, installs it fresh, and runs `scripts/verify-bundled-sdk.py`. Deliberately **not** a required check (ARM runners queue); the release's `verify-windows` job proves the published packages. |
+| `.github/workflows/windows-build.yml` | On PRs touching what the Windows build depends on, builds each Windows target's platform wheel and runs its bundled CLI through the SDK. Deliberately **not** a required check: ARM runners queue, and that must never hold a merge; the release's `verify-windows` job proves the published packages. |
 | `.github/workflows/visual-docs.yml` | Terminal screenshots (informational; **never a gate blocker in `ci.yml`**). Uses screencomp's reusable workflow: builds the CLI + captures the SVGs in a pinned Rust container, classifies against `shots/baseline/<arch>.json` (`fail-on-drift: true`), publishes a GitHub Pages gallery, and posts a sticky before/after PR comment. `.githooks/pre-push` is the local guard that regenerates the baseline on drift. See `screenshots/AGENTS.md`. |
 | `.github/workflows/e2e-<id>.yml` | One live per-harness e2e each (claude, codex, goose, opencode, cursor, crush, qwen, copilot), gated to the canonical repo and non-fork PRs. |
 | `.github/workflows/e2e-judge-api.yml` | Live e2e for the **direct-API judge** (`ApiJudgeProvider`): calls the real Anthropic + OpenAI APIs (strict-JSON structured outputs, verdict parsing, usage), needs `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`, gated to the canonical repo and non-fork PRs. No oneharness/harness CLI. |
@@ -379,15 +379,11 @@ registry hiccup must not block the binary release, or vice versa.
   rename, addition or removal is a deliberate cross-repository change, never a
   side effect.
 - **Which platforms a release ships** is declared once, in
-  `release-platforms.toml`: Linux and macOS (x86_64, arm64) and Windows
-  (`x86_64-pc-windows-msvc`, `aarch64-pc-windows-msvc`, built natively on
-  `windows-latest`/`windows-11-arm` as `skilltest.exe`). Each gets a release
-  archive (`.zip` on Windows), a `skilltest-sdk` platform wheel (`win_amd64`/
-  `win_arm64` on Windows, carrying `_bin/skilltest.exe`) and an
-  `@skill-test/cli-<os>-<arch>` npm package (`cli-win32-x64`/`cli-win32-arm64`),
-  covered by `npm:@skill-test/sdk`. To add or drop one, edit that file and let
-  `just release-targets-check` name every matrix, script and npm-side list that
-  must follow.
+  `release-platforms.toml` (Linux, macOS and Windows; x86_64 and arm64 each).
+  To add or drop one, edit that file and let `just release-targets-check` name
+  every matrix, script and npm-side list that must follow. Its npm package
+  names are `node-sdk` covers, so they are part of the cross-repository contract
+  above.
 - **To cut a release:** merge a conventional-commit PR. That's it. The lockstep
   version is never hand-edited; if the JSON contract changed, run `just gen-contract`
   and commit the regenerated artifacts in the same PR — the version moves on its own at

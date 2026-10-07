@@ -4,9 +4,9 @@
 # the platform `skilltest-sdk` wheel through the same script publish.yml's PyPI
 # job uses (scripts/build-python-wheel.sh), install that wheel into a fresh
 # environment, and run the bundled CLI through the SDK's own binary resolution
-# (scripts/verify-bundled-sdk.py: `skilltest --version`, then `validate_skill`
-# with SKILLTEST_BIN unset and nothing on PATH, so a pass can only come from the
-# bundle).
+# (sdks/python/scripts/verify_bundled.py: `skilltest --version`, then
+# `validate_skill`, with SKILLTEST_BIN unset and nothing on PATH, so a pass can
+# only come from the bundle).
 #
 # bundle-smoke.yml's scripts assume POSIX venv paths and a `sh` fake provider,
 # so this lane has its own steps. It runs only when a PR touches what the
@@ -28,7 +28,7 @@ on:
       - "scripts/build-python-dist.sh"
       - "scripts/build-python-wheel.sh"
       - "scripts/stage-npm-binary.sh"
-      - "scripts/verify-bundled-sdk.py"
+      - "sdks/python/scripts/verify_bundled.py"
       - "sdks/python/pyproject.toml"
       - "release-platforms.toml"
       - "release-targets.toml"
@@ -87,4 +87,4 @@ jobs:
       - name: Run the bundled CLI through the SDK's resolution
         run: |
           version="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)"
-          target/consumer/Scripts/python.exe scripts/verify-bundled-sdk.py "$version" tests/fixtures/smoke/greeter
+          target/consumer/Scripts/python.exe sdks/python/scripts/verify_bundled.py "$version" tests/fixtures/smoke/greeter

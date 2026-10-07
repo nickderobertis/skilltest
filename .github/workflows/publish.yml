@@ -269,9 +269,9 @@ jobs:
   # Release-time install proof for the Windows platforms: once the registries
   # serve this version, install the PUBLISHED skilltest-sdk and @skill-test/sdk
   # into fresh environments on each Windows architecture's runner and run the
-  # bundled CLI through each SDK's own resolution (scripts/verify-bundled-*:
-  # `--version` must name this release, then a skill validates through it, with
-  # SKILLTEST_BIN unset and nothing on PATH). It proves what a consumer installs,
+  # bundled CLI through each SDK's own resolution (each SDK's
+  # scripts/verify[-_]bundled.*: `--version` must name this release, then a skill
+  # validates through it, with SKILLTEST_BIN unset and nothing on PATH). It proves what a consumer installs,
   # so it runs only when a release is cut. The matrix is release-platforms.toml's
   # Windows platforms; the release-target gate holds it to that file.
   verify-windows:
@@ -311,7 +311,7 @@ jobs:
             [ "$i" -eq 10 ] && { echo "error: skilltest-sdk==$version did not install from PyPI" >&2; exit 1; }
             echo "waiting for skilltest-sdk==$version on PyPI ($i)…"; sleep 30
           done
-          consumer-py/Scripts/python.exe scripts/verify-bundled-sdk.py "$version" tests/fixtures/smoke/greeter
+          consumer-py/Scripts/python.exe sdks/python/scripts/verify_bundled.py "$version" tests/fixtures/smoke/greeter
 
       - name: Install the published @skill-test/sdk and run its bundled CLI
         run: |
@@ -325,4 +325,4 @@ jobs:
             [ "$i" -eq 10 ] && { echo "error: @skill-test/sdk@$version did not install from npm" >&2; exit 1; }
             echo "waiting for @skill-test/sdk@$version on npm ($i)…"; sleep 30
           done
-          node ../scripts/verify-bundled-npm.mjs "$version" ../tests/fixtures/smoke/greeter
+          node ../sdks/typescript/scripts/verify-bundled.mjs "$version" ../tests/fixtures/smoke/greeter

@@ -369,8 +369,6 @@ while IFS=$'\t' read -r id _ manifest; do
   done <<<"$deps"
 done < <(printf '%s' "$declared")
 
-# --- The platform set: release-platforms.toml against every list restating it ---
-
 # One "<target>\t<runner>\t<bin>\t<wheel_tag>\t<npm_package>\t<npm_dir>" per
 # platform, or one "!\t<message>" per refusal. Parsed by Python's TOML reader;
 # every field must be one non-empty string.
@@ -390,7 +388,7 @@ if not isinstance(rows, list) or not rows:
     sys.exit()
 for n, row in enumerate(rows, 1):
     values = [row.get(k) if isinstance(row, dict) else None for k in fields]
-    if not all(isinstance(v, str) and v and "\t" not in v for v in values):
+    if not all(isinstance(v, str) and v and not set(v) & {"\t", "\n", "\r"} for v in values):
         print(f"!\t{sys.argv[1]} [[platform]] {n} lacks one of {names} as a non-empty string; give it every field")
         continue
     print("\t".join(values))
@@ -432,9 +430,15 @@ matrix_rows() {
       $0 == job { inside = 1; next }
       inside && /^  [A-Za-z0-9_-]+:$/ { exit }
       inside { print }
-    ' "$1")"
+    ' "$1")" || {
+      echo "check-release-targets: could not read $1; check its permissions" >&2
+      exit 1
+    }
   else
-    body="$(cat "$1")"
+    body="$(cat "$1")" || {
+      echo "check-release-targets: could not read $1; check its permissions" >&2
+      exit 1
+    }
   fi
   printf '%s\n' "$body" | sed -n 's/^ *- { *target: *\([^ ,}]*\), *os: *\([^ ,}]*\)\(, *bin: *\([^ ,}]*\)\)\{0,1\} *}$/\1	\2	\4/p' | sed 's/	$//'
 }

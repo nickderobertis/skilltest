@@ -38,6 +38,48 @@ interface PackedFile {
   mode: number;
 }
 
+interface Packed {
+  name: string;
+  filename: string;
+  files: PackedFile[];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** `npm pack --json`'s output for one package, checked before any field is read. */
+function parsePacked(stdout: string): Packed {
+  const parsed: unknown = JSON.parse(stdout);
+  const entry: unknown = Array.isArray(parsed) && parsed.length === 1 ? parsed[0] : undefined;
+  if (
+    !isRecord(entry) ||
+    typeof entry.name !== "string" ||
+    typeof entry.filename !== "string" ||
+    !Array.isArray(entry.files)
+  ) {
+    throw new Error(`npm pack --json did not describe exactly one package: ${stdout}`);
+  }
+  const files = entry.files.map((f: unknown): PackedFile => {
+    if (!isRecord(f) || typeof f.path !== "string" || typeof f.mode !== "number") {
+      throw new Error(`npm pack --json listed a malformed file: ${JSON.stringify(f)}`);
+    }
+    return { path: f.path, mode: f.mode };
+  });
+  return { name: entry.name, filename: entry.filename, files };
+}
+
+/** The packed package.json's `os`/`cpu` scope, checked to be string arrays. */
+function parseScope(text: string): { os: string[]; cpu: string[] } {
+  const parsed: unknown = JSON.parse(text);
+  const strings = (v: unknown): v is string[] =>
+    Array.isArray(v) && v.every((x) => typeof x === "string");
+  if (!isRecord(parsed) || !strings(parsed.os) || !strings(parsed.cpu)) {
+    throw new Error(`the packed package.json has no string-array os/cpu: ${text}`);
+  }
+  return { os: parsed.os, cpu: parsed.cpu };
+}
+
 const work = mkdtempSync(join(tmpdir(), "skilltest-platform-pack-"));
 // The staged bin/ dirs are git-ignored and exist only for a pack; remove the
 // ones this suite created so the checkout is left as it was found.
@@ -47,6 +89,7 @@ afterAll(() => {
   rmSync(work, { recursive: true, force: true });
 });
 
+// llmlint: ignore[shell_test_tiers_stay_split] no nx project owns scripts/stage-npm-binary.sh; it stages this SDK's own platform packages, so its pack test runs in this project's tier, as test_platform_wheels.py does for the wheel scripts
 describe("Windows platform packages", () => {
   for (const pkg of WINDOWS) {
     it(`${pkg.name} packs the staged CLI at bin/skilltest.exe`, () => {
@@ -60,12 +103,12 @@ describe("Windows platform packages", () => {
       expect(pkgDir).toBe(join(REPO_ROOT, "sdks", "typescript", "platforms", pkg.dir));
 
       const dest = mkdtempSync(join(work, `${pkg.dir}-`));
-      const [packed] = JSON.parse(
+      const packed = parsePacked(
         execFileSync("npm", ["pack", "--json", "--pack-destination", dest], {
           cwd: pkgDir,
           encoding: "utf8",
         }),
-      ) as [{ name: string; filename: string; files: PackedFile[] }];
+      );
 
       expect(packed.name).toBe(pkg.name);
       const exe = packed.files.find((f) => f.path === "bin/skilltest.exe");
@@ -77,7 +120,7 @@ describe("Windows platform packages", () => {
       const read = (member: string) =>
         execFileSync("tar", ["-xOzf", tarball, `package/${member}`], { encoding: "utf8" });
       expect(read("bin/skilltest.exe")).toBe(readFileSync(standIn, "utf8"));
-      const manifest = JSON.parse(read("package.json"));
+      const manifest = parseScope(read("package.json"));
       expect(manifest.os).toEqual(["win32"]);
       expect(manifest.cpu).toEqual([pkg.cpu]);
     });

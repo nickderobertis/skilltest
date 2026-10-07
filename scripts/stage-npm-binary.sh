@@ -51,5 +51,8 @@ case "$target" in
 esac
 
 mkdir -p "$dir/bin"
-install -m 0755 "$binary" "$dir/bin/$exe"
+install -m 0755 "$binary" "$dir/bin/$exe" || {
+  echo "error: could not copy $binary into $dir/bin/$exe; check that $dir is writable" >&2
+  exit 1
+}
 echo "$dir"
