@@ -8,8 +8,9 @@
 
 The checker's own mutations prove its routing assertions can fail; this proves
 its command boundary: green on a copy of the committed workflows, exit 1 naming
-the drift when a copy breaks the routing or the toolchain falls behind a build
-matrix, and exit 2 on input it cannot model — a malformed workflow, a malformed
+the drift when a copy breaks the routing, reaches Nx before installing the
+workspace, or the toolchain falls behind a build matrix, and exit 2 on input it
+cannot model — a malformed workflow, a malformed
 `if:` expression, unreadable TOML — or an unknown argument. Quiet on success,
 one line.
 """
@@ -131,6 +132,21 @@ CASES = (
         "notignored.yml: jobs is missing or null",
     ),
     Case(
+        "a live suite reaching nx before installing the workspace",
+        lambda wf, _tc: _replace(
+            wf / "e2e-goose.yml", "        run: pnpm install --frozen-lockfile\n", "        run: echo skipped\n"
+        ),
+        1,
+        "e2e-goose.yml:live runs `just test-harness`, which invokes nx, before installing pnpm",
+    ),
+    Case(
+        "a justfile with no nx recipe",
+        lambda _wf, tc: (tc.parent / "justfile").write_text("default:\n    @echo hi\n"),
+        2,
+        "no recipe invokes nx",
+        ("--justfile", "{tmp}/justfile"),
+    ),
+    Case(
         "a harness lane with no live project",
         lambda wf, _tc: _replace(wf / "e2e-codex.yml", "just test-harness codex", "just test-harness no-such-harness"),
         1,
@@ -167,7 +183,8 @@ def run(case: Case, tmp: Path) -> subprocess.CompletedProcess[str]:
     shutil.copy(ROOT / "rust-toolchain.toml", toolchain)
     case.edit(workflows, toolchain)
     args = [sys.executable, str(CHECKER), "--workflows", str(workflows), "--toolchain", str(toolchain)]
-    return subprocess.run([*args, *case.extra_args], capture_output=True, text=True, check=False)
+    extra = [a.replace("{tmp}", str(tmp)) for a in case.extra_args]
+    return subprocess.run([*args, *extra], capture_output=True, text=True, check=False)
 
 
 def main() -> None:

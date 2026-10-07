@@ -70,6 +70,24 @@ jobs:
       - name: Install just
         uses: extractions/setup-just@v2
 
+      # The live step runs through nx (`just test-*` -> `pnpm exec nx run
+      # skilltest-live-*:live`), so install the pinned pnpm and the locked
+      # workspace before it.
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          package_json_file: package.json
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install workspace dependencies (nx)
+        run: pnpm install --frozen-lockfile
+
       - name: Live e2e against the real Anthropic + OpenAI APIs
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

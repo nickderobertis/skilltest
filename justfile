@@ -123,8 +123,10 @@ boundaries-check:
 # Workflow-routing gate (part of every `just check` tier; workspace-level): which
 # jobs each event runs across .github/workflows — the PR tier, the merge-to-main
 # sweep + live suites gating the release, the `chore(release):` commit running
-# nothing, the tag workflows — and that rust-toolchain.toml provisions exactly
-# the targets the build matrices name; then its own test. Needs `uv`.
+# nothing, the tag workflows — that rust-toolchain.toml provisions exactly the
+# targets the build matrices name, and that every step running an Nx-invoking
+# recipe installs pnpm and the locked workspace first; then its own test.
+# Needs `uv`.
 workflows-check:
     @uv run --quiet --script scripts/check-workflow-routing.py >/dev/null
     @uv run --quiet --script scripts/check-workflow-routing-test.py >/dev/null

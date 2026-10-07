@@ -20,7 +20,10 @@ workflows — and asserts the routing:
   suite, and reaches the release only through their success — a failure induced
   in the sweep or in any one live suite leaves the release skipped;
 * the `chore(release):` commit runs no ci, live e2e, bundle-smoke or visual-docs
-  job, while the `v*` tag still fires release.yml and publish.yml.
+  job, while the `v*` tag still fires release.yml and publish.yml;
+* every step running a `just` recipe that reaches Nx (read from the justfile)
+  comes after its job installs the pinned pnpm and the locked workspace, so it
+  works on a fresh runner.
 
 Then it re-runs those assertions over deliberately broken copies of the
 workflows, each of which must fail — a gate nobody has watched fail is not known
@@ -46,6 +49,7 @@ import yaml
 ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS = ROOT / ".github" / "workflows"
 TOOLCHAIN = ROOT / "rust-toolchain.toml"
+JUSTFILE = ROOT / "justfile"
 HARNESS_PROJECTS = ROOT / "live" / "harness"  # one Nx project per harness lane: <id>/project.json
 HARNESS_RUN = re.compile(r"\bjust test-harness ([A-Za-z0-9_-]+)")
 REPO = "nickderobertis/skilltest"
@@ -440,6 +444,57 @@ def parse_all(raw: dict[str, object]) -> dict[WorkflowFile, Workflow]:
     return {WorkflowFile(name): parse_workflow(name, doc) for name, doc in raw.items()}
 
 
+_RECIPE = re.compile(r"^@?([a-z][\w-]*)(?:\s[^:]*)?:(?!=)")
+_JUST_CALL = re.compile(r"\bjust\s+([a-z][\w-]*)")
+_NX_CALL = ("{{nx}}", "{{affected}}", "pnpm exec nx")
+
+
+def nx_recipes(justfile: Path) -> frozenset[str]:
+    """The justfile recipes that invoke Nx, directly or through another recipe."""
+    bodies: dict[str, list[str]] = {}
+    current: str | None = None
+    for line in justfile.read_text().splitlines():
+        if line[:1] in (" ", "\t"):
+            if current is not None:
+                bodies[current].append(line)
+        elif m := _RECIPE.match(line):
+            current = m.group(1)
+            bodies[current] = []
+        elif line.strip() and not line.startswith("#"):
+            current = None
+    found = {name for name, body in bodies.items() if any(n in ln for ln in body for n in _NX_CALL)}
+    while True:
+        more = {name for name, body in bodies.items() if any(c in found for ln in body for c in _JUST_CALL.findall(ln))}
+        if more <= found:
+            break
+        found |= more
+    if not found:
+        raise WorkflowError(f"{justfile}: no recipe invokes nx; the justfile is not the one this model reads")
+    return frozenset(found)
+
+
+def _installs_workspace(step: Step) -> bool:
+    return step.run is not None and ("pnpm install --frozen-lockfile" in step.run or "just bootstrap" in step.run)
+
+
+def nx_without_install(wfs: dict[WorkflowFile, Workflow], recipes: frozenset[str]) -> list[str]:
+    """Steps that reach Nx before their job installs pnpm and the locked workspace."""
+    bad = []
+    for wf in wfs.values():
+        for job in wf.jobs.values():
+            pnpm = installed = False
+            for step in job.steps:
+                pnpm = pnpm or (step.uses or "").startswith("pnpm/action-setup@")
+                installed = installed or (pnpm and _installs_workspace(step))
+                for recipe in _JUST_CALL.findall(step.run or ""):
+                    if recipe in recipes and not installed:
+                        bad.append(
+                            f"{wf.filename}:{job.id} runs `just {recipe}`, which invokes nx, before installing "
+                            "pnpm (pnpm/action-setup) and the locked workspace (pnpm install --frozen-lockfile)"
+                        )
+    return bad
+
+
 def live_suites(wfs: dict[WorkflowFile, Workflow]) -> tuple[WorkflowFile, ...]:
     return tuple(sorted(f for f in wfs if fnmatch.fnmatch(f, LIVE_GLOB)))
 
@@ -682,10 +737,13 @@ def harness_lanes(wfs: dict[WorkflowFile, Workflow]) -> dict[str, WorkflowFile]:
 
 
 def violations(
-    wfs: dict[WorkflowFile, Workflow], provisioned: set[str], lane_root: Path = HARNESS_PROJECTS
+    wfs: dict[WorkflowFile, Workflow],
+    provisioned: set[str],
+    recipes: frozenset[str],
+    lane_root: Path = HARNESS_PROJECTS,
 ) -> list[str]:
-    """Every way the workflows break the release model, given the toolchain's targets and lane projects."""
-    bad: list[str] = []
+    """Every way the workflows break the release model, given the toolchain's targets, Nx recipes and lanes."""
+    bad: list[str] = nx_without_install(wfs, recipes)
     # Every per-harness lane a workflow runs is a live project of its own.
     bad += [
         f"{wf} runs `just test-harness {hid}`, but live/harness/{hid}/project.json does not exist"
@@ -853,6 +911,12 @@ MUTATIONS: tuple[Mutation, ...] = (
         lambda d: _retarget(_jobs(d, "release.yml")["upload"], "riscv64gc-unknown-linux-gnu"),
     ),
     Mutation(
+        "a live suite reaching nx before installing the workspace",
+        lambda d: _jobs(d, "e2e-judge-api.yml")["live"].update(
+            steps=[s for s in _jobs(d, "e2e-judge-api.yml")["live"]["steps"] if "pnpm install" not in s.get("run", "")]
+        ),
+    ),
+    Mutation(
         "a harness lane with no live project",
         lambda d: [
             s.update({"run": "just test-harness no-such-harness"})
@@ -863,14 +927,14 @@ MUTATIONS: tuple[Mutation, ...] = (
 )
 
 
-def blind_spots(raw: dict[str, object], provisioned: set[str]) -> list[str]:
+def blind_spots(raw: dict[str, object], provisioned: set[str], recipes: frozenset[str]) -> list[str]:
     """The mutations the contract fails to reject."""
     blind = []
     for mutation in MUTATIONS:
         broken = copy.deepcopy(raw)
         mutation.apply(broken)
         try:
-            caught = bool(violations(parse_all(broken), provisioned))
+            caught = bool(violations(parse_all(broken), provisioned, recipes))
         except WorkflowError:
             caught = True  # refusing to model the broken workflows also rejects them
         if not caught:
@@ -909,6 +973,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--report", action="store_true", help="also print the routing table for each event")
     parser.add_argument("--workflows", type=Path, default=WORKFLOWS, help="workflow directory (default: the repo's)")
     parser.add_argument("--toolchain", type=Path, default=TOOLCHAIN, help="rust-toolchain.toml (default: the repo's)")
+    parser.add_argument("--justfile", type=Path, default=JUSTFILE, help="justfile (default: the repo's)")
     args = parser.parse_args(argv)  # an unknown argument exits 2 with the usage
     try:
         raw = load_raw(args.workflows)
@@ -916,8 +981,9 @@ def main(argv: list[str]) -> int:
         provisioned = toolchain_targets(args.toolchain)
         if args.report:
             report(wfs)
-        problems = violations(wfs, provisioned)
-        blind = [] if problems else blind_spots(raw, provisioned)
+        recipes = nx_recipes(args.justfile)
+        problems = violations(wfs, provisioned, recipes)
+        blind = [] if problems else blind_spots(raw, provisioned, recipes)
     except (OSError, yaml.YAMLError, tomllib.TOMLDecodeError, WorkflowError) as exc:
         print(f"check-workflow-routing: cannot model the workflows: {exc}; {FIX}", file=sys.stderr)
         return 2
