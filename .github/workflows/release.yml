@@ -1,9 +1,10 @@
 # Build and publish cross-platform `skilltest` binaries on a version tag.
 #
 # Push a tag like `v0.1.0` and this builds the CLI for each supported platform on
-# a native runner (no cross-compilation), then uploads a `.tar.gz` plus a
-# `.sha256` checksum to the matching GitHub Release. The install script
-# (scripts/install.sh) consumes these asset names.
+# a native runner (only x86_64-apple-darwin cross-compiles), then uploads a
+# `.tar.gz` (a `.zip` holding skilltest.exe on Windows) plus a `.sha256` checksum
+# to the matching GitHub Release. The install script (scripts/install.sh)
+# consumes the Unix asset names.
 
 name: release
 
@@ -25,17 +26,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-24.04-arm
-          # Both macOS targets build on the arm runner: x86_64 cross-compiles via
-          # `--target` (Apple's toolchain links x86_64 natively). The Intel runner
-          # (macos-13, deprecated) queued unreliably and stalled releases.
-          - target: x86_64-apple-darwin
-            os: macos-14
-          - target: aarch64-apple-darwin
-            os: macos-14
+          # release-platforms.toml's platforms, one per line; the release-target
+          # gate holds this list to it. Both macOS targets build on the arm
+          # runner: x86_64 cross-compiles via `--target` (Apple's toolchain links
+          # x86_64 natively). The Intel runner (macos-13, deprecated) queued
+          # unreliably and stalled releases. Each Windows target builds natively
+          # and archives skilltest.exe as a .zip.
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-latest, bin: skilltest }
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-24.04-arm, bin: skilltest }
+          - { target: x86_64-apple-darwin, os: macos-14, bin: skilltest }
+          - { target: aarch64-apple-darwin, os: macos-14, bin: skilltest }
+          - { target: x86_64-pc-windows-msvc, os: windows-latest, bin: skilltest.exe }
+          - { target: aarch64-pc-windows-msvc, os: windows-11-arm, bin: skilltest.exe }
     steps:
       - uses: actions/checkout@v4
 
@@ -47,10 +49,12 @@ jobs:
       - name: Build and upload the binary
         uses: taiki-e/upload-rust-binary-action@v1
         with:
+          # The action appends .exe itself on Windows; matrix.bin records the
+          # built file's name for the release-target gate.
           bin: skilltest
           target: ${{ matrix.target }}
           # Deterministic asset name the install script depends on:
-          # skilltest-<target>.tar.gz (+ .sha256).
+          # skilltest-<target>.tar.gz (+ .sha256); .zip on Windows.
           archive: skilltest-$target
           checksum: sha256
           token: ${{ secrets.GITHUB_TOKEN }}

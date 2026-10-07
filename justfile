@@ -34,8 +34,8 @@ bootstrap:
     uv sync
 
 # Full quality gate over the affected projects (format, lint, type check, unit +
-# e2e), plus the contract drift gate, the release-target gate and the Rust
-# coverage gate. Fails on any issue (no warnings-only mode). `test`/`test-e2e`
+# e2e), plus the contract drift gate, the release-target gate, the workflow lint
+# and the Rust coverage gate. Fails on any issue (no warnings-only mode). `test`/`test-e2e`
 # run first as prerequisites (so the test suite is unambiguously part of the
 # gate), then the static gates, then `coverage` enforces the line-coverage floor
 # on the artifact's Rust core.
@@ -43,6 +43,7 @@ bootstrap:
 check: test test-e2e
     @bash scripts/gen-contract.sh --check
     @just release-targets-check
+    @just workflows-lint
     {{nx}} affected -t format-check lint typecheck
     @just coverage
     @echo "check: all gates passed"
@@ -51,6 +52,7 @@ check: test test-e2e
 check-all: coverage
     @bash scripts/gen-contract.sh --check
     @just release-targets-check
+    @just workflows-lint
     {{nx}} run-many -t format-check lint typecheck test test-e2e
     @echo "check-all: all gates passed"
 
@@ -77,6 +79,13 @@ release-targets-check:
     @bash scripts/check-release-targets.sh >/dev/null
     @bash scripts/check-release-targets-test.sh >/dev/null
     @bash scripts/check-release-probe.sh >/dev/null
+
+# Workflow lint (part of `just check`; workspace-level, since no nx project owns
+# .github/workflows/): actionlint over every workflow, handing each `run:` script
+# to the shellcheck pinned beside it in the root pyproject.toml's dev group, so
+# local and CI runs judge the same versions. Silent on success.
+workflows-lint:
+    @uv run --frozen actionlint
 
 # Live drift alarm for the release probe: drives it against the real crates.io,
 # PyPI and npm for every declared target. Network, so never part of `check`.

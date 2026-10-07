@@ -28,7 +28,9 @@
     "@skill-test/cli-linux-x64": "workspace:*",
     "@skill-test/cli-linux-arm64": "workspace:*",
     "@skill-test/cli-darwin-x64": "workspace:*",
-    "@skill-test/cli-darwin-arm64": "workspace:*"
+    "@skill-test/cli-darwin-arm64": "workspace:*",
+    "@skill-test/cli-win32-x64": "workspace:*",
+    "@skill-test/cli-win32-arm64": "workspace:*"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",

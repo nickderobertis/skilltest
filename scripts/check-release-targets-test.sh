@@ -43,6 +43,16 @@ staged=(
   sdks/typescript/platforms/cli-linux-arm64/package.json
   sdks/typescript/platforms/cli-darwin-x64/package.json
   sdks/typescript/platforms/cli-darwin-arm64/package.json
+  sdks/typescript/platforms/cli-win32-x64/package.json
+  sdks/typescript/platforms/cli-win32-arm64/package.json
+  release-platforms.toml
+  .github/workflows/release.yml
+  .github/workflows/windows-build.yml
+  .github/workflows/bundle-smoke.yml
+  scripts/build-python-dist.sh
+  scripts/build-python-wheel.sh
+  scripts/set-version.sh
+  .releaserc.json
 )
 
 stage() {
@@ -119,12 +129,12 @@ expect_red "a published platform package lost its covers entry" \
 
 stage
 edit release-targets.toml 's/^  "npm:@skill-test\/cli-darwin-arm64",$/&\
-  "npm:@skill-test\/cli-win32-x64",/'
+  "npm:@skill-test\/cli-freebsd-x64",/'
 expect_red "a covers entry names a package nothing publishes" \
-  "cover 'npm:@skill-test/cli-win32-x64', which .github/workflows/publish.yml does not publish"
+  "cover 'npm:@skill-test/cli-freebsd-x64', which .github/workflows/publish.yml does not publish"
 
 stage
-edit .github/workflows/publish.yml 's/ x86_64-apple-darwin aarch64-apple-darwin; do/ aarch64-apple-darwin; do/'
+edit .github/workflows/publish.yml 's/ x86_64-apple-darwin aarch64-apple-darwin \\$/ aarch64-apple-darwin \\/'
 expect_red "the npm job stopped staging a committed platform package" \
   "sdks/typescript/platforms/cli-darwin-x64/package.json is committed but"
 
@@ -184,8 +194,100 @@ printf '{"name": "@skill-test/cli-linux-x64"}\n{"name": "@skill-test/other"\n' \
   fail "could not write the truncated platform manifest; check that $work is writable and has space, then rerun"
 expect_red "a platform manifest parsed only partway" 'is not JSON with a string "name"'
 
+# The platform set: release-platforms.toml against every list restating it.
+
+stage
+edit .github/workflows/publish.yml '/^ *- { target: aarch64-pc-windows-msvc, /d'
+expect_red "publish.yml's binaries matrix lost a Windows target" \
+  "publish.yml's binaries matrix lacks 'aarch64-pc-windows-msvc	windows-11-arm	skilltest.exe'"
+
+stage
+edit .github/workflows/release.yml 's/{ target: x86_64-pc-windows-msvc, os: windows-latest, bin: skilltest.exe }/{ target: x86_64-pc-windows-msvc, os: windows-latest, bin: skilltest }/'
+expect_red "release.yml's archive matrix named the Windows binary without .exe" \
+  "release.yml's upload matrix has 'x86_64-pc-windows-msvc	windows-latest	skilltest'"
+
+stage
+edit scripts/build-python-dist.sh 's/ x86_64-pc-windows-msvc aarch64-pc-windows-msvc"$/"/'
+expect_red "build-python-dist.sh stopped building the Windows wheels" \
+  "build-python-dist.sh's targets lacks 'x86_64-pc-windows-msvc'"
+
+stage
+edit scripts/build-python-wheel.sh '/^aarch64-pc-windows-msvc) plat=/d'
+expect_red "build-python-wheel.sh lost the win_arm64 tag" \
+  "build-python-wheel.sh's tag map lacks 'aarch64-pc-windows-msvc	win_arm64'"
+
+stage
+edit .github/workflows/windows-build.yml '/^ *- { target: aarch64-pc-windows-msvc, /d'
+expect_red "the Windows PR lane stopped building a Windows target" \
+  "windows-build.yml's matrix lacks 'aarch64-pc-windows-msvc	windows-11-arm	skilltest.exe'"
+
+stage
+edit .github/workflows/windows-build.yml 's/^\( *\)- { target: x86_64-pc-windows-msvc, .*$/&\
+\1- { target: x86_64-unknown-linux-gnu, os: ubuntu-latest, bin: skilltest }/'
+expect_red "the Windows PR lane built a non-Windows target" \
+  "windows-build.yml's matrix has 'x86_64-unknown-linux-gnu	ubuntu-latest	skilltest'"
+
+stage
+awk 'BEGIN { RS = ""; ORS = "\n\n" } !/target = "aarch64-pc-windows-msvc"/' \
+  "$work/repo/release-platforms.toml" >"$work/next" || fail "could not drop the win_arm64 platform from the staged declaration; check that $work is writable and has space, then rerun"
+replace release-platforms.toml
+expect_red "a shipped Windows target was dropped from the platform declaration" \
+  "publish.yml's binaries matrix has 'aarch64-pc-windows-msvc	windows-11-arm	skilltest.exe', which release-platforms.toml does not declare"
+
+stage
+edit .github/workflows/bundle-smoke.yml 's/^\( *\)- { target: aarch64-apple-darwin, os: macos-14 }$/&\
+\1- { target: x86_64-unknown-freebsd, os: ubuntu-latest }/'
+expect_red "bundle-smoke smoked an undeclared platform" \
+  "bundle-smoke.yml smokes 'x86_64-unknown-freebsd', which release-platforms.toml does not declare"
+
+stage
+edit .github/workflows/bundle-smoke.yml 's/{ target: aarch64-apple-darwin, os: macos-14 }/{ target: aarch64-apple-darwin, os: macos-13 }/'
+expect_red "bundle-smoke smoked a declared platform on another runner" \
+  "smokes 'aarch64-apple-darwin' on 'macos-13' but release-platforms.toml builds it on 'macos-14'"
+
+stage
+edit .github/workflows/publish.yml 's/^\( *\)x86_64-pc-windows-msvc aarch64-pc-windows-msvc; do$/\1x86_64-pc-windows-msvc; do/'
+expect_red "the npm job's loop lost a Windows target" \
+  "npm 'for target in' loop lacks 'aarch64-pc-windows-msvc'"
+
+stage
+jq 'del(.optionalDependencies["@skill-test/cli-win32-x64"])' "$work/repo/sdks/typescript/package.json" \
+  >"$work/next" || fail "could not drop the win32-x64 pin from the staged SDK manifest; read jq's error above — fix sdks/typescript/package.json if it is not JSON, else $work's permissions or space"
+replace sdks/typescript/package.json
+expect_red "the SDK's optionalDependencies lost a Windows platform package" \
+  "optionalDependencies lacks '@skill-test/cli-win32-x64'"
+
+stage
+edit .releaserc.json '/"sdks\/typescript\/platforms\/cli-win32-arm64\/package.json",/d'
+expect_red ".releaserc.json stopped committing a Windows platform package's version" \
+  "@semantic-release/git assets lacks 'cli-win32-arm64'"
+
+stage
+edit scripts/stage-npm-binary.sh 's/^x86_64-pc-windows-msvc) pkg="cli-win32-x64" ;;$/x86_64-pc-windows-msvc) pkg="cli-win32-arm64" ;;/'
+expect_red "the stager mapped a Windows target to the wrong package" \
+  "stage-npm-binary.sh's package map has 'x86_64-pc-windows-msvc	cli-win32-arm64'"
+
+stage
+edit release-targets.toml '/"npm:@skill-test\/cli-win32-arm64",/d'
+expect_red "the covers lost a Windows platform package" \
+  "npm:@skill-test/sdk covers lacks '@skill-test/cli-win32-arm64'"
+
+stage
+edit release-platforms.toml 's/^npm_package = "@skill-test\/cli-win32-x64"$/npm_package = "@skill-test\/cli-windows-x64"/'
+expect_red "the declaration renamed a platform package the npm side still publishes" \
+  "sdks/typescript/platforms/ has 'cli-win32-x64	@skill-test/cli-win32-x64', which release-platforms.toml does not declare"
+
+stage
+edit scripts/set-version.sh 's|^for pkg in sdks/typescript/platforms/\*/package.json; do$|for pkg in sdks/typescript/platforms/cli-linux-*/package.json; do|'
+expect_red "set-version.sh stopped versioning every platform package" \
+  "no longer versions every platform package"
+
+stage
+edit release-platforms.toml '/^wheel_tag = "win_amd64"$/d'
+expect_red "a declared platform lost a field" "[[platform]] 5 lacks one of"
+
 stage
 edit release-targets.toml 's/^schema_version = 3$/schema_version = 2/'
 expect_red "the declaration moved off schema_version 3" "declares schema_version '2'"
 
-echo "check-release-targets-test: the drift gate is green on this tree and red on each direction of drift"
+echo "check-release-targets-test: the drift gate is green on this tree and red on each direction of drift, platform lists included"

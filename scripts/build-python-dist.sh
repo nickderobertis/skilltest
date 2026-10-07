@@ -8,7 +8,8 @@
 #   scripts/build-python-dist.sh <binaries-dir> [out-dir]
 #
 # <binaries-dir> holds one subdir per target named `skilltest-<rust-target>`,
-# each containing the `skilltest` binary (the layout of the publish workflow's
+# each containing the `skilltest` binary — `skilltest.exe` for a Windows target
+# (the layout of the publish workflow's
 # downloaded build artifacts). Missing targets are skipped with a notice.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -25,14 +26,19 @@ if [ -z "$bindir" ] || [ ! -d "$bindir" ]; then
   exit 2
 fi
 
-targets="x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-apple-darwin aarch64-apple-darwin"
+# release-platforms.toml's targets; scripts/check-release-targets.sh holds this
+# list to it.
+targets="x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-apple-darwin aarch64-apple-darwin x86_64-pc-windows-msvc aarch64-pc-windows-msvc"
 
 rm -rf "$outdir"
 mkdir -p "$outdir"
 
 built=0
 for target in $targets; do
-  binary="$bindir/skilltest-$target/skilltest"
+  case "$target" in
+  *-windows-*) binary="$bindir/skilltest-$target/skilltest.exe" ;;
+  *) binary="$bindir/skilltest-$target/skilltest" ;;
+  esac
   if [ ! -f "$binary" ]; then
     echo "notice: no binary for $target — skipping its wheel" >&2
     continue

@@ -26,7 +26,8 @@
 # **What publish.yml and release.yml ship that is deliberately not declared.**
 #
 # - The GitHub Release archives. release.yml uploads `skilltest-<rust-target>.tar.gz`
-#   and its `.sha256` per target for scripts/install.sh. They belong to no
+#   (`.zip` for the Windows targets) and its `.sha256` per target, the Unix ones
+#   for scripts/install.sh. They belong to no
 #   registry, so no `<registry>:<name>` names one: they cannot be a target or a
 #   `covers` entry, and they are not `[[retired]]` either, which records something
 #   no longer published while these ship on every release. A consumer that
@@ -38,7 +39,7 @@
 #   publish.yml uploads all of them under the one PyPI project `skilltest-sdk` at
 #   one version. They are builds of `pypi:skilltest-sdk`, not names of their own,
 #   so that target answers for every one of them.
-# - The four `@skill-test/cli-<os>-<arch>` npm packages. They ARE registry names,
+# - The six `@skill-test/cli-<os>-<arch>` npm packages (release-platforms.toml). They ARE registry names,
 #   so they are `covers` entries of `node-sdk` rather than undeclared: nothing
 #   depends on one by name, they exist so `@skill-test/sdk` can resolve the host's
 #   binary at its own exact version through its optionalDependencies, and
@@ -90,6 +91,8 @@ covers = [
   "npm:@skill-test/cli-linux-arm64",
   "npm:@skill-test/cli-darwin-x64",
   "npm:@skill-test/cli-darwin-arm64",
+  "npm:@skill-test/cli-win32-x64",
+  "npm:@skill-test/cli-win32-arm64",
 ]
 
 [[target]]

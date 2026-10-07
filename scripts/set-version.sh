@@ -13,9 +13,10 @@
 # Needs cargo, uv, and pnpm on PATH (it refreshes Cargo.lock, the root uv.lock —
 # one lock for the whole uv workspace — and pnpm-lock.yaml). Touches: Cargo.toml
 # (+ the internal skilltest-core pin), both pyproject.toml (+ pytest's exact
-# skilltest-sdk pin), both package.json, the four @skill-test/cli-* platform
-# package.json, and the three lockfiles. The SDK's and vitest's `workspace:*`
-# deps and pytest's `{ workspace = true }` [tool.uv.sources] are left alone.
+# skilltest-sdk pin), both package.json, every @skill-test/cli-* platform
+# package.json (one per release-platforms.toml platform, by the glob below), and
+# the three lockfiles. The SDK's and vitest's `workspace:*` deps and pytest's
+# `{ workspace = true }` [tool.uv.sources] are left alone.
 set -euo pipefail
 
 VERSION="${1:-}"
@@ -58,7 +59,7 @@ perl -i -pe 's/^version = "[^"]*"/version = "'"$VERSION"'"/' plugins/pytest/pypr
 perl -i -pe 's/"skilltest-sdk[^"]*"/"skilltest-sdk=='"$VERSION"'"/' plugins/pytest/pyproject.toml
 run "refresh uv.lock" uv lock --quiet
 
-# --- TypeScript: SDK + framework + the four optional platform packages, then lock ----
+# --- TypeScript: SDK + framework + every optional platform package, then lock ------
 # The platform packages (@skill-test/cli-<os>-<arch>) carry the binary; the SDK
 # pins them via `workspace:*`, so they must stay on the same version. The SDK's
 # `workspace:*` optional deps and vitest's `workspace:*` dep are left alone (pnpm

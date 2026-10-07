@@ -4,8 +4,9 @@
 #
 #   scripts/stage-npm-binary.sh <rust-target> <skilltest-binary>
 #
-# Copies the binary to sdks/typescript/platforms/<pkg>/bin/skilltest (the path
-# the SDK's bundledBin() resolves) and prints the package directory. The bin/
+# Copies the binary to sdks/typescript/platforms/<pkg>/bin/skilltest — or
+# bin/skilltest.exe for a Windows target — (the path the SDK's bundledBin()
+# resolves) and prints the package directory. The bin/
 # dir is git-ignored; it exists only for a pack/publish. Quiet on success.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -22,12 +23,16 @@ if [ ! -f "$binary" ]; then
   exit 2
 fi
 
-# Rust target triple -> npm platform package directory (@skill-test/cli-<os>-<arch>).
+# Rust target triple -> npm platform package directory (@skill-test/cli-<os>-<arch>),
+# release-platforms.toml's npm_dir; scripts/check-release-targets.sh holds these
+# arms to it.
 case "$target" in
 x86_64-unknown-linux-gnu) pkg="cli-linux-x64" ;;
 aarch64-unknown-linux-gnu) pkg="cli-linux-arm64" ;;
 x86_64-apple-darwin) pkg="cli-darwin-x64" ;;
 aarch64-apple-darwin) pkg="cli-darwin-arm64" ;;
+x86_64-pc-windows-msvc) pkg="cli-win32-x64" ;;
+aarch64-pc-windows-msvc) pkg="cli-win32-arm64" ;;
 *)
   echo "error: unsupported target: $target" >&2
   exit 2
@@ -40,6 +45,11 @@ if [ ! -f "$dir/package.json" ]; then
   exit 2
 fi
 
+case "$target" in
+*-windows-*) exe="skilltest.exe" ;;
+*) exe="skilltest" ;;
+esac
+
 mkdir -p "$dir/bin"
-install -m 0755 "$binary" "$dir/bin/skilltest"
+install -m 0755 "$binary" "$dir/bin/$exe"
 echo "$dir"
