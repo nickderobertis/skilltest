@@ -69,7 +69,7 @@ beforeAll(() => {
 
 afterAll(() => rmSync(work, { recursive: true, force: true }));
 
-/** A copy of the consumer project to damage for one refusal. */
+/** Each refusal damages its own copy, so no case inherits another's damage. */
 function copyOfConsumer(tag: string): { dir: string; hostBin: string } {
   const dir = mkdtempSync(join(work, `${tag}-`));
   cpSync(consumer, dir, { recursive: true });

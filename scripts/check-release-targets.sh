@@ -358,8 +358,10 @@ while IFS=$'\t' read -r id _ manifest; do
     continue
   }
   if ! deps="$(jq -rs 'if length != 1 then error("it is not exactly one JSON document") else .[0] end | .optionalDependencies // {} | to_entries[]
-      | if (.value | type) == "string" then .key else error("\(.key) is pinned by a non-string spec") end' "$manifest" 2>&1)"; then
-    fail "$manifest's optionalDependencies cannot be read ($deps); make it a JSON object of package name to version-spec string"
+      | if (.value | type) != "string" then error("\(.key) is pinned by a non-string spec")
+        elif .value != "workspace:*" then error("\(.key) is pinned by \(.value), not workspace:*, so the SDK could install a platform binary from another release")
+        else .key end' "$manifest" 2>&1)"; then
+    fail "$manifest's optionalDependencies cannot be read ($deps); make it a JSON object of each platform package name to \"workspace:*\", which pnpm publish rewrites to this release's exact version"
     continue
   fi
   while read -r dep; do

@@ -180,6 +180,12 @@ replace sdks/typescript/package.json
 expect_red "the SDK pinned a platform package by a non-string spec" "is pinned by a non-string spec"
 
 stage
+jq '.optionalDependencies["@skill-test/cli-win32-arm64"] = "*"' "$work/repo/sdks/typescript/package.json" \
+  >"$work/next" || fail "could not rewrite the staged SDK manifest's win32-arm64 pin; read jq's error above — fix sdks/typescript/package.json if it is not JSON, else $work's permissions or space"
+replace sdks/typescript/package.json
+expect_red "the SDK pinned a platform package to any release" "@skill-test/cli-win32-arm64 is pinned by *, not workspace:*"
+
+stage
 edit release-targets.toml 's/^  "npm:@skill-test\/cli-linux-x64",$/  "npm:@skill-test\/cli-linux-x64"/'
 expect_red "a multi-line covers list lost a comma" "with no comma before the next one"
 

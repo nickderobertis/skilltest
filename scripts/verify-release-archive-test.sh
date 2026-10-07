@@ -60,7 +60,22 @@ EOF
   (cd "$dir" && checksum "$asset") || fail "could not checksum $asset; check that sha256sum or shasum is on PATH"
 }
 
-verify() { bash scripts/verify-release-archive.sh "$@" >"$work/out" 2>&1; }
+# Runs the verifier, on $verify_path instead of PATH when a case sets it.
+verify_path=""
+verify() { PATH="${verify_path:-$PATH}" "$BASH" scripts/verify-release-archive.sh "$@" >"$work/out" 2>&1; }
+
+# Prints a directory of links to the verifier's tools minus those named, for a
+# case that needs one missing.
+tools_without() {
+  local dir tool found
+  dir="$(mktemp -d "$work/path.XXXXXX")" || fail "could not create a tool directory under $work; check that it is writable"
+  for tool in tr rm mkdir cat sed unzip tar gzip sha256sum shasum; do
+    case " $* " in *" $tool "*) continue ;; esac
+    found="$(type -P "$tool")" || continue
+    ln -s "$found" "$dir/$tool" || fail "could not link $tool into $dir; check that $work is writable"
+  done
+  printf '%s\n' "$dir"
+}
 
 # $1 = what is wrong, $2 = what the verifier must say, rest = its arguments.
 expect_red() {
@@ -161,6 +176,69 @@ expect_red "the target is not a triple" "target 'x86_64 linux' is not a target t
 expect_red "the version is not X.Y.Z" "version 'v1.2.3' is not X.Y.Z" \
   "$work/x86_64-unknown-linux-gnu" x86_64-unknown-linux-gnu skilltest v1.2.3
 
+pack x86_64-unknown-linux-gnu skilltest 1.2.3
+verify_path="$(tools_without sha256sum)"
+verify "$work/x86_64-unknown-linux-gnu" x86_64-unknown-linux-gnu skilltest 1.2.3 ||
+  fail "the verifier refused a good .tar.gz where only shasum can hash it; fix the shasum fallback in scripts/verify-release-archive.sh"
+verify_path="$(tools_without sha256sum shasum)"
+expect_red "no checksum tool is on PATH" "shasum could not hash $work/x86_64-unknown-linux-gnu/skilltest-x86_64-unknown-linux-gnu.tar.gz, and sha256sum is not on PATH" \
+  "$work/x86_64-unknown-linux-gnu" x86_64-unknown-linux-gnu skilltest 1.2.3
+
+pack x86_64-pc-windows-msvc skilltest.exe 1.2.3
+verify_path="$(tools_without unzip)"
+expect_red "unzip is not on PATH" "unzip is not on PATH, so skilltest-x86_64-pc-windows-msvc.zip cannot be opened" \
+  "$work/x86_64-pc-windows-msvc" x86_64-pc-windows-msvc skilltest.exe 1.2.3
+verify_path=""
+
+python3 - "$work/x86_64-pc-windows-msvc/skilltest-x86_64-pc-windows-msvc.zip" <<'PY' || fail "could not corrupt the stand-in zip; check that python3 is on PATH and $work is writable"
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1], "w") as z:
+    z.writestr("skilltest.exe", "#!/bin/sh\necho skilltest 1.2.3\n")
+data = bytearray(open(sys.argv[1], "rb").read())
+at = data.index(b"echo skilltest")
+data[at] ^= 0xFF
+open(sys.argv[1], "wb").write(bytes(data))
+PY
+(cd "$work/x86_64-pc-windows-msvc" && checksum skilltest-x86_64-pc-windows-msvc.zip) ||
+  fail "could not re-checksum the stand-in zip; check that sha256sum or shasum is on PATH"
+expect_red "the zip lists cleanly but its member is corrupt" "could not extract skilltest-x86_64-pc-windows-msvc.zip" \
+  "$work/x86_64-pc-windows-msvc" x86_64-pc-windows-msvc skilltest.exe 1.2.3
+
+pack x86_64-unknown-linux-gnu skilltest 1.2.3
+python3 - "$work/x86_64-unknown-linux-gnu/skilltest-x86_64-unknown-linux-gnu.tar.gz" <<'PY' || fail "could not write the stand-in hard-link tarball; check that python3 is on PATH and $work is writable"
+import sys, tarfile
+with tarfile.open(sys.argv[1], "w:gz") as t:
+    link = tarfile.TarInfo("skilltest")
+    link.type = tarfile.LNKTYPE
+    link.linkname = "absent"
+    t.addfile(link)
+PY
+(cd "$work/x86_64-unknown-linux-gnu" && checksum skilltest-x86_64-unknown-linux-gnu.tar.gz) ||
+  fail "could not re-checksum the stand-in tarball; check that sha256sum or shasum is on PATH"
+expect_red "the tarball lists cleanly but cannot be extracted" "could not extract skilltest-x86_64-unknown-linux-gnu.tar.gz" \
+  "$work/x86_64-unknown-linux-gnu" x86_64-unknown-linux-gnu skilltest 1.2.3
+
+# Unreadable and unwritable files stop nothing for root, so these cases need
+# an ordinary user, as every CI runner and a developer's shell are.
+if [ "$(id -u)" != 0 ]; then
+  pack x86_64-unknown-linux-gnu skilltest 1.2.3
+  chmod 000 "$work/x86_64-unknown-linux-gnu/skilltest-x86_64-unknown-linux-gnu.tar.gz" || fail "could not make the stand-in tarball unreadable"
+  expect_red "the archive cannot be read" "could not hash $work/x86_64-unknown-linux-gnu/skilltest-x86_64-unknown-linux-gnu.tar.gz" \
+    "$work/x86_64-unknown-linux-gnu" x86_64-unknown-linux-gnu skilltest 1.2.3
+
+  pack x86_64-unknown-linux-gnu skilltest 1.2.3
+  chmod 000 "$work/x86_64-unknown-linux-gnu/skilltest-x86_64-unknown-linux-gnu.tar.gz.sha256" || fail "could not make the stand-in checksum unreadable"
+  expect_red "the checksum cannot be read" "could not read $work/x86_64-unknown-linux-gnu/skilltest-x86_64-unknown-linux-gnu.tar.gz.sha256" \
+    "$work/x86_64-unknown-linux-gnu" x86_64-unknown-linux-gnu skilltest 1.2.3
+
+  pack x86_64-unknown-linux-gnu skilltest 1.2.3
+  chmod 555 "$work/x86_64-unknown-linux-gnu" || fail "could not make the stand-in download directory read-only"
+  expect_red "the download directory is read-only" "could not prepare $work/x86_64-unknown-linux-gnu/extracted" \
+    "$work/x86_64-unknown-linux-gnu" x86_64-unknown-linux-gnu skilltest 1.2.3
+  chmod 755 "$work/x86_64-unknown-linux-gnu" || fail "could not make $work/x86_64-unknown-linux-gnu writable again; delete it by hand"
+fi
+
+pack x86_64-unknown-linux-gnu skilltest 1.2.3
 expect_red "it was called without a version" "usage: verify-release-archive.sh" \
   "$work/x86_64-unknown-linux-gnu" x86_64-unknown-linux-gnu skilltest
 

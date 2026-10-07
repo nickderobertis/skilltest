@@ -31,9 +31,9 @@ esac
 [ -f "$dir/$asset.sha256" ] || err "$dir has no $asset.sha256; check release.yml's checksum setting"
 
 if command -v sha256sum >/dev/null 2>&1; then
-  hashed="$(sha256sum "$dir/$asset")" || err "sha256sum could not read $dir/$asset; check its permissions and re-download it"
+  hashed="$(sha256sum "$dir/$asset")" || err "sha256sum could not hash $dir/$asset; check its permissions and re-download it"
 else
-  hashed="$(shasum -a 256 "$dir/$asset")" || err "neither sha256sum nor a working shasum could hash $dir/$asset; install coreutils or perl's shasum and rerun"
+  hashed="$(shasum -a 256 "$dir/$asset")" || err "shasum could not hash $dir/$asset, and sha256sum is not on PATH; check the archive's permissions, or install coreutils' sha256sum, and rerun"
 fi
 actual="${hashed%% *}"
 recorded="$(tr -d '\r' <"$dir/$asset.sha256")" || err "could not read $dir/$asset.sha256; check its permissions and re-download it"
