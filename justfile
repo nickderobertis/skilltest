@@ -195,7 +195,7 @@ screenshots-bless: screenshots
 # both SDKs' bounds restate it, and the gate's
 # `oneharness_pin_is_lockstep_across_installer_recipe_and_both_sdks` reconciles
 # all four.
-install-oneharness version="v0.16.0":
+install-oneharness version="v0.21.3":
     @bash scripts/install-oneharness.sh {{version}}
 
 # Deep live suite against real oneharness + claude-code (needs CLAUDE_CODE_OAUTH_TOKEN

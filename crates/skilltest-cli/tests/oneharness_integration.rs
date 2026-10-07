@@ -510,6 +510,80 @@ fn streaming_with_mocks_through_real_oneharness() {
 
 #[test]
 #[ignore = "needs oneharness on PATH (just install-oneharness); run via just test-oneharness"]
+fn only_tool_activity_reaches_the_report_and_stream_through_real_oneharness() {
+    // The shim writes a `thinking` and a `text` block before each tool call and
+    // closes with the reply as text, as a real turn does; oneharness v0.19+
+    // reports those as `reasoning`/`message` events numbered among the tool
+    // events. Neither the buffered report nor the live stream may surface them.
+    let tool = |kind: &Value| kind == "tool_call" || kind == "tool_result";
+
+    let out = run_case("spy_plain.yaml", &["--spy", "--format", "json"]);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report = report(&out);
+    let events: Vec<&Value> = report["runs"][0]["transcript"]["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|m| m["events"].as_array())
+        .flatten()
+        .collect();
+    let calls = events.iter().filter(|e| e["kind"] == "tool_call").count();
+    assert_eq!(calls, 3, "one tool_call per scripted call: {events:#?}");
+    assert!(
+        events.iter().all(|e| tool(&e["kind"])),
+        "only tool activity is surfaced: {events:#?}"
+    );
+    let indices: Vec<u64> = events
+        .iter()
+        .map(|e| e["index"].as_u64().unwrap())
+        .collect();
+    assert!(
+        indices.windows(2).all(|w| w[0] < w[1]),
+        "kept in order: {indices:?}"
+    );
+    // The first tool call follows the shim's reasoning and prose, so its index
+    // shows oneharness reported (and skilltest dropped) the events before it.
+    assert!(
+        indices[0] > 0,
+        "the binary under test reported no non-tool events, so this proves nothing; \
+         run it against the oneharness release scripts/install-oneharness.sh pins: {indices:?}"
+    );
+
+    let out = run_case("spy_plain.yaml", &["--spy", "--format", "json-stream"]);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8(out.stdout).expect("stdout is utf8");
+    let streamed: Vec<Value> = text
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| serde_json::from_str::<Value>(l).expect("one JSON object per line"))
+        .filter(|l| l["type"] == "event")
+        .collect();
+    assert_eq!(
+        streamed
+            .iter()
+            .filter(|l| l["event"]["kind"] == "tool_call")
+            .count(),
+        3,
+        "{streamed:#?}"
+    );
+    assert!(
+        streamed.iter().all(|l| tool(&l["event"]["kind"])),
+        "only tool activity is streamed: {streamed:#?}"
+    );
+}
+
+#[test]
+#[ignore = "needs oneharness on PATH (just install-oneharness); run via just test-oneharness"]
 fn supports_resume_matches_the_real_registry() {
     // skilltest mirrors oneharness's `supports_resume` column rather than
     // probing it per run, so this is the drift alarm: ask the installed binary

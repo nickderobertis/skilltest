@@ -221,7 +221,7 @@ projects per PR. Locally, install the toolchains once (see `docs/development.md`
 (`provider.rs`) has two real backends; see [`docs/protocol.md`](docs/protocol.md).
 
 - **`OneharnessProvider` (default).** Targets
-  [`oneharness`](https://github.com/nickderobertis/oneharness) **v0.16.0** (the
+  [`oneharness`](https://github.com/nickderobertis/oneharness) **v0.21.3** (the
   line both SDKs bundle and `scripts/install-oneharness.sh` installs) and
   uses six of its normalized features directly so skilltest can stop string-
   munging: `--system <skill instructions>` carries the skill as a real system
@@ -230,7 +230,8 @@ projects per PR. Locally, install the toolchains once (see `docs/development.md`
   back to inlining the transcript);
   `--events` surfaces normalized tool events (`{kind, name, input, output,
   index}`) skilltest lifts onto each assistant turn (`Message.events`) so
-  consumers can assert on *what the skill did*, not just its text;
+  consumers can assert on *what the skill did*, not just its text — tool
+  activity only: the `message`/`reasoning` kinds v0.19+ adds are dropped;
   `results[*].usage` is aggregated into the report (`{input_tokens,
   output_tokens, cost_usd}`); `results[*].failure_kind` (`auth` /
   `rate_limit` / `model_not_found` / `quota`) is surfaced through `Error::Provider

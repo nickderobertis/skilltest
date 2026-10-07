@@ -35,9 +35,12 @@
 # can see which turns continued a session rather than starting one.
 #
 # Output is Claude Code's `-p --output-format stream-json --verbose` shape
-# (what oneharness requests under `--events`): one assistant line per tool_use
-# (post-rewrite input, like the real transcript), one user line per
-# tool_result, then the terminal `{"type":"result",…}` carrying the reply text
+# (what oneharness requests under `--events`): an assistant line of `thinking`
+# and `text` before each tool_use (the reasoning and prose a real turn
+# interleaves, which oneharness v0.19+ reports as `reasoning`/`message`
+# events), one assistant line per tool_use (post-rewrite input, like the real
+# transcript), one user line per tool_result, the reply as a closing assistant
+# `text` block, then the terminal `{"type":"result",…}` carrying the reply text
 # (with every tool result appended, standing in for "the model relayed what
 # the tool returned"), a session id, and usage.
 
@@ -101,7 +104,14 @@ reply="$(marker_text 'fake-reply:')"
 surfaced=""
 index=0
 
+emit_text() { # emit_text <text> — an assistant line of prose, as a real turn writes
+    jq -cn --arg t "$1" '{type:"assistant", message:{content:[{type:"text", text:$t}]}}'
+}
+
 emit_call() { # emit_call <index> <name> <input-json> <output-text>
+    jq -cn --arg n "$2" \
+        '{type:"assistant", message:{content:[{type:"thinking", thinking:("deciding to call " + $n)}]}}'
+    emit_text "calling $2"
     jq -cn --arg n "$2" --argjson i "$3" --argjson idx "$1" \
         '{type:"assistant", message:{content:[{type:"tool_use", id:("toolu_" + ($idx|tostring)), name:$n, input:$i}]}}'
     jq -cn --arg o "$4" --argjson idx "$1" \
@@ -152,5 +162,6 @@ while IFS= read -r line; do
     index=$((index + 1))
 done < <(printf '%s\n' "$system" | grep 'fake-tool:' || true)
 
+emit_text "$reply"
 jq -cn --arg t "$reply$surfaced" \
     '{type:"result", result:$t, session_id:"fake-claude-1", usage:{input_tokens:11, output_tokens:5}}'

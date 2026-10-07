@@ -45,6 +45,18 @@ pub struct ToolEvent {
     pub index: usize,
 }
 
+impl ToolEvent {
+    /// Whether this is tool activity — a `tool_call` or its `tool_result` — rather
+    /// than one of the non-tool kinds oneharness v0.19+ also reports (`message`,
+    /// the agent's own text, and `reasoning`). Only tool activity is surfaced on a
+    /// turn or streamed, so a consumer never mistakes prose for an action. The
+    /// surviving events keep oneharness's `index`, which numbers the dropped kinds
+    /// too, so it stays ordered but need not be contiguous.
+    pub fn is_tool_activity(&self) -> bool {
+        matches!(self.kind.as_str(), "tool_call" | "tool_result")
+    }
+}
+
 /// A single turn in the conversation.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Message {

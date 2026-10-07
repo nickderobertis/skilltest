@@ -592,7 +592,7 @@ impl Provider for CommandProvider {
 // ---------------------------------------------------------------------------
 
 /// The default [`Provider`]: runs each prompt on a harness through the
-/// `oneharness` CLI (targets **v0.16.0**, the line both SDKs bundle and
+/// `oneharness` CLI (targets **v0.21.3**, the line both SDKs bundle and
 /// `scripts/install-oneharness.sh` installs).
 ///
 /// Two things about that line shape the argv below. `oneharness run` prints a
@@ -612,7 +612,7 @@ impl Provider for CommandProvider {
 ///   `session_id` so the harness sees a continuing conversation (and keeps its
 ///   tool state, files, etc.) instead of being re-prompted with a stringified
 ///   transcript. Used for harnesses that report `supports_resume` in the
-///   registry — every harness on v0.16 (see [`supports_resume`]). A harness
+///   registry — every harness on v0.21 (see [`supports_resume`]). A harness
 ///   that reports no `session_id` still falls back to the inline-transcript
 ///   path, because there is no handle to continue from.
 /// * `--events` — normalized tool events (`{kind, name, input, output, index}`)
@@ -834,6 +834,17 @@ fn oh_failure(context: String, message: String, failure_kind: Option<&str>, stat
     }
 }
 
+/// The tool activity among a result's `events`, dropping the `message` and
+/// `reasoning` kinds oneharness v0.19+ reports beside it (see
+/// [`ToolEvent::is_tool_activity`]).
+fn tool_activity(events: Option<Vec<ToolEvent>>) -> Vec<ToolEvent> {
+    events
+        .unwrap_or_default()
+        .into_iter()
+        .filter(ToolEvent::is_tool_activity)
+        .collect()
+}
+
 /// Classify a non-`ok` oneharness result: its `failure_kind` when set, else a
 /// category inferred from the terminal `status`.
 fn oh_failure_kind(failure_kind: Option<&str>, status: &str) -> Option<ProviderErrorKind> {
@@ -912,7 +923,7 @@ impl OneharnessProvider {
             "run",
             "--harness",
             args.harness,
-            // Not cosmetic: on oneharness 0.16 stdout is text unless `--compact`
+            // Not cosmetic: since oneharness 0.16 stdout is text unless `--compact`
             // (or `--format json`) is given, so this is what selects the JSON
             // report parsed below.
             "--compact",
@@ -1029,7 +1040,7 @@ impl OneharnessProvider {
             text,
             session_id: result.session_id,
             usage: result.usage,
-            events: result.events.unwrap_or_default(),
+            events: tool_activity(result.events),
             mock_calls,
             history_file,
         })
@@ -1141,6 +1152,9 @@ impl OneharnessProvider {
             match value.get("type").and_then(serde_json::Value::as_str) {
                 Some("event") => {
                     if let Ok(event) = serde_json::from_value::<ToolEvent>(value["event"].clone()) {
+                        if !event.is_tool_activity() {
+                            continue;
+                        }
                         let flow = on_event(&event);
                         events.push(event);
                         if flow.is_break() {
@@ -1219,7 +1233,7 @@ impl OneharnessProvider {
         // Prefer the events we streamed; fall back to the result's events only if
         // the stream carried none.
         let events = if events.is_empty() {
-            result.events.unwrap_or_default()
+            tool_activity(result.events)
         } else {
             events
         };
@@ -1377,7 +1391,7 @@ impl Provider for OneharnessProvider {
 }
 
 /// The harnesses oneharness's registry marks `supports_resume = true` — the
-/// whole v0.16 matrix. Mirrored rather than probed so a run costs no extra
+/// whole v0.21 matrix. Mirrored rather than probed so a run costs no extra
 /// subprocess; `supports_resume_matches_the_real_registry` (the hermetic
 /// oneharness suite) fails the moment the two disagree.
 ///
@@ -2416,7 +2430,7 @@ mod tests {
 
     #[test]
     fn supports_resume_covers_known_harnesses() {
-        // Every harness in the oneharness v0.16 registry (the drift alarm in
+        // Every harness in the oneharness v0.21 registry (the drift alarm in
         // the CLI's oneharness_integration suite holds this to the real
         // `oneharness list`).
         for harness in [
@@ -3187,6 +3201,98 @@ mod tests {
                 Some(serde_json::json!({"command": "git commit -m x"}))
             );
             assert_eq!(turn.events[0].output.as_deref(), Some("ok"));
+        }
+
+        #[test]
+        fn oneharness_respond_keeps_only_tool_activity() {
+            // oneharness v0.19+ also reports the agent's own text (`message`) and
+            // its `reasoning` as events, numbered with the tool events; a turn
+            // carries only the tool activity, in order, at its original index.
+            let bin = script(
+                "oh-events-kinds",
+                "cat >/dev/null\necho '{\"results\":[{\"status\":\"ok\",\"text\":\"done\",\"events\":[\
+                 {\"kind\":\"reasoning\",\"output\":\"plan\",\"index\":0},\
+                 {\"kind\":\"message\",\"output\":\"running ls\",\"index\":1},\
+                 {\"kind\":\"tool_call\",\"name\":\"bash\",\"input\":{\"command\":\"ls\"},\"index\":2},\
+                 {\"kind\":\"tool_result\",\"name\":\"bash\",\"output\":\"a\",\"index\":3},\
+                 {\"kind\":\"message\",\"output\":\"done\",\"index\":4}]}]}'\n",
+            );
+            let turn = oh_provider(bin)
+                .respond(
+                    "claude-code",
+                    "sonnet",
+                    &skill_ref(),
+                    &[Message::user("hi")],
+                    None,
+                )
+                .unwrap();
+            let kept: Vec<(&str, usize)> = turn
+                .events
+                .iter()
+                .map(|e| (e.kind.as_str(), e.index))
+                .collect();
+            assert_eq!(kept, [("tool_call", 2), ("tool_result", 3)]);
+            assert_eq!(turn.message, "done");
+        }
+
+        #[test]
+        fn oneharness_stream_forwards_only_tool_activity() {
+            // The live sink sees no `message`/`reasoning` event either, so a
+            // short-circuiting consumer is never asked to judge prose.
+            let bin = script(
+                "oh-stream-kinds",
+                "cat >/dev/null\n\
+                 printf '%s\\n' '{\"type\":\"event\",\"event\":{\"kind\":\"reasoning\",\
+                 \"output\":\"plan\",\"index\":0}}'\n\
+                 printf '%s\\n' '{\"type\":\"event\",\"event\":{\"kind\":\"tool_call\",\
+                 \"name\":\"bash\",\"input\":{\"command\":\"ls\"},\"index\":1}}'\n\
+                 printf '%s\\n' '{\"type\":\"event\",\"event\":{\"kind\":\"message\",\
+                 \"output\":\"done\",\"index\":2}}'\n\
+                 printf '%s\\n' '{\"type\":\"result\",\"report\":{\"results\":[{\"status\":\"ok\",\
+                 \"text\":\"done\"}]}}'\n",
+            );
+            let mut seen = Vec::new();
+            let turn = oh_provider(bin)
+                .respond_streaming(
+                    "claude-code",
+                    "sonnet",
+                    &skill_ref(),
+                    &[Message::user("hi")],
+                    None,
+                    &mut |event| {
+                        seen.push(event.kind.clone());
+                        ControlFlow::Continue(())
+                    },
+                )
+                .unwrap();
+            assert_eq!(seen, ["tool_call"]);
+            assert_eq!(turn.events.len(), 1);
+            assert_eq!(turn.events[0].index, 1);
+        }
+
+        #[test]
+        fn oneharness_stream_falls_back_to_the_results_tool_activity() {
+            // A stream that carried no event line falls back to the result's
+            // events, filtered the same way.
+            let bin = script(
+                "oh-stream-fallback-kinds",
+                "cat >/dev/null\n\
+                 printf '%s\\n' '{\"type\":\"result\",\"report\":{\"results\":[{\"status\":\"ok\",\
+                 \"text\":\"done\",\"events\":[{\"kind\":\"message\",\"output\":\"hi\",\"index\":0},\
+                 {\"kind\":\"tool_call\",\"name\":\"bash\",\"index\":1}]}]}}'\n",
+            );
+            let turn = oh_provider(bin)
+                .respond_streaming(
+                    "claude-code",
+                    "sonnet",
+                    &skill_ref(),
+                    &[Message::user("hi")],
+                    None,
+                    &mut |_| ControlFlow::Continue(()),
+                )
+                .unwrap();
+            assert_eq!(turn.events.len(), 1);
+            assert_eq!(turn.events[0].kind, "tool_call");
         }
 
         #[test]
