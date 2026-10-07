@@ -301,4 +301,41 @@ stage
 edit release-targets.toml 's/^schema_version = 3$/schema_version = 2/'
 expect_red "the declaration moved off schema_version 3" "declares schema_version '2'"
 
+stage
+printf '[[platform]\n' >>"$work/repo/release-platforms.toml" || fail "could not append to the staged release-platforms.toml; check that $work is writable"
+expect_red "the platform declaration is not valid TOML" "release-platforms.toml is not readable TOML"
+
+stage
+edit release-platforms.toml '/^\[\[platform\]\]$/,$d'
+expect_red "the platform declaration lost every [[platform]]" "release-platforms.toml declares no [[platform]]"
+
+stage
+edit release-platforms.toml '/^\[\[platform\]\]$/,$d'
+printf 'platform = "x86_64-unknown-linux-gnu"\n' >>"$work/repo/release-platforms.toml" || fail "could not append to the staged release-platforms.toml; check that $work is writable"
+expect_red "the platform list was written as a string" "release-platforms.toml declares no [[platform]]"
+
+stage
+edit release-platforms.toml 's/^bin = "skilltest.exe"$/bin = 3/'
+expect_red "a platform field was not a string" "[[platform]] 5 lacks one of"
+
+stage
+edit release-platforms.toml 's/^target = "aarch64-unknown-linux-gnu"$/target = "x86_64-unknown-linux-gnu"/'
+expect_red "two platforms declared one target" \
+  "release-platforms.toml declares 'x86_64-unknown-linux-gnu' on more than one [[platform]]"
+
+stage
+edit release-platforms.toml 's/^npm_package = "@skill-test\/cli-linux-arm64"$/npm_package = "@skill-test\/cli-linux-x64"/'
+expect_red "two platforms declared one npm package" \
+  "release-platforms.toml declares '@skill-test/cli-linux-x64' on more than one [[platform]]"
+
+stage
+edit release-platforms.toml 's/^npm_dir = "cli-linux-arm64"$/npm_dir = "cli-linux-x64"/'
+expect_red "two platforms declared one package directory" \
+  "release-platforms.toml declares 'cli-linux-x64' on more than one [[platform]]"
+
+stage
+edit scripts/build-python-dist.sh 's/ aarch64-pc-windows-msvc"$/ aarch64-pc-windows-msvc aarch64-pc-windows-msvc"/'
+expect_red "a restated platform list repeated an entry" \
+  "build-python-dist.sh's targets lists 'aarch64-pc-windows-msvc' more than once"
+
 echo "check-release-targets-test: the drift gate is green on this tree and red on each direction of drift, platform lists included"

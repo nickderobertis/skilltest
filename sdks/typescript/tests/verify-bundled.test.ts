@@ -196,7 +196,7 @@ describe("verify-bundled.mjs", () => {
   });
 
   it("refuses malformed arguments", () => {
-    for (const args of [[version], [version, join(work, "absent")]]) {
+    for (const args of [[version], [version, join(work, "absent")], [version, GREETER, "extra"]]) {
       const ran = verify(args);
 
       expect(ran.status).toBe(1);
