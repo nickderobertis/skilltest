@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+# llmlint: ignore-file[new_code_lands_in_a_project] tests scripts/verify-release-archive.sh, repo-level release glue that belongs to no Nx package; run workspace-wide from `just check` (AGENTS.md: scripts/*.sh are orchestrator-independent glue).
+# Test of scripts/verify-release-archive.sh on archives packed here the way
+# release.yml's upload action packs them (binary at the root, a .sha256 beside
+# it), from a stand-in binary: green on a good .tar.gz and a good Windows .zip,
+# red with the reason on each way a release archive can be wrong.
+#
+# Quiet on success, one line. On failure it prints what the verifier said.
+set -euo pipefail
+cd "$(dirname "$0")/.." || {
+  echo "verify-release-archive-test: cannot enter the repository root from $0; run it from a complete checkout" >&2
+  exit 1
+}
+
+work="$(mktemp -d)" || {
+  echo "verify-release-archive-test: could not create a scratch directory; check that \$TMPDIR (or /tmp) is writable and has space" >&2
+  exit 1
+}
+trap 'rm -rf "$work" || echo "verify-release-archive-test: could not remove $work; delete it by hand" >&2' EXIT
+
+fail() {
+  echo "verify-release-archive-test: $1" >&2
+  if [ -s "$work/out" ]; then
+    echo "  what the verifier said:" >&2
+    cat "$work/out" >&2 || echo "  (unreadable: $work/out)" >&2
+  fi
+  exit 1
+}
+
+# $1 = the asset, checksummed in the current directory the way the upload
+# action writes it. sha256sum where present, else macOS's shasum.
+checksum() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else shasum -a 256 "$1"; fi >"$1.sha256"
+}
+
+# $1 = target, $2 = bin, $3 = the version the stand-in reports. Packs
+# $work/<target>/ the way release.yml publishes it.
+pack() {
+  local target=$1 bin=$2 dir="$work/$1" asset
+  { rm -rf "$dir" "$work/src" && mkdir -p "$dir" "$work/src"; } || fail "could not create $dir; check that $work is writable"
+  { printf '#!/bin/sh\necho "skilltest %s"\n' "$3" >"$work/src/$bin" && chmod +x "$work/src/$bin"; } ||
+    fail "could not write the stand-in $bin"
+  case $bin in
+    *.exe)
+      asset="skilltest-$target.zip"
+      python3 - "$work/src/$bin" "$dir/$asset" "$bin" <<'EOF' || fail "could not zip the stand-in; check that python3 is on PATH"
+import sys, zipfile
+src, dest, name = sys.argv[1:]
+info = zipfile.ZipInfo(name)
+info.external_attr = 0o100755 << 16
+with open(src, "rb") as f, zipfile.ZipFile(dest, "w") as z:
+    z.writestr(info, f.read())
+EOF
+      ;;
+    *)
+      asset="skilltest-$target.tar.gz"
+      tar -czf "$dir/$asset" -C "$work/src" "$bin" || fail "could not tar the stand-in"
+      ;;
+  esac
+  (cd "$dir" && checksum "$asset") || fail "could not checksum $asset; check that sha256sum or shasum is on PATH"
+}
+
+verify() { bash scripts/verify-release-archive.sh "$@" >"$work/out" 2>&1; }
+
+# $1 = what is wrong, $2 = what the verifier must say, rest = its arguments.
+expect_red() {
+  local what=$1 says=$2
+  shift 2
+  if verify "$@"; then fail "the verifier passed an archive where $what"; fi
+  grep -Fq -- "$says" "$work/out" ||
+    fail "the verifier refused an archive where $what, but not for that reason (expected it to say '$says')"
+}
+
+pack x86_64-unknown-linux-gnu skilltest 1.2.3
+verify "$work/x86_64-unknown-linux-gnu" x86_64-unknown-linux-gnu skilltest 1.2.3 ||
+  fail "the verifier refused a good .tar.gz"
+
+for target in x86_64-pc-windows-msvc aarch64-pc-windows-msvc; do
+  pack "$target" skilltest.exe 1.2.3
+  verify "$work/$target" "$target" skilltest.exe 1.2.3 || fail "the verifier refused a good $target .zip"
+done
+
+expect_red "the binary is from another release" "reports 'skilltest 1.2.3', not 'skilltest 1.2.2'" \
+  "$work/x86_64-pc-windows-msvc" x86_64-pc-windows-msvc skilltest.exe 1.2.2
+
+pack x86_64-pc-windows-msvc skilltest.exe 1.2.3
+printf 'tampered' >>"$work/x86_64-pc-windows-msvc/skilltest-x86_64-pc-windows-msvc.zip"
+expect_red "the archive does not match its checksum" "checksum mismatch for skilltest-x86_64-pc-windows-msvc.zip" \
+  "$work/x86_64-pc-windows-msvc" x86_64-pc-windows-msvc skilltest.exe 1.2.3
+
+pack aarch64-pc-windows-msvc skilltest 1.2.3
+mv "$work/aarch64-pc-windows-msvc/skilltest-aarch64-pc-windows-msvc.tar.gz" "$work/aarch64-pc-windows-msvc/skilltest-aarch64-pc-windows-msvc.zip"
+mv "$work/aarch64-pc-windows-msvc/skilltest-aarch64-pc-windows-msvc.tar.gz.sha256" "$work/aarch64-pc-windows-msvc/skilltest-aarch64-pc-windows-msvc.zip.sha256"
+expect_red "the Windows archive holds no skilltest.exe" "could not extract skilltest-aarch64-pc-windows-msvc.zip" \
+  "$work/aarch64-pc-windows-msvc" aarch64-pc-windows-msvc skilltest.exe 1.2.3
+
+pack x86_64-pc-windows-msvc skilltest.exe 1.2.3
+python3 - "$work/x86_64-pc-windows-msvc/skilltest-x86_64-pc-windows-msvc.zip" <<'EOF' || fail "could not rewrite the stand-in zip"
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1], "w") as z:
+    z.writestr("skilltest", "#!/bin/sh\n")
+EOF
+(cd "$work/x86_64-pc-windows-msvc" && checksum skilltest-x86_64-pc-windows-msvc.zip) ||
+  fail "could not re-checksum the stand-in zip"
+expect_red "the Windows archive holds its binary without .exe" "holds no skilltest.exe at its root" \
+  "$work/x86_64-pc-windows-msvc" x86_64-pc-windows-msvc skilltest.exe 1.2.3
+
+rm "$work/x86_64-unknown-linux-gnu/skilltest-x86_64-unknown-linux-gnu.tar.gz.sha256"
+expect_red "the checksum was not uploaded" "has no skilltest-x86_64-unknown-linux-gnu.tar.gz.sha256" \
+  "$work/x86_64-unknown-linux-gnu" x86_64-unknown-linux-gnu skilltest 1.2.3
+
+expect_red "it was called without a version" "usage: verify-release-archive.sh" \
+  "$work/x86_64-unknown-linux-gnu" x86_64-unknown-linux-gnu skilltest
+
+echo "verify-release-archive-test: the verifier passes good .tar.gz and Windows .zip archives and refuses each way one can be wrong"

@@ -58,3 +58,18 @@ jobs:
           archive: skilltest-$target
           checksum: sha256
           token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Prove the published asset rather than the build tree: download what was
+      # just uploaded and run the binary it holds on this target's own runner.
+      - name: Verify the released archive
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET: ${{ matrix.target }}
+          BIN: ${{ matrix.bin }}
+        run: |
+          dir="$RUNNER_TEMP/released"
+          mkdir -p "$dir"
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --dir "$dir" --pattern "skilltest-$TARGET.*"
+          bash scripts/verify-release-archive.sh "$dir" "$TARGET" "$BIN" "${GITHUB_REF_NAME#v}"
