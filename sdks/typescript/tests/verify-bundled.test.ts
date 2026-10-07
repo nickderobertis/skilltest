@@ -17,6 +17,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -31,7 +32,9 @@ const VERIFY = join(SDK, "scripts", "verify-bundled.mjs");
 const GREETER = join(FIXTURES, "skills", "greeter");
 const INVALID = join(FIXTURES, "skills", "invalid");
 
-const work = mkdtempSync(join(tmpdir(), "skilltest-verify-bundled-"));
+// Resolved, because the verifier reports paths under its working directory
+// and macOS's tmpdir (/var/folders/...) is a symlink into /private/var.
+const work = realpathSync(mkdtempSync(join(tmpdir(), "skilltest-verify-bundled-")));
 const consumer = join(work, "consumer");
 let version = "";
 
