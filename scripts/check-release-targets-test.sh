@@ -306,11 +306,11 @@ printf '[[platform]\n' >>"$work/repo/release-platforms.toml" || fail "could not 
 expect_red "the platform declaration is not valid TOML" "release-platforms.toml is not readable TOML"
 
 stage
-edit release-platforms.toml '/^\[\[platform\]\]$/,$d'
+edit release-platforms.toml "/^\[\[platform\]\]\$/,\$d"
 expect_red "the platform declaration lost every [[platform]]" "release-platforms.toml declares no [[platform]]"
 
 stage
-edit release-platforms.toml '/^\[\[platform\]\]$/,$d'
+edit release-platforms.toml "/^\[\[platform\]\]\$/,\$d"
 printf 'platform = "x86_64-unknown-linux-gnu"\n' >>"$work/repo/release-platforms.toml" || fail "could not append to the staged release-platforms.toml; check that $work is writable"
 expect_red "the platform list was written as a string" "release-platforms.toml declares no [[platform]]"
 
