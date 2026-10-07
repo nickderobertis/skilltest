@@ -834,9 +834,6 @@ fn oh_failure(context: String, message: String, failure_kind: Option<&str>, stat
     }
 }
 
-/// The tool activity among a result's `events`, dropping the `message` and
-/// `reasoning` kinds oneharness v0.19+ reports beside it (see
-/// [`ToolEvent::is_tool_activity`]).
 fn tool_activity(events: Option<Vec<ToolEvent>>) -> Vec<ToolEvent> {
     events
         .unwrap_or_default()

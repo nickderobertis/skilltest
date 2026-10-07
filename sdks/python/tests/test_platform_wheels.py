@@ -180,7 +180,6 @@ class Consumer(NamedTuple):
     wheel: Path
 
 
-# The shared install behind the journeys below, on their tier for their reason.
 # llmlint: ignore[shell_test_tiers_stay_split] builds this member's own wheel with the release script and installs it as a consumer would; no nx project owns scripts/, so it runs in this member's tier like the tests it serves  # noqa: E501
 @pytest.fixture(scope="module")
 def consumer(tmp_path_factory: pytest.TempPathFactory) -> Consumer:
