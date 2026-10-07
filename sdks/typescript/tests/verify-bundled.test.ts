@@ -157,6 +157,20 @@ describe("verify-bundled.mjs", () => {
     expect(ran.stderr).toContain("--version exited 126 (cannot execute binary file)");
   });
 
+  it("refuses when validation through the bundle throws", () => {
+    const { dir, hostBin } = copyOfConsumer("crash");
+    writeFileSync(
+      hostBin,
+      `#!/bin/sh\n[ "$1" = --version ] && { echo "skilltest ${version}"; exit 0; }\necho 'internal error' >&2\nexit 7\n`,
+    );
+
+    const ran = verify([version, GREETER], { cwd: dir });
+
+    expect(ran.status).toBe(1);
+    expect(ran.stderr).toContain("through the bundled CLI threw");
+    expect(ran.stderr).toContain("rerun it by hand");
+  });
+
   it("refuses an install whose SDK does not load", () => {
     const { dir } = copyOfConsumer("nosdk");
     rmSync(join(dir, "node_modules", "@skill-test", "sdk", "dist"), { recursive: true });

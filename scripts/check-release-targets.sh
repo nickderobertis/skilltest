@@ -400,25 +400,54 @@ done <<<"$platform_rows"
 platform_rows="$(printf '%s\n' "$platform_rows" | grep -v '^!' || true)"
 # $1 = column (1-based). That column of every declared platform, one per line.
 declared_col() { printf '%s\n' "$platform_rows" | sed '/^$/d' | cut -f"$1"; }
+# Set operations over newline lists, in one awk each so a failure is the
+# command's own exit status rather than a process substitution's lost one.
+# $1 = A, $2 = B: the lines of A not in B, each once, in A's order.
+set_minus() {
+  printf '%s\n\001\n%s\n' "$2" "$1" | awk '
+    $0 == "\001" { second = 1; next }
+    $0 == "" { next }
+    !second { seen[$0] = 1; next }
+    !($0 in seen) && !out[$0]++ { print }
+  '
+}
+# $1 = a list: each line it holds more than once, once.
+repeated() { printf '%s\n' "$1" | awk '$0 != "" && count[$0]++ == 1 { print }'; }
+
+# $1 = what to call the set in a failure, rest = the set operation to run.
+set_op() {
+  local what="$1" out
+  shift
+  out="$("$@")" || {
+    echo "check-release-targets: could not compare $what (awk failed); check that awk is on PATH" >&2
+    exit 1
+  }
+  printf '%s' "$out"
+}
+
 for col in 1 5 6; do
+  dupes="$(set_op "$platforms_file's column $col" repeated "$(declared_col "$col")")"
   while read -r dup; do
-    [ -n "$dup" ] && fail "$platforms_file declares '$dup' on more than one [[platform]]; each platform is one target, one npm package and one directory, so drop the extra"
-  done < <(declared_col "$col" | sort | uniq -d)
+    if [ -n "$dup" ]; then fail "$platforms_file declares '$dup' on more than one [[platform]]; each platform is one target, one npm package and one directory, so drop the extra"; fi
+  done <<<"$dupes"
 done
 
 # $1 = what restates the set, $2 = the declared lines, $3 = its lines, $4 = the
 # fix. Fails once per line on either side alone.
 compare_platforms() {
-  local what="$1" want="$2" got="$3" fix="$4" line
+  local what="$1" want="$2" got="$3" fix="$4" line missing extra dupes
+  missing="$(set_op "$what" set_minus "$want" "$got")"
+  extra="$(set_op "$what" set_minus "$got" "$want")"
+  dupes="$(set_op "$what" repeated "$got")"
   while read -r line; do
-    [ -n "$line" ] && fail "$what lacks '$line', which $platforms_file declares; $fix"
-  done < <(comm -23 <(printf '%s\n' "$want" | sed '/^$/d' | sort -u) <(printf '%s\n' "$got" | sed '/^$/d' | sort -u))
+    if [ -n "$line" ]; then fail "$what lacks '$line', which $platforms_file declares; $fix"; fi
+  done <<<"$missing"
   while read -r line; do
-    [ -n "$line" ] && fail "$what has '$line', which $platforms_file does not declare; $fix"
-  done < <(comm -13 <(printf '%s\n' "$want" | sed '/^$/d' | sort -u) <(printf '%s\n' "$got" | sed '/^$/d' | sort -u))
+    if [ -n "$line" ]; then fail "$what has '$line', which $platforms_file does not declare; $fix"; fi
+  done <<<"$extra"
   while read -r line; do
-    [ -n "$line" ] && fail "$what lists '$line' more than once; drop the extra"
-  done < <(printf '%s\n' "$got" | sed '/^$/d' | sort | uniq -d)
+    if [ -n "$line" ]; then fail "$what lists '$line' more than once; drop the extra"; fi
+  done <<<"$dupes"
 }
 
 # A workflow matrix's one-line `- { target: T, os: R[, bin: B] }` rows as

@@ -71,6 +71,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v5
 
+      # llmlint: ignore[work_goes_through_command_surface] `just build` is nx's debug build of the affected projects; a release-profile build for one --target triple has no recipe, and publish.yml, release.yml and bundle-smoke.yml build their release binaries with this same cargo invocation
       - name: Build the CLI
         env:
           RUSTFLAGS: -D warnings

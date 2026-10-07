@@ -152,10 +152,14 @@ def test_wheel_script_refuses_a_target_with_no_platform_tag(tmp_path: Path) -> N
 
 
 def fresh_install(scratch: Path, wheel: Path) -> Path:
+    """Install `wheel` into a new environment that owns its files: copied, never
+    hardlinked from uv's cache, so a journey that damages its install damages
+    only its own."""
     venv = scratch / "consumer"
+    python = str(venv / "bin" / "python")
     for command in (
         ["uv", "venv", "--quiet", str(venv)],
-        ["uv", "pip", "install", "--quiet", "--python", str(venv / "bin" / "python"), str(wheel)],
+        ["uv", "pip", "install", "--quiet", "--link-mode", "copy", "--python", python, str(wheel)],
     ):
         done = run(command, scratch)
         assert done.returncode == 0, done.stderr
@@ -176,6 +180,8 @@ class Consumer(NamedTuple):
     wheel: Path
 
 
+# The shared install behind the journeys below, on their tier for their reason.
+# llmlint: ignore[shell_test_tiers_stay_split] builds this member's own wheel with the release script and installs it as a consumer would; no nx project owns scripts/, so it runs in this member's tier like the tests it serves  # noqa: E501
 @pytest.fixture(scope="module")
 def consumer(tmp_path_factory: pytest.TempPathFactory) -> Consumer:
     """The host's platform wheel, built by the release script around the CLI the
@@ -298,6 +304,49 @@ def test_verify_refuses_an_sdk_that_resolves_past_its_bundle(
 
     assert verified.returncode == 1
     assert "the SDK resolved 'skilltest' instead of its bundled" in verified.stderr
+
+
+def test_verify_refuses_a_bundled_binary_that_cannot_start(
+    consumer: Consumer, tmp_path: Path
+) -> None:
+    python = fresh_install(tmp_path, consumer.wheel)
+    (installed_package(python) / "_bin" / "skilltest").write_bytes(b"\x00not an executable\n")
+
+    verified = verify(python, consumer.version, str(SKILLS / "greeter"))
+
+    assert verified.returncode == 1
+    assert "does not start" in verified.stderr
+    assert "rebuild the wheel for its target" in verified.stderr
+
+
+def test_verify_refuses_when_validation_through_the_bundle_raises(
+    consumer: Consumer, tmp_path: Path
+) -> None:
+    """A bundle that answers `--version` but crashes on real work is refused
+    with what the SDK raised, not a traceback."""
+    python = fresh_install(tmp_path, consumer.wheel)
+    (installed_package(python) / "_bin" / "skilltest").write_text(
+        f'#!/bin/sh\n[ "$1" = --version ] && {{ echo "skilltest {consumer.version}"; exit 0; }}\n'
+        "echo 'internal error' >&2\nexit 7\n"
+    )
+
+    verified = verify(python, consumer.version, str(SKILLS / "greeter"))
+
+    assert verified.returncode == 1
+    assert "through the bundled CLI raised" in verified.stderr
+    assert "rerun it by hand" in verified.stderr
+
+
+def test_verify_refuses_an_environment_without_the_sdk(tmp_path: Path) -> None:
+    venv = tmp_path / "empty"
+    made = run(["uv", "venv", "--quiet", str(venv)], tmp_path)
+    assert made.returncode == 0, made.stderr
+
+    verified = verify(venv / "bin" / "python", "0.0.0", str(SKILLS / "greeter"))
+
+    assert verified.returncode == 1
+    assert "skilltest_sdk does not import" in verified.stderr
+    assert "install skilltest-sdk into this environment" in verified.stderr
 
 
 # llmlint: ignore[test_tiers_split_by_project_not_by_marker, shell_test_tiers_stay_split] the failure path of the journey above, on the same tier  # noqa: E501
