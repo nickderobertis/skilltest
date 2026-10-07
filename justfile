@@ -248,7 +248,9 @@ test-oneharness:
 # goose | codex). Skips loudly when the harness / oneharness / secret is missing,
 # or when the installed oneharness cannot yet carry the skill to that harness.
 test-harness id:
-    @{{nx}} run skilltest-live-harness:live --harness={{id}} --output-style=stream-without-prefixes
+    @{{ if id =~ '^[a-z][a-z-]*$' { "true" } else { error("test-harness: harness id must be lowercase letters and - only; got: " + id) } }}
+    @test -f live/harness/{{id}}/project.json || { echo "test-harness: no live project for '{{id}}'; known: $(ls live/harness | grep -v AGENTS.md | tr '\n' ' ')" >&2; exit 2; }
+    @{{nx}} run skilltest-live-harness-{{id}}:live --output-style=stream-without-prefixes
 
 # Convenience: the claude-code live smoke via the generic per-harness path.
 test-claude:

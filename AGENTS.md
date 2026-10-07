@@ -128,7 +128,7 @@ added. What was pulled in, and why:
 | `sdks/python`, `sdks/typescript` | `skilltest-sdk` / `@skill-test/sdk`: one thin CLI wrapper per language, bundling the CLI. |
 | `sdks/typescript/platforms/cli-*` | The four `@skill-test/cli-*` npm packages that carry the prebuilt binary. |
 | `plugins/pytest`, `plugins/vitest` | `skilltest-pytest` / `@skill-test/vitest`: one package per test framework, on its language's SDK. |
-| `live/{claude,judge-api,harness}` | The live suites: the deep claude-code suite, the direct-API judge, the per-harness smoke. |
+| `live/{claude,judge-api}`, `live/harness/<id>` | The live suites, one project each: the deep claude-code suite, the direct-API judge, and one per-harness smoke per harness. |
 | `pyproject.toml`, `uv.lock` | The uv workspace root over `sdks/python` + `plugins/pytest`; publishes nothing. |
 | `tests/fixtures` | Sample skills and cases the e2e suites share (`tests/AGENTS.md`). |
 | `docs/` | The provider protocol, config/case schema, development and live-e2e references. |

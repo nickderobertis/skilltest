@@ -1,6 +1,6 @@
 {
-  "$schema": "../../node_modules/nx/schemas/project-schema.json",
-  "name": "skilltest-live-harness",
+  "$schema": "../../../node_modules/nx/schemas/project-schema.json",
+  "name": "skilltest-live-harness-qwen",
   "projectType": "application",
   "tags": ["type:live", "lang:bash"],
   "implicitDependencies": ["skilltest-cli"],
@@ -14,7 +14,7 @@
   },
   "targets": {
     "live": {
-      "command": "bash scripts/e2e-harness.sh {args.harness}",
+      "command": "bash scripts/e2e-harness.sh qwen",
       "dependsOn": [
         {
           "projects": ["skilltest-cli"],

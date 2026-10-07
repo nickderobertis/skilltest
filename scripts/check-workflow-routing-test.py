@@ -113,6 +113,12 @@ CASES = (
         "notignored.yml: jobs is missing or null",
     ),
     Case(
+        "a harness lane with no live project",
+        lambda wf, _tc: _replace(wf / "e2e-codex.yml", "just test-harness codex", "just test-harness no-such-harness"),
+        1,
+        "live/harness/no-such-harness/project.json does not exist",
+    ),
+    Case(
         "a called workflow without workflow_call",
         lambda wf, _tc: _replace(wf / "e2e-codex.yml", "  workflow_call:\n", ""),
         2,

@@ -46,6 +46,8 @@ import yaml
 ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS = ROOT / ".github" / "workflows"
 TOOLCHAIN = ROOT / "rust-toolchain.toml"
+HARNESS_PROJECTS = ROOT / "live" / "harness"  # one Nx project per harness lane: <id>/project.json
+HARNESS_RUN = re.compile(r"\bjust test-harness ([A-Za-z0-9_-]+)")
 REPO = "nickderobertis/skilltest"
 REQUIRED_CONTEXTS = ("check (ubuntu-latest)", "check (macos-latest)", "pr-title", "llmlint")
 # Every live suite is an `e2e-*.yml` workflow; the set is derived from the files,
@@ -624,9 +626,29 @@ def _needs_closure(wf: Workflow, job_id: JobId) -> set[JobId]:
     return seen
 
 
-def violations(wfs: dict[WorkflowFile, Workflow], provisioned: set[str]) -> list[str]:
-    """Every way the workflows break the release model, given the toolchain's targets."""
+def harness_lanes(wfs: dict[WorkflowFile, Workflow]) -> dict[str, WorkflowFile]:
+    """Each harness id a workflow runs through `just test-harness <id>`, with the workflow."""
+    return {
+        m.group(1): wf.filename
+        for wf in wfs.values()
+        for job in wf.jobs.values()
+        for step in job.steps
+        if step.run
+        for m in HARNESS_RUN.finditer(step.run)
+    }
+
+
+def violations(
+    wfs: dict[WorkflowFile, Workflow], provisioned: set[str], lane_root: Path = HARNESS_PROJECTS
+) -> list[str]:
+    """Every way the workflows break the release model, given the toolchain's targets and lane projects."""
     bad: list[str] = []
+    # Every per-harness lane a workflow runs is a live project of its own.
+    bad += [
+        f"{wf} runs `just test-harness {hid}`, but live/harness/{hid}/project.json does not exist"
+        for hid, wf in sorted(harness_lanes(wfs).items())
+        if not (lane_root / hid / "project.json").is_file()
+    ]
     if "ci.yml" not in wfs:
         return ["ci.yml is missing: the gate has no workflow"]
     ci = wfs[WorkflowFile("ci.yml")]
@@ -776,6 +798,14 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
         "a release target the toolchain lacks",
         lambda d: _retarget(_jobs(d, "release.yml")["upload"], "riscv64gc-unknown-linux-gnu"),
+    ),
+    Mutation(
+        "a harness lane with no live project",
+        lambda d: [
+            s.update({"run": "just test-harness no-such-harness"})
+            for s in _jobs(d, "e2e-codex.yml")["live"]["steps"]
+            if "test-harness" in s.get("run", "")
+        ],
     ),
 )
 
