@@ -1,8 +1,7 @@
 # live/harness/opencode — the opencode live smoke
 
 Nx project `skilltest-live-harness-opencode` (`type:live`, `lang:bash`): the
-per-harness lane in `scripts/e2e-harness.sh`, fixed to `opencode`. The lane's
-shared rules are in `live/harness/AGENTS.md`.
+per-harness lane in `scripts/e2e-harness.sh`, fixed to `opencode`.
 
 - **What it proves.** The whole pipeline against a real opencode: the built CLI
   through `oneharness`, judged by the fixed claude-code judge, then the harness's

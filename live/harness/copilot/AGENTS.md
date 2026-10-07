@@ -1,8 +1,7 @@
 # live/harness/copilot — the copilot live smoke
 
 Nx project `skilltest-live-harness-copilot` (`type:live`, `lang:bash`): the
-per-harness lane in `scripts/e2e-harness.sh`, fixed to `copilot`. The lane's
-shared rules are in `live/harness/AGENTS.md`.
+per-harness lane in `scripts/e2e-harness.sh`, fixed to `copilot`.
 
 - **What it proves.** The whole pipeline against a real copilot: the built CLI
   through `oneharness`, judged by the fixed claude-code judge, then the harness's

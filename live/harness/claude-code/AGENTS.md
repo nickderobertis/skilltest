@@ -1,8 +1,7 @@
 # live/harness/claude-code — the claude-code live smoke
 
 Nx project `skilltest-live-harness-claude-code` (`type:live`, `lang:bash`): the
-per-harness lane in `scripts/e2e-harness.sh`, fixed to `claude-code`. The lane's
-shared rules are in `live/harness/AGENTS.md`.
+per-harness lane in `scripts/e2e-harness.sh`, fixed to `claude-code`.
 
 - **What it proves.** The whole pipeline against a real claude-code: the built CLI
   through `oneharness`, judged by the fixed claude-code judge, then the harness's

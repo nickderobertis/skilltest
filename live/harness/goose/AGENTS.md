@@ -1,8 +1,7 @@
 # live/harness/goose — the goose live smoke
 
 Nx project `skilltest-live-harness-goose` (`type:live`, `lang:bash`): the
-per-harness lane in `scripts/e2e-harness.sh`, fixed to `goose`. The lane's
-shared rules are in `live/harness/AGENTS.md`.
+per-harness lane in `scripts/e2e-harness.sh`, fixed to `goose`.
 
 - **What it proves.** The whole pipeline against a real goose: the built CLI
   through `oneharness`, judged by the fixed claude-code judge, then the harness's
