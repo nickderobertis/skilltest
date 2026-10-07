@@ -33,6 +33,7 @@ fn case(name: &str) -> PathBuf {
     fixtures().join("cases").join(name)
 }
 
+// llmlint: ignore-block[e2e_not_mocked] Fakes only the paid model boundary: `skilltest-fake-provider` speaks the real `CommandProvider` protocol in place of a model. ci.yml's `live-*` jobs (live/claude, live/harness/<id>) drive the real one; see docs/e2e.md.
 /// Run `skilltest run <path> [extra...]` wired to the fake provider.
 fn run_case(path: PathBuf, extra: &[&str]) -> Output {
     let mut cmd = Command::new(skilltest());
@@ -44,6 +45,7 @@ fn run_case(path: PathBuf, extra: &[&str]) -> Output {
         .args(extra);
     cmd.output().expect("skilltest run executes")
 }
+// llmlint: ignore-end[e2e_not_mocked]
 
 fn json(output: &Output) -> Value {
     serde_json::from_slice(&output.stdout).expect("stdout is valid JSON")
@@ -1204,6 +1206,7 @@ fn spy_flag_records_calls_without_any_mocks() {
 // report's `history_command` and the human `history:` line. Unix-only, like the
 // provider subprocess suite (the crate ships to a Linux/macOS matrix).
 
+// llmlint: ignore-block[e2e_not_mocked] A wire-format stub of `oneharness`, a separately published CLI, not a reproduction of it: it tests skilltest's own handling of its output (the history it reports). The real binary is proven by crates/skilltest-cli/tests/oneharness_integration.rs (`just test-oneharness`, e2e-claude.yml) and ci.yml's `live-*` jobs.
 /// A fake `oneharness` that echoes a recorded `history_file` on skill runs (the
 /// ones carrying `--history`) and a JSON verdict on judge/user runs (which do
 /// not). Written to a fresh temp dir; returns (binary path, history dir).
@@ -1235,6 +1238,7 @@ fn fake_oneharness(tag: &str) -> (PathBuf, PathBuf) {
     std::fs::set_permissions(&path, perms).unwrap();
     (path, history)
 }
+// llmlint: ignore-end[e2e_not_mocked]
 
 /// Run `skilltest run <case>` against a fake oneharness, with the centralized
 /// history dir pinned to `history_dir` so the run is hermetic and assertable.
@@ -1327,6 +1331,7 @@ fn oneharness_history_can_be_disabled_via_config() {
     );
 }
 
+// llmlint: ignore-block[e2e_not_mocked] A wire-format stub of `oneharness`, a separately published CLI, not a reproduction of it: it tests skilltest's own handling of its output (the argv sent and the NDJSON stream read back). The real binary is proven by crates/skilltest-cli/tests/oneharness_integration.rs (`just test-oneharness`, e2e-claude.yml) and ci.yml's `live-*` jobs.
 /// A fake `oneharness` that appends each invocation's argv (one arg per line,
 /// then a `--` separator) to `<dir>/argv` and answers in the shape that argv
 /// asks for: the `run --stream` NDJSON protocol when streaming, the buffered
@@ -1348,6 +1353,7 @@ fn argv_recording_oneharness(tag: &str) -> (PathBuf, PathBuf) {
     std::fs::write(&oh, body).unwrap();
     (oh, history)
 }
+// llmlint: ignore-end[e2e_not_mocked]
 
 /// The recorded argv of every skill run (the ones carrying `--history`; judge
 /// runs never record history), one `Vec` per invocation.
