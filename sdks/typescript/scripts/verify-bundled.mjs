@@ -85,7 +85,14 @@ try {
     `@skill-test/sdk does not load from ${process.cwd()} (${error}); install it there and rerun`,
   );
 }
-const report = await sdk.validateSkill(skillDir);
+let report;
+try {
+  report = await sdk.validateSkill(skillDir);
+} catch (error) {
+  fail(
+    `validateSkill('${skillDir}') through the bundled CLI threw (${error}); rerun it by hand from ${process.cwd()} to see the full error`,
+  );
+}
 if (!report.valid) {
   fail(
     `validateSkill('${skillDir}') through the bundled CLI found ${JSON.stringify(report.findings)}; point this check at a valid skill such as tests/fixtures/smoke/greeter`,

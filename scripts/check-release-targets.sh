@@ -475,15 +475,23 @@ while IFS=$'\t' read -r target runner _; do
   fi
 done <<<"$rows"
 
-dist_targets="$(sed -n 's/^targets="\([^"]*\)"$/\1/p' "$dist_script" | tr ' ' '\n')"
+# $1 = file, $2 = sed script. The file's matching lines, or an exit naming it.
+read_lines() {
+  sed -n "$2" "$1" || {
+    echo "check-release-targets: could not read $1; check its permissions or restore it from git" >&2
+    exit 1
+  }
+}
+
+dist_targets="$(read_lines "$dist_script" 's/^targets="\([^"]*\)"$/\1/p' | tr ' ' '\n')"
 [ -n "$dist_targets" ] || fail "$dist_script has no 'targets=\"...\"' line; restore it so this gate can read which platform wheels it builds"
 compare_platforms "$dist_script's targets" "$(declared_col 1)" "$dist_targets" "list every declared target in its targets=\"...\" line"
 
-wheel_tags="$(sed -n 's/^\([A-Za-z0-9_.-]*\)) plat="\([^"]*\)" ;;$/\1	\2/p' "$wheel_script")"
+wheel_tags="$(read_lines "$wheel_script" 's/^\([A-Za-z0-9_.-]*\)) plat="\([^"]*\)" ;;$/\1	\2/p')"
 compare_platforms "$wheel_script's tag map" "$(printf '%s\n' "$platform_rows" | sed '/^$/d' | cut -f1,4)" "$wheel_tags" \
   "give each declared target a '<target>) plat=\"<wheel_tag>\" ;;' arm with its declared wheel_tag"
 
-stager_dirs="$(sed -n 's/^\([A-Za-z0-9_.-]*\)) pkg="\([^"]*\)" ;;$/\1	\2/p' "$stager")"
+stager_dirs="$(read_lines "$stager" 's/^\([A-Za-z0-9_.-]*\)) pkg="\([^"]*\)" ;;$/\1	\2/p')"
 compare_platforms "$stager's package map" "$(printf '%s\n' "$platform_rows" | sed '/^$/d' | cut -f1,6)" "$stager_dirs" \
   "give each declared target a '<target>) pkg=\"<npm_dir>\" ;;' arm with its declared npm_dir"
 

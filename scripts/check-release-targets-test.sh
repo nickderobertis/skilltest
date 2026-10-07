@@ -194,8 +194,6 @@ printf '{"name": "@skill-test/cli-linux-x64"}\n{"name": "@skill-test/other"\n' \
   fail "could not write the truncated platform manifest; check that $work is writable and has space, then rerun"
 expect_red "a platform manifest parsed only partway" 'is not JSON with a string "name"'
 
-# The platform set: release-platforms.toml against every list restating it.
-
 stage
 edit .github/workflows/publish.yml '/^ *- { target: aarch64-pc-windows-msvc, /d'
 expect_red "publish.yml's binaries matrix lost a Windows target" \

@@ -72,6 +72,8 @@ jobs:
         uses: astral-sh/setup-uv@v5
 
       - name: Build the CLI
+        env:
+          RUSTFLAGS: -D warnings
         run: cargo build --release --locked -p skilltest-cli --bin skilltest --target ${{ matrix.target }}
 
       - name: Build the platform skilltest-sdk wheel

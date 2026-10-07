@@ -3236,6 +3236,29 @@ mod tests {
         }
 
         #[test]
+        fn oneharness_respond_with_only_prose_events_carries_none() {
+            // A turn that only wrote text and reasoning took no action, so it
+            // carries no events at all, the same as a harness with no transcript.
+            let bin = script(
+                "oh-events-prose",
+                "cat >/dev/null\necho '{\"results\":[{\"status\":\"ok\",\"text\":\"hi\",\"events\":[\
+                 {\"kind\":\"reasoning\",\"output\":\"plan\",\"index\":0},\
+                 {\"kind\":\"message\",\"output\":\"hi\",\"index\":1}]}]}'\n",
+            );
+            let turn = oh_provider(bin)
+                .respond(
+                    "claude-code",
+                    "sonnet",
+                    &skill_ref(),
+                    &[Message::user("hi")],
+                    None,
+                )
+                .unwrap();
+            assert!(turn.events.is_empty(), "{:?}", turn.events);
+            assert_eq!(turn.message, "hi");
+        }
+
+        #[test]
         fn oneharness_stream_forwards_only_tool_activity() {
             // The live sink sees no `message`/`reasoning` event either, so a
             // short-circuiting consumer is never asked to judge prose.
@@ -3272,11 +3295,13 @@ mod tests {
 
         #[test]
         fn oneharness_stream_falls_back_to_the_results_tool_activity() {
-            // A stream that carried no event line falls back to the result's
-            // events, filtered the same way.
+            // Every streamed event was prose, so none survived; the turn falls
+            // back to the result's events, filtered the same way.
             let bin = script(
                 "oh-stream-fallback-kinds",
                 "cat >/dev/null\n\
+                 printf '%s\\n' '{\"type\":\"event\",\"event\":{\"kind\":\"message\",\
+                 \"output\":\"hi\",\"index\":0}}'\n\
                  printf '%s\\n' '{\"type\":\"result\",\"report\":{\"results\":[{\"status\":\"ok\",\
                  \"text\":\"done\",\"events\":[{\"kind\":\"message\",\"output\":\"hi\",\"index\":0},\
                  {\"kind\":\"tool_call\",\"name\":\"bash\",\"index\":1}]}]}}'\n",

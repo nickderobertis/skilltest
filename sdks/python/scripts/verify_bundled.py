@@ -45,8 +45,14 @@ def main(argv: list[str]) -> None:
             "used; drop its directory from PATH and rerun"
         )
 
-    import skilltest_sdk
-    from skilltest_sdk import runner
+    try:
+        import skilltest_sdk
+        from skilltest_sdk import runner
+    except ImportError as error:
+        fail(
+            f"skilltest_sdk does not import in {sys.executable} ({error}); install "
+            "skilltest-sdk into this environment and rerun"
+        )
 
     exe = "skilltest.exe" if os.name == "nt" else "skilltest"
     bundled = Path(skilltest_sdk.__file__).resolve().parent / "_bin" / exe
@@ -63,7 +69,13 @@ def main(argv: list[str]) -> None:
             "skilltest_sdk.runner._resolve_bin's precedence"
         )
 
-    ran = subprocess.run([resolved, "--version"], capture_output=True, text=True)
+    try:
+        ran = subprocess.run([resolved, "--version"], capture_output=True, text=True)
+    except OSError as error:
+        fail(
+            f"{resolved} does not start ({error}); the bundled binary does not run on "
+            "this host, so rebuild the wheel for its target"
+        )
     if ran.returncode != 0:
         fail(
             f"{resolved} --version exited {ran.returncode} ({ran.stderr.strip()}); the "
@@ -76,7 +88,14 @@ def main(argv: list[str]) -> None:
             "wheel from that release's binary"
         )
 
-    report = skilltest_sdk.validate_skill(skill_dir)
+    # The except is broad on purpose: whatever the SDK raises here is this check's finding.
+    try:
+        report = skilltest_sdk.validate_skill(skill_dir)
+    except Exception as error:
+        fail(
+            f"validate_skill({skill_dir!r}) through the bundled CLI raised {error!r}; "
+            "rerun it by hand with the same interpreter to see the full error"
+        )
     if not report.valid:
         fail(
             f"validate_skill({skill_dir!r}) through the bundled CLI found {report.findings}; "

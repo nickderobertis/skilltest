@@ -197,7 +197,6 @@ def consumer(tmp_path_factory: pytest.TempPathFactory) -> Consumer:
 
 
 def installed_package(python: Path) -> Path:
-    """Where the consumer environment installed `skilltest_sdk`."""
     found = run(
         [
             str(python),
