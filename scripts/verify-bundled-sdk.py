@@ -43,7 +43,7 @@ def main() -> None:
     exe = "skilltest.exe" if os.name == "nt" else "skilltest"
     bundled = Path(skilltest_sdk.__file__).resolve().parent / "_bin" / exe
     if not bundled.is_file():
-        fail(f"the installed wheel carries no {bundled}; install the platform wheel, not the pure one")
+        fail(f"the installed wheel carries no {bundled}; install a platform wheel")
 
     resolved = runner._resolve_bin(None)
     if Path(resolved).resolve() != bundled:
@@ -53,7 +53,9 @@ def main() -> None:
     if ran.returncode != 0:
         fail(f"{resolved} --version exited {ran.returncode}: {ran.stderr.strip()}")
     if ran.stdout.strip() != f"skilltest {expected_version}":
-        fail(f"{resolved} --version said {ran.stdout.strip()!r}, not 'skilltest {expected_version}'")
+        fail(
+            f"{resolved} --version said {ran.stdout.strip()!r}, not 'skilltest {expected_version}'"
+        )
 
     report = skilltest_sdk.validate_skill(skill_dir)
     if not report.valid:

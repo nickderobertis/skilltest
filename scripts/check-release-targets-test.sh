@@ -222,6 +222,13 @@ expect_red "the Windows PR lane stopped building a Windows target" \
   "windows-build.yml's matrix lacks 'aarch64-pc-windows-msvc	windows-11-arm	skilltest.exe'"
 
 stage
+awk '/^  verify-windows:$/ { inside = 1 } !(inside && /- { target: x86_64-pc-windows-msvc, /)' \
+  "$work/repo/.github/workflows/publish.yml" >"$work/next" || fail "could not drop the x64 row from the staged install proof; check that $work is writable and has space, then rerun"
+replace .github/workflows/publish.yml
+expect_red "the release-time install proof stopped proving a Windows target" \
+  "publish.yml's verify-windows matrix lacks 'x86_64-pc-windows-msvc	windows-latest	skilltest.exe'"
+
+stage
 edit .github/workflows/windows-build.yml 's/^\( *\)- { target: x86_64-pc-windows-msvc, .*$/&\
 \1- { target: x86_64-unknown-linux-gnu, os: ubuntu-latest, bin: skilltest }/'
 expect_red "the Windows PR lane built a non-Windows target" \

@@ -265,3 +265,64 @@ jobs:
 
           publish_pkg sdks/typescript @skill-test/sdk
           publish_pkg plugins/vitest @skill-test/vitest
+
+  # Release-time install proof for the Windows platforms: once the registries
+  # serve this version, install the PUBLISHED skilltest-sdk and @skill-test/sdk
+  # into fresh environments on each Windows architecture's runner and run the
+  # bundled CLI through each SDK's own resolution (scripts/verify-bundled-*:
+  # `--version` must name this release, then a skill validates through it, with
+  # SKILLTEST_BIN unset and nothing on PATH). It proves what a consumer installs,
+  # so it runs only when a release is cut. The matrix is release-platforms.toml's
+  # Windows platforms; the release-target gate holds it to that file.
+  verify-windows:
+    name: verify ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    needs: [pypi, npm]
+    if: github.repository == 'nickderobertis/skilltest' && github.ref_name != 'v0.0.0'
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-pc-windows-msvc, os: windows-latest, bin: skilltest.exe }
+          - { target: aarch64-pc-windows-msvc, os: windows-11-arm, bin: skilltest.exe }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Install the published skilltest-sdk and run its bundled CLI
+        run: |
+          set -euo pipefail
+          version="$(grep -E '^version *= *"' sdks/python/pyproject.toml | head -1 | sed -E 's/^version *= *"([^"]+)".*/\1/')"
+          uv venv --python 3.12 consumer-py
+          # A fresh upload can take a minute to reach the index; retry, then fail.
+          for i in $(seq 1 10); do
+            uv pip install --python consumer-py/Scripts/python.exe --refresh "skilltest-sdk==$version" && break
+            [ "$i" -eq 10 ] && { echo "error: skilltest-sdk==$version did not install from PyPI" >&2; exit 1; }
+            echo "waiting for skilltest-sdk==$version on PyPI ($i)…"; sleep 30
+          done
+          consumer-py/Scripts/python.exe scripts/verify-bundled-sdk.py "$version" tests/fixtures/smoke/greeter
+
+      - name: Install the published @skill-test/sdk and run its bundled CLI
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./sdks/typescript/package.json').version")"
+          mkdir consumer-npm
+          cd consumer-npm
+          npm init -y >/dev/null
+          for i in $(seq 1 10); do
+            npm install --no-audit --no-fund "@skill-test/sdk@$version" && break
+            [ "$i" -eq 10 ] && { echo "error: @skill-test/sdk@$version did not install from npm" >&2; exit 1; }
+            echo "waiting for @skill-test/sdk@$version on npm ($i)…"; sleep 30
+          done
+          node ../scripts/verify-bundled-npm.mjs "$version" ../tests/fixtures/smoke/greeter

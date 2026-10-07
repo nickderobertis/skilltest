@@ -18,7 +18,8 @@
 #
 # It also holds every per-platform list to release-platforms.toml, the one
 # statement of which platforms a release ships a binary for: the build matrices
-# of publish.yml, release.yml and windows-build.yml, the wheel scripts' target
+# of publish.yml, release.yml and windows-build.yml, publish.yml's Windows
+# install proof, the wheel scripts' target
 # list and tag map, the npm loop and stager, the platform packages, the covers,
 # the SDK's optionalDependencies, .releaserc.json's assets and set-version.sh —
 # and bundle-smoke.yml may smoke only declared platforms, on their runners.
@@ -449,9 +450,14 @@ for spec in "$workflow binaries" "$release_workflow upload"; do
 done
 
 windows_builds="$(printf '%s\n' "$declared_builds" | awk -F'\t' '$1 ~ /-windows-/')"
-rows="$(matrix_rows "$windows_workflow" "")"
-[ -n "$rows" ] || fail "$windows_workflow has no one-line '- { target: ..., os: ..., bin: ... }' matrix rows; restore that shape so this gate can read its platforms"
-compare_platforms "$windows_workflow's matrix" "$windows_builds" "$rows" "it builds every declared Windows platform, and only those; $matrix_fix"
+for spec in "$windows_workflow:" "$workflow:verify-windows"; do
+  file="${spec%:*}"
+  job="${spec#*:}"
+  what="$file's ${job:+$job }matrix"
+  rows="$(matrix_rows "$file" "$job")"
+  [ -n "$rows" ] || fail "$what has no one-line '- { target: ..., os: ..., bin: ... }' rows; restore that shape so this gate can read its platforms"
+  compare_platforms "$what" "$windows_builds" "$rows" "it proves every declared Windows platform, and only those; $matrix_fix"
+done
 
 rows="$(matrix_rows "$smoke_workflow" "")"
 [ -n "$rows" ] || fail "$smoke_workflow has no one-line '- { target: ..., os: ... }' matrix rows; restore that shape so this gate can read its platforms"
