@@ -22,7 +22,7 @@
   },
   "files": ["dist"],
   "dependencies": {
-    "oneharness-cli": "^0.16.0"
+    "oneharness-cli": "^0.21.3"
   },
   "optionalDependencies": {
     "@skill-test/cli-linux-x64": "workspace:*",

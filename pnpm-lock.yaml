@@ -58,8 +58,8 @@ importers:
   sdks/typescript:
     dependencies:
       oneharness-cli:
-        specifier: ^0.16.0
-        version: 0.16.0
+        specifier: ^0.21.3
+        version: 0.21.3
     devDependencies:
       '@types/node':
         specifier: ^22.7.5
@@ -456,28 +456,33 @@ packages:
   '@octokit/types@16.0.0':
     resolution: {integrity: sha512-sKq+9r1Mm4efXW1FCk7hFSeJo4QKreL/tTbR0rz/qx/r1Oa2VV83LTA/H/MuCOX7uCIJmQVRKBcbmWoySjAnSg==}
 
-  '@oneharness/cli-darwin-arm64@0.16.0':
-    resolution: {integrity: sha512-lUpUtbO8gZvWWs7R49+hmS3611eDwFg9eiXOmHkLW1RkwoX9GJsq+ny8B7VWYpKZWaxl7iNWtqMb+TJAmjVKkA==}
+  '@oneharness/cli-darwin-arm64@0.21.3':
+    resolution: {integrity: sha512-ZVQ0umjPMXB3EKAEKn8gtvzp4EXx6mG/eS8oBu/0IMKd5Iip0TjTDhhomO7Fq5QI9QI9w2hbjAPNCHZeHI88Tw==}
     cpu: [arm64]
     os: [darwin]
 
-  '@oneharness/cli-darwin-x64@0.16.0':
-    resolution: {integrity: sha512-vSVM8yY+73vubifT9uYbo3JcMCUf/acJQ+KExXup11CTe1f3UY9TX0QMQv83eSo11YZ1ax5Wi/NrRzlMShUeLg==}
+  '@oneharness/cli-darwin-x64@0.21.3':
+    resolution: {integrity: sha512-vOEkD5umtMDxHGf4xmEUeialbT6G99eMdSzX7Oj/Kx+NnNTe0ERnozDSV+OrqFiRXBMTmONewlJBx221uFblpQ==}
     cpu: [x64]
     os: [darwin]
 
-  '@oneharness/cli-linux-arm64@0.16.0':
-    resolution: {integrity: sha512-PepliLvWhr40vGUy8kXYmlNWrVwP+dcRYvKq2fHwqc+zh2TbjrGqGnHkDU4wnPt5N0ic5DgQK86WO5PqJYbMfQ==}
+  '@oneharness/cli-linux-arm64@0.21.3':
+    resolution: {integrity: sha512-Jpt7MUWsq8yHkd/H/AFHpmzxMYDKAhfFuFcV1jGkD8S6nXhJRqy6nKTgSOv//abTxIr9rEcxHKKE5m4AsXZUxg==}
     cpu: [arm64]
     os: [linux]
 
-  '@oneharness/cli-linux-x64@0.16.0':
-    resolution: {integrity: sha512-Lbay+YpLOIpQiSCBv24FNXRwSFElJOHRroOy9BUMyfZ21RXndZ3L/4BtLmnsewTSTXGyGLtepU5ajx3hOFjfaA==}
+  '@oneharness/cli-linux-x64@0.21.3':
+    resolution: {integrity: sha512-rHN8gIi1mHUSIUnyiHbgz7EAoLpzE6OA4bbuIZfAYb7vlLG2eGfKxl+shuj0imZnPsSf3egTZk0mT9f3/tELKg==}
     cpu: [x64]
     os: [linux]
 
-  '@oneharness/cli-win32-x64@0.16.0':
-    resolution: {integrity: sha512-4BoP3iNE1pssvizLMu1pMMhPKE0TzucsfYOl/pLiL8hWp3L3z8TjC0TSpBqo0VBEKah+UPvUgIDWWyAPHgxx9g==}
+  '@oneharness/cli-win32-arm64@0.21.3':
+    resolution: {integrity: sha512-ejT38prjniuJ9w4nU9og1rXcsJ5QnGFXiR9/J60oDoHNGUsb9srzuRHfG7PteUFGNfa/W7a6Ml1on8VTFFynKw==}
+    cpu: [arm64]
+    os: [win32]
+
+  '@oneharness/cli-win32-x64@0.21.3':
+    resolution: {integrity: sha512-XbUkdoB7kXMmFqdyxBWJwkwroL1Vca+xhLP5AEgvPKWOfrAHgdO8H7Ilms8GZNkAx7XwLwE6K742ovtBDz5ofQ==}
     cpu: [x64]
     os: [win32]
 
@@ -1721,8 +1726,8 @@ packages:
   once@1.4.0:
     resolution: {integrity: sha512-lNaJgI+2Q5URQBkccEKHTQOPaXdUxnZZElQTZY0MFUAuaEqe1E+Nyvgdz/aIyNi6Z9MzO5dv1H8n58/GELp3+w==}
 
-  oneharness-cli@0.16.0:
-    resolution: {integrity: sha512-o/V0e9eqm7Yv8Yfc3nIcXJQxg66c1t8xMyTCANTX3tO5alg6OOJ53wPaP+UpbyeLRtu3/gIqOrlW3T2Edwpt4Q==}
+  oneharness-cli@0.21.3:
+    resolution: {integrity: sha512-F7I+nXUbVR3csUdhrD3WldUdUHL85u+p0TjTYHw1q9N72o59V2xYxq3HQ/TMEV8l36Fh3Udqn165ZrFSVvlcPA==}
     engines: {node: '>=16'}
     hasBin: true
 
@@ -2627,19 +2632,22 @@ snapshots:
     dependencies:
       '@octokit/openapi-types': 27.0.0
 
-  '@oneharness/cli-darwin-arm64@0.16.0':
+  '@oneharness/cli-darwin-arm64@0.21.3':
     optional: true
 
-  '@oneharness/cli-darwin-x64@0.16.0':
+  '@oneharness/cli-darwin-x64@0.21.3':
     optional: true
 
-  '@oneharness/cli-linux-arm64@0.16.0':
+  '@oneharness/cli-linux-arm64@0.21.3':
     optional: true
 
-  '@oneharness/cli-linux-x64@0.16.0':
+  '@oneharness/cli-linux-x64@0.21.3':
     optional: true
 
-  '@oneharness/cli-win32-x64@0.16.0':
+  '@oneharness/cli-win32-arm64@0.21.3':
+    optional: true
+
+  '@oneharness/cli-win32-x64@0.21.3':
     optional: true
 
   '@pnpm/config.env-replace@1.1.0': {}
@@ -3828,13 +3836,14 @@ snapshots:
     dependencies:
       wrappy: 1.0.2
 
-  oneharness-cli@0.16.0:
+  oneharness-cli@0.21.3:
     optionalDependencies:
-      '@oneharness/cli-darwin-arm64': 0.16.0
-      '@oneharness/cli-darwin-x64': 0.16.0
-      '@oneharness/cli-linux-arm64': 0.16.0
-      '@oneharness/cli-linux-x64': 0.16.0
-      '@oneharness/cli-win32-x64': 0.16.0
+      '@oneharness/cli-darwin-arm64': 0.21.3
+      '@oneharness/cli-darwin-x64': 0.21.3
+      '@oneharness/cli-linux-arm64': 0.21.3
+      '@oneharness/cli-linux-x64': 0.21.3
+      '@oneharness/cli-win32-arm64': 0.21.3
+      '@oneharness/cli-win32-x64': 0.21.3
 
   onetime@5.1.2:
     dependencies:
