@@ -270,6 +270,12 @@ expect_red ".releaserc.json stopped committing a Windows platform package's vers
   "@semantic-release/git assets lacks 'cli-win32-arm64'"
 
 stage
+printf '{"plugins": [\n' >"$work/repo/.releaserc.json" ||
+  fail "could not write the truncated release config; check that $work is writable and has space, then rerun"
+expect_red ".releaserc.json stopped being readable JSON" \
+  ".releaserc.json's @semantic-release/git assets cannot be read"
+
+stage
 edit scripts/stage-npm-binary.sh 's/^x86_64-pc-windows-msvc) pkg="cli-win32-x64" ;;$/x86_64-pc-windows-msvc) pkg="cli-win32-arm64" ;;/'
 expect_red "the stager mapped a Windows target to the wrong package" \
   "stage-npm-binary.sh's package map has 'x86_64-pc-windows-msvc	cli-win32-arm64'"

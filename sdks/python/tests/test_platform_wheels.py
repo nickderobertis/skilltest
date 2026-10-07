@@ -173,6 +173,7 @@ def consumer_env(extra_path: Path | None = None) -> dict[str, str]:
 class Consumer(NamedTuple):
     python: Path
     version: str
+    wheel: Path
 
 
 @pytest.fixture(scope="module")
@@ -191,8 +192,23 @@ def consumer(tmp_path_factory: pytest.TempPathFactory) -> Consumer:
     (wheel,) = (scratch / "out").glob(f"*-py3-none-{plat.wheel_tag}.whl")
     version = subprocess.run([cli, "--version"], check=True, capture_output=True, text=True)
     return Consumer(
-        fresh_install(scratch, wheel), version.stdout.strip().removeprefix("skilltest ")
+        fresh_install(scratch, wheel), version.stdout.strip().removeprefix("skilltest "), wheel
     )
+
+
+def installed_package(python: Path) -> Path:
+    """Where the consumer environment installed `skilltest_sdk`."""
+    found = run(
+        [
+            str(python),
+            "-c",
+            "import skilltest_sdk, sys; sys.stdout.write(skilltest_sdk.__path__[0])",
+        ],
+        REPO_ROOT,
+        env=consumer_env(),
+    )
+    assert found.returncode == 0, found.stderr
+    return Path(found.stdout)
 
 
 def verify(
@@ -250,6 +266,39 @@ def test_verify_refuses_malformed_arguments(consumer: Consumer, tmp_path: Path) 
 
         assert verified.returncode == 1, args
         assert "usage: verify_bundled.py <expected-version> <skill-dir>" in verified.stderr
+
+
+def test_verify_refuses_a_bundled_binary_that_does_not_run(
+    consumer: Consumer, tmp_path: Path
+) -> None:
+    """A bundle that cannot run on the host — the wrong target, or a damaged
+    file — is refused with the exit it gave, not reported as a pass."""
+    python = fresh_install(tmp_path, consumer.wheel)
+    bundled = installed_package(python) / "_bin" / "skilltest"
+    bundled.write_text("#!/bin/sh\necho 'cannot execute binary file' >&2\nexit 126\n")
+
+    verified = verify(python, consumer.version, str(SKILLS / "greeter"))
+
+    assert verified.returncode == 1
+    assert "--version exited 126 (cannot execute binary file)" in verified.stderr
+    assert "rebuild the wheel for its target" in verified.stderr
+
+
+def test_verify_refuses_an_sdk_that_resolves_past_its_bundle(
+    consumer: Consumer, tmp_path: Path
+) -> None:
+    """An SDK whose resolution skips its own bundle — the regression this
+    check exists for — is refused even though the bundle is present."""
+    python = fresh_install(tmp_path, consumer.wheel)
+    runner = installed_package(python) / "runner.py"
+    source = runner.read_text()
+    assert 'return _bundled_bin() or "skilltest"' in source
+    runner.write_text(source.replace('return _bundled_bin() or "skilltest"', 'return "skilltest"'))
+
+    verified = verify(python, consumer.version, str(SKILLS / "greeter"))
+
+    assert verified.returncode == 1
+    assert "the SDK resolved 'skilltest' instead of its bundled" in verified.stderr
 
 
 # llmlint: ignore[test_tiers_split_by_project_not_by_marker, shell_test_tiers_stay_split] the failure path of the journey above, on the same tier  # noqa: E501

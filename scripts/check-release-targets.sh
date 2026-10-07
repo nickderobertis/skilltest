@@ -502,13 +502,22 @@ compare_platforms "sdks/typescript/platforms/" "$(printf '%s\n' "$platform_rows"
 sdk_covers="$(printf '%s' "$covered" | awk -F'\t' '$2 == "npm:@skill-test/sdk" { sub(/^npm:/, "", $1); print $1 }')"
 compare_platforms "$declarations's npm:@skill-test/sdk covers" "$(declared_col 5)" "$sdk_covers" "cover \"npm:<npm_package>\" for every declared platform"
 
-optional="$(jq -rs 'if length == 1 then .[0].optionalDependencies // {} | keys[] else empty end' "$sdk_manifest" 2>/dev/null || true)"
-compare_platforms "$sdk_manifest's optionalDependencies" "$(declared_col 5)" "$optional" "pin \"<npm_package>\": \"workspace:*\" for every declared platform"
+if optional="$(jq -rs 'if length != 1 then error("it is not exactly one JSON document") else .[0] end
+    | .optionalDependencies // {} | if type == "object" then keys[] else error("optionalDependencies is not an object") end' "$sdk_manifest" 2>&1)"; then
+  compare_platforms "$sdk_manifest's optionalDependencies" "$(declared_col 5)" "$optional" "pin \"<npm_package>\": \"workspace:*\" for every declared platform"
+else
+  fail "$sdk_manifest's optionalDependencies cannot be read ($optional); make it one JSON object whose optionalDependencies maps each platform package to a version spec"
+fi
 
-assets="$(jq -rs 'if length == 1 then .[0].plugins[] | select(type == "array" and .[0] == "@semantic-release/git") | .[1].assets[] else empty end' "$releaserc" 2>/dev/null |
-  sed -n 's|^sdks/typescript/platforms/\([^/]*\)/package.json$|\1|p' || true)"
-compare_platforms "$releaserc's @semantic-release/git assets" "$(declared_col 6)" "$assets" \
-  "list sdks/typescript/platforms/<npm_dir>/package.json for every declared platform, so the release commit carries its version"
+if assets="$(jq -rs 'if length != 1 then error("it is not exactly one JSON document") else .[0] end
+    | [.plugins[]? | select(type == "array" and .[0] == "@semantic-release/git")]
+    | if length == 1 then .[0][1].assets[] else error("it configures @semantic-release/git \(length) times, not once") end' "$releaserc" 2>&1)"; then
+  assets="$(printf '%s\n' "$assets" | sed -n 's|^sdks/typescript/platforms/\([^/]*\)/package.json$|\1|p')"
+  compare_platforms "$releaserc's @semantic-release/git assets" "$(declared_col 6)" "$assets" \
+    "list sdks/typescript/platforms/<npm_dir>/package.json for every declared platform, so the release commit carries its version"
+else
+  fail "$releaserc's @semantic-release/git assets cannot be read ($assets); restore that plugin entry with an assets list"
+fi
 
 grep -Fxq 'for pkg in sdks/typescript/platforms/*/package.json; do' "$set_version" ||
   fail "$set_version no longer versions every platform package through its 'for pkg in sdks/typescript/platforms/*/package.json; do' loop, so a declared platform's package can be left on the previous version; restore that loop"

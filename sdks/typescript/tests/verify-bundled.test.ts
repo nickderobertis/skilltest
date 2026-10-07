@@ -13,6 +13,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import {
   chmodSync,
   copyFileSync,
+  cpSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -65,6 +66,16 @@ beforeAll(() => {
 
 afterAll(() => rmSync(work, { recursive: true, force: true }));
 
+/** A copy of the consumer project to damage for one refusal. */
+function copyOfConsumer(tag: string): { dir: string; hostBin: string } {
+  const dir = mkdtempSync(join(work, `${tag}-`));
+  cpSync(consumer, dir, { recursive: true });
+  return {
+    dir,
+    hostBin: join(dir, "node_modules", ...platformPackage().split("/"), "bin", "skilltest"),
+  };
+}
+
 function verify(args: string[], options: { cwd?: string; path?: string } = {}) {
   const env = { ...process.env, PATH: options.path ?? process.env.PATH ?? "" };
   // A consumer has neither the gate's SKILLTEST_BIN nor the NODE_PATH `pnpm exec` sets,
@@ -78,6 +89,7 @@ function verify(args: string[], options: { cwd?: string; path?: string } = {}) {
   });
 }
 
+// llmlint: ignore[shell_test_tiers_stay_split] this tier is the one that drives the built CLI by design (every suite here runs target/debug/skilltest via SKILLTEST_BIN); the script under test is this SDK's own install proof, and it needs only node and the SDK's own tsc build
 describe("verify-bundled.mjs", () => {
   it("passes on an install whose bundled CLI reports the release and validates a skill", () => {
     const ran = verify([version, GREETER]);
@@ -123,6 +135,36 @@ describe("verify-bundled.mjs", () => {
 
     expect(ran.status).toBe(1);
     expect(ran.stderr).toContain(`${platformPackage()} is not installed in ${bare}`);
+  });
+
+  it("refuses a platform package that carries no binary", () => {
+    const { dir, hostBin } = copyOfConsumer("nobin");
+    rmSync(hostBin);
+
+    const ran = verify([version, GREETER], { cwd: dir });
+
+    expect(ran.status).toBe(1);
+    expect(ran.stderr).toContain(`${platformPackage()} carries no ${hostBin}`);
+  });
+
+  it("refuses a bundled binary that does not run", () => {
+    const { dir, hostBin } = copyOfConsumer("broken");
+    writeFileSync(hostBin, "#!/bin/sh\necho 'cannot execute binary file' >&2\nexit 126\n");
+
+    const ran = verify([version, GREETER], { cwd: dir });
+
+    expect(ran.status).toBe(1);
+    expect(ran.stderr).toContain("--version exited 126 (cannot execute binary file)");
+  });
+
+  it("refuses an install whose SDK does not load", () => {
+    const { dir } = copyOfConsumer("nosdk");
+    rmSync(join(dir, "node_modules", "@skill-test", "sdk", "dist"), { recursive: true });
+
+    const ran = verify([version, GREETER], { cwd: dir });
+
+    expect(ran.status).toBe(1);
+    expect(ran.stderr).toContain(`@skill-test/sdk does not load from ${dir}`);
   });
 
   it("refuses malformed arguments", () => {
