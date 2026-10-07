@@ -397,7 +397,10 @@ for n, row in enumerate(rows, 1):
 while IFS=$'\t' read -r first rest; do
   [ "$first" = "!" ] && fail "$rest"
 done <<<"$platform_rows"
-platform_rows="$(printf '%s\n' "$platform_rows" | grep -v '^!' || true)"
+platform_rows="$(printf '%s\n' "$platform_rows" | awk '!/^!/')" || {
+  echo "check-release-targets: could not drop the refused rows from $platforms_file's platforms (awk failed); check that awk is on PATH" >&2
+  exit 1
+}
 # $1 = column (1-based). That column of every declared platform, one per line.
 declared_col() { printf '%s\n' "$platform_rows" | sed '/^$/d' | cut -f"$1"; }
 # Set operations over newline lists, in one awk each so a failure is the

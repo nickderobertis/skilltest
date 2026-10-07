@@ -22,7 +22,7 @@ fail() {
   echo "verify-release-archive-test: $1" >&2
   if [ -s "$work/out" ]; then
     echo "  what the verifier said:" >&2
-    cat "$work/out" >&2 || echo "  (unreadable: $work/out)" >&2
+    cat "$work/out" >&2 || echo "  (unreadable: $work/out; rerun scripts/verify-release-archive.sh by hand with the arguments above to see it)" >&2
   fi
   exit 1
 }
@@ -73,11 +73,11 @@ expect_red() {
 
 pack x86_64-unknown-linux-gnu skilltest 1.2.3
 verify "$work/x86_64-unknown-linux-gnu" x86_64-unknown-linux-gnu skilltest 1.2.3 ||
-  fail "the verifier refused a good .tar.gz"
+  fail "the verifier refused a good .tar.gz; fix the check in scripts/verify-release-archive.sh named below, or this test's pack() if release.yml's archive shape changed"
 
 for target in x86_64-pc-windows-msvc aarch64-pc-windows-msvc; do
   pack "$target" skilltest.exe 1.2.3
-  verify "$work/$target" "$target" skilltest.exe 1.2.3 || fail "the verifier refused a good $target .zip"
+  verify "$work/$target" "$target" skilltest.exe 1.2.3 || fail "the verifier refused a good $target .zip; fix the check in scripts/verify-release-archive.sh named below, or this test's pack() if release.yml's archive shape changed"
 done
 
 expect_red "the binary is from another release" "reports 'skilltest 1.2.3', not 'skilltest 1.2.2'" \
