@@ -222,17 +222,17 @@ expect_red "the tarball lists cleanly but cannot be extracted" "could not extrac
 # an ordinary user, as every CI runner and a developer's shell are.
 if [ "$(id -u)" != 0 ]; then
   pack x86_64-unknown-linux-gnu skilltest 1.2.3
-  chmod 000 "$work/x86_64-unknown-linux-gnu/skilltest-x86_64-unknown-linux-gnu.tar.gz" || fail "could not make the stand-in tarball unreadable"
+  chmod 000 "$work/x86_64-unknown-linux-gnu/skilltest-x86_64-unknown-linux-gnu.tar.gz" || fail "could not make the stand-in tarball unreadable; check that $work is on a filesystem that honors chmod, or run this test from a POSIX checkout"
   expect_red "the archive cannot be read" "could not hash $work/x86_64-unknown-linux-gnu/skilltest-x86_64-unknown-linux-gnu.tar.gz" \
     "$work/x86_64-unknown-linux-gnu" x86_64-unknown-linux-gnu skilltest 1.2.3
 
   pack x86_64-unknown-linux-gnu skilltest 1.2.3
-  chmod 000 "$work/x86_64-unknown-linux-gnu/skilltest-x86_64-unknown-linux-gnu.tar.gz.sha256" || fail "could not make the stand-in checksum unreadable"
+  chmod 000 "$work/x86_64-unknown-linux-gnu/skilltest-x86_64-unknown-linux-gnu.tar.gz.sha256" || fail "could not make the stand-in checksum unreadable; check that $work is on a filesystem that honors chmod, or run this test from a POSIX checkout"
   expect_red "the checksum cannot be read" "could not read $work/x86_64-unknown-linux-gnu/skilltest-x86_64-unknown-linux-gnu.tar.gz.sha256" \
     "$work/x86_64-unknown-linux-gnu" x86_64-unknown-linux-gnu skilltest 1.2.3
 
   pack x86_64-unknown-linux-gnu skilltest 1.2.3
-  chmod 555 "$work/x86_64-unknown-linux-gnu" || fail "could not make the stand-in download directory read-only"
+  chmod 555 "$work/x86_64-unknown-linux-gnu" || fail "could not make the stand-in download directory read-only; check that $work is on a filesystem that honors chmod, or run this test from a POSIX checkout"
   expect_red "the download directory is read-only" "could not prepare $work/x86_64-unknown-linux-gnu/extracted" \
     "$work/x86_64-unknown-linux-gnu" x86_64-unknown-linux-gnu skilltest 1.2.3
   chmod 755 "$work/x86_64-unknown-linux-gnu" || fail "could not make $work/x86_64-unknown-linux-gnu writable again; delete it by hand"

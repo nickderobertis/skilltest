@@ -220,7 +220,6 @@ def verify(
     return run([str(python), str(VERIFY), *args], REPO_ROOT, env=env or consumer_env())
 
 
-# Installing resolves the wheel's dependencies through uv, as a consumer's install does.
 # llmlint: ignore[test_tiers_split_by_project_not_by_marker, shell_test_tiers_stay_split] the journey the Windows lane and release proof run, on this member's own tier  # noqa: E501
 def test_installed_platform_wheel_runs_its_bundled_cli(consumer: Consumer) -> None:
     verified = verify(consumer.python, consumer.version, str(SKILLS / "greeter"))
