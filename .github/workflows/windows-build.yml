@@ -1,13 +1,5 @@
 # Prove each Windows release target builds, packages and runs before it ships.
 #
-# For both Windows targets, on their native runners: build skilltest.exe, build
-# the platform `skilltest-sdk` wheel through the same script publish.yml's PyPI
-# job uses (scripts/build-python-wheel.sh), install that wheel into a fresh
-# environment, and run the bundled CLI through the SDK's own binary resolution
-# (sdks/python/scripts/verify_bundled.py: `skilltest --version`, then
-# `validate_skill`, with SKILLTEST_BIN unset and nothing on PATH, so a pass can
-# only come from the bundle).
-#
 # bundle-smoke.yml's scripts assume POSIX venv paths and a `sh` fake provider,
 # so this lane has its own steps. It runs only when a PR touches what the
 # Windows build depends on — the Rust sources, the Cargo manifests and lockfile,
