@@ -99,6 +99,18 @@ CASES = (
         "on.push.paths is not a filter this model simulates",
     ),
     Case(
+        "a negated path filter the model does not simulate",
+        lambda wf, _tc: _replace(wf / "windows-build.yml", '      - "crates/**"\n', '      - "!docs/**"\n'),
+        2,
+        "on.pull_request.paths: a negated (`!`) pattern is not simulated",
+    ),
+    Case(
+        "a required context behind a path filter",
+        lambda wf, _tc: _replace(wf / "ci.yml", "  pull_request:\n", "  pull_request:\n    paths: [crates/**]\n"),
+        1,
+        "docs-only): required context `check (ubuntu-latest)` is not reported",
+    ),
+    Case(
         "a matrix the model does not expand",
         lambda wf, _tc: _replace(
             wf / "ci.yml", "os: [ubuntu-latest, macos-latest]", "os: [ubuntu-latest]\n        rust: [a, b]"
@@ -136,7 +148,7 @@ CASES = (
     ),
     Case(
         "a matrix target that is not a string",
-        lambda wf, _tc: _replace(wf / "release.yml", "- target: x86_64-unknown-linux-gnu", "- target: 42"),
+        lambda wf, _tc: _replace(wf / "release.yml", "{ target: x86_64-unknown-linux-gnu,", "{ target: 42,"),
         2,
         "names a non-string matrix target 42",
     ),

@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.12.1](https://github.com/nickderobertis/skilltest/compare/v0.12.0...v0.12.1) (2026-10-07)
+
+### Bug Fixes
+
+* **release:** publish Windows binaries, platform SDK wheels and npm packages ([#66](https://github.com/nickderobertis/skilltest/issues/66)) ([9487158](https://github.com/nickderobertis/skilltest/commit/9487158d173ccf1ce9d8e66de79975f69efa1d5c)), closes [#63](https://github.com/nickderobertis/skilltest/issues/63)
+
 ## [0.12.0](https://github.com/nickderobertis/skilltest/compare/v0.11.2...v0.12.0) (2026-10-03)
 
 ### Features

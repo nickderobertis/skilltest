@@ -31,10 +31,11 @@ contract into Pydantic models. No framework code — pytest support lives in
   `_case.py`, `_report.py`, `_validation.py` or `_error.py` — `just gen-contract`.
 - The CLI's own `--format json` output is the one input not re-validated by
   hand: the generated Pydantic models validate it for free.
-- The wheel ships per target as a **platform wheel** bundling the CLI at
-  `skilltest_sdk/_bin/skilltest` (plus a pure-wheel/sdist fallback), built by
-  `scripts/build-python-wheel.sh`/`build-python-dist.sh` and proven by
-  `bundle-smoke.yml`. The runner resolves the bundled binary first, falling back
+- The wheel ships per target (Linux, macOS and Windows) as a **platform wheel**
+  bundling the CLI under `skilltest_sdk/_bin/` (plus a pure-wheel/sdist
+  fallback), built by `scripts/build-python-wheel.sh`/`build-python-dist.sh` and
+  proven by `bundle-smoke.yml` (Linux/macOS) and `scripts/verify_bundled.py`
+  (Windows, in `windows-build.yml` and the release's `verify-windows`). The runner resolves the bundled binary first, falling back
   to `$SKILLTEST_BIN`/`PATH`.
 - It depends on `oneharness-cli`, bounded to the release line
   `scripts/install-oneharness.sh` pins (`crates/skilltest-cli-e2e/tests/pins.rs`

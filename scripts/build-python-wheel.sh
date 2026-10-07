@@ -3,7 +3,8 @@
 #
 #   scripts/build-python-wheel.sh <rust-target> <skilltest-binary> [out-dir]
 #
-# Drops the binary at skilltest_sdk/_bin/skilltest (packed via the `artifacts`
+# Drops the binary at skilltest_sdk/_bin/skilltest — skilltest.exe for a Windows
+# target, the name the SDK's runner resolves there — (packed via the `artifacts`
 # glob in pyproject.toml), builds the wheel, then retags it from py3-none-any to
 # the target's platform tag so pip/uv install the matching binary automatically.
 # The pure (py3-none-any) wheel + sdist are built separately with an empty _bin
@@ -30,16 +31,24 @@ if [ ! -f "$binary" ]; then
   exit 2
 fi
 
-# Rust target triple -> Python wheel platform tag.
+# Rust target triple -> Python wheel platform tag (release-platforms.toml's
+# wheel_tag; scripts/check-release-targets.sh holds these arms to it).
 case "$target" in
 x86_64-unknown-linux-gnu) plat="manylinux_2_17_x86_64" ;;
 aarch64-unknown-linux-gnu) plat="manylinux_2_17_aarch64" ;;
 x86_64-apple-darwin) plat="macosx_10_12_x86_64" ;;
 aarch64-apple-darwin) plat="macosx_11_0_arm64" ;;
+x86_64-pc-windows-msvc) plat="win_amd64" ;;
+aarch64-pc-windows-msvc) plat="win_arm64" ;;
 *)
   echo "error: unsupported target: $target" >&2
   exit 2
   ;;
+esac
+
+case "$target" in
+*-windows-*) exe="skilltest.exe" ;;
+*) exe="skilltest" ;;
 esac
 
 bindir="sdks/python/skilltest_sdk/_bin"
@@ -47,7 +56,10 @@ cleanup() { rm -rf "$bindir"; }
 trap cleanup EXIT
 
 mkdir -p "$bindir"
-install -m 0755 "$binary" "$bindir/skilltest"
+install -m 0755 "$binary" "$bindir/$exe" || {
+  echo "error: could not copy $binary into $bindir/$exe; check that sdks/python is writable" >&2
+  exit 1
+}
 
 # Build the (nominally pure) wheel containing the binary, then relabel its tag.
 ( cd sdks/python && rm -rf build && uv build --wheel --out-dir "$outdir" >/dev/null )

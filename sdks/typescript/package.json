@@ -1,6 +1,6 @@
 {
   "name": "@skill-test/sdk",
-  "version": "0.12.0",
+  "version": "0.12.1",
   "description": "TypeScript SDK for the skilltest CLI: run AI-skill tests and natural-language evals from TypeScript, with a typed report contract generated from the CLI's JSON Schemas.",
   "license": "MIT",
   "repository": {
@@ -22,13 +22,15 @@
   },
   "files": ["dist"],
   "dependencies": {
-    "oneharness-cli": "^0.16.0"
+    "oneharness-cli": "^0.21.3"
   },
   "optionalDependencies": {
     "@skill-test/cli-linux-x64": "workspace:*",
     "@skill-test/cli-linux-arm64": "workspace:*",
     "@skill-test/cli-darwin-x64": "workspace:*",
-    "@skill-test/cli-darwin-arm64": "workspace:*"
+    "@skill-test/cli-darwin-arm64": "workspace:*",
+    "@skill-test/cli-win32-x64": "workspace:*",
+    "@skill-test/cli-win32-arm64": "workspace:*"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",

@@ -304,13 +304,13 @@ def _condition(value: object, where: str) -> object:
 
 
 # The filters `triggered()` simulates, per trigger. A filter outside this table
-# (paths, branches-ignore, a pull_request branch filter, ...) is refused rather
+# (branches-ignore, a pull_request branch filter, push paths, ...) is refused rather
 # than ignored, so the model can never report routing Actions would not do; add
 # the filter to `triggered()` and here together. `inputs`/`secrets`/`outputs`
 # shape a call or dispatch, not whether it fires, so they are accepted as given.
 LIST_FILTERS: dict[str, frozenset[str]] = {
     "push": frozenset({"branches", "tags"}),
-    "pull_request": frozenset({"types"}),
+    "pull_request": frozenset({"types", "paths"}),
     "pull_request_target": frozenset({"types"}),
 }
 MAP_FILTERS = frozenset({"inputs", "secrets", "outputs"})
@@ -320,6 +320,8 @@ def _filters(trigger: str, spec: dict, where: str) -> dict[str, object]:
     lists = LIST_FILTERS.get(trigger, frozenset())
     for key, value in spec.items():
         match key, value:
+            case "paths", list(items) if any(str(i).startswith("!") for i in items):
+                raise WorkflowError(f"{where}.paths: a negated (`!`) pattern is not simulated by this model")
             case str(k), list(items) if k in lists and all(isinstance(i, str) for i in items):
                 pass
             case str(k), (None | dict()) if k in MAP_FILTERS:
@@ -481,6 +483,7 @@ class Event:
     ref: str
     payload: dict[str, object] = field(default_factory=dict)
     dispatch: WorkflowFile | None = None  # the workflow file a workflow_dispatch targets
+    changed: tuple[str, ...] = ()  # the files a pull request changes, read by a `paths` filter
 
     def ctx(self, matrix: dict[str, object] | None = None) -> dict[str, object]:
         ref_name = self.ref.removeprefix("refs/heads/").removeprefix("refs/tags/")
@@ -488,13 +491,21 @@ class Event:
         return {"github": {**github, "event": self.payload}, "matrix": matrix or {}}
 
 
-def pull_request(action: str = "synchronize", fork: bool = False) -> Event:
+# A change to the Rust core, which every path-filtered workflow covers, and a
+# docs-only change, which none does: a required context must be reported on both.
+CORE_CHANGE = ("crates/skilltest-core/src/lib.rs",)
+DOCS_CHANGE = ("docs/e2e.md",)
+
+
+def pull_request(action: str = "synchronize", fork: bool = False, changed: tuple[str, ...] = CORE_CHANGE) -> Event:
     head = "someone/skilltest" if fork else REPO
+    what = "docs-only" if changed == DOCS_CHANGE else ", ".join(changed)
     return Event(
-        f"pull_request ({'fork' if fork else 'same-repo'}, {action})",
+        f"pull_request ({'fork' if fork else 'same-repo'}, {action}, {what})",
         "pull_request",
         "refs/pull/1/merge",
         {"action": action, "pull_request": {"head": {"repo": {"full_name": head}}}},
+        changed=changed,
     )
 
 
@@ -514,6 +525,21 @@ def _matches(patterns: object, name: str) -> bool:
     return isinstance(patterns, list) and any(fnmatch.fnmatch(name, str(p)) for p in patterns)
 
 
+def _glob(pattern: str) -> re.Pattern[str]:
+    """An Actions path glob: `**` crosses directories, `*` and `?` do not."""
+    out = []
+    for i, part in enumerate(re.split(r"(\*\*/?|\*|\?)", pattern)):
+        if i % 2 == 0:
+            out.append(re.escape(part))
+        else:
+            out.append({"*": "[^/]*", "?": "[^/]"}.get(part, ".*"))
+    return re.compile("".join(out))
+
+
+def _touches(patterns: object, changed: tuple[str, ...]) -> bool:
+    return isinstance(patterns, list) and any(_glob(str(p)).fullmatch(f) for p in patterns for f in changed)
+
+
 def triggered(wf: Workflow, event: Event) -> bool:
     on = wf.triggers
     match event.name:
@@ -524,6 +550,8 @@ def triggered(wf: Workflow, event: Event) -> bool:
             if kind is None:
                 return False
             types = on[kind].get("types") or ["opened", "synchronize", "reopened"]
+            if "paths" in on[kind] and not _touches(on[kind]["paths"], event.changed):
+                return False
             return event.payload["action"] in types
         case "push" if "push" in on:
             # Unfiltered, a push of any branch or tag fires it; with a `branches`
@@ -684,8 +712,14 @@ def violations(
     ]
 
     # Pull requests: the affected tier against an explicit base, every required
-    # context reported, no live suite. Same-repo and fork heads alike.
-    for event in (pull_request("opened"), pull_request("synchronize"), pull_request("synchronize", fork=True)):
+    # context reported, no live suite. Same-repo and fork heads alike, and a
+    # docs-only change no path filter matches.
+    for event in (
+        pull_request("opened"),
+        pull_request("synchronize"),
+        pull_request("synchronize", fork=True),
+        pull_request("synchronize", changed=DOCS_CHANGE),
+    ):
         runs = simulate(wfs, event)
         reported = {c for wf in runs.values() for r in wf.values() if r.result != Result.SKIPPED for c in r.contexts}
         bad += [
@@ -806,6 +840,10 @@ MUTATIONS: tuple[Mutation, ...] = (
         "a required context needing a live suite",
         lambda d: _jobs(d, "ci.yml")["llmlint"].update({"needs": ["live-claude"]}),
     ),
+    Mutation(
+        "a required context behind a path filter",
+        lambda d: d["ci.yml"][True].update({"pull_request": {"paths": ["crates/**"]}}),
+    ),
     Mutation("semantic-release triggered on push", lambda d: d["semantic-release.yml"].update({True: {"push": None}})),
     Mutation(
         "a new live suite ci.yml never calls", lambda d: d.update({"e2e-new.yml": copy.deepcopy(d["e2e-codex.yml"])})
@@ -845,6 +883,7 @@ def report(wfs: dict[WorkflowFile, Workflow]) -> None:
     events = [
         pull_request("synchronize"),
         pull_request("synchronize", fork=True),
+        pull_request("synchronize", changed=DOCS_CHANGE),
         push_main("feat: something (#99)"),
         push_main("chore(release): 0.13.0 [bot]"),
         push_tag("v0.13.0"),

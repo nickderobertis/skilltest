@@ -1,0 +1,93 @@
+# Prove each Windows release target builds, packages and runs before it ships.
+#
+# bundle-smoke.yml's scripts assume POSIX venv paths and a `sh` fake provider,
+# so this lane has its own steps. It runs only when a PR touches what the
+# Windows build depends on — the Rust sources, the Cargo manifests and lockfile,
+# the packaging scripts and the release configuration — and it is deliberately
+# NOT a required check: the ARM runner can queue, and that must never hold a
+# merge. The release itself proves the published packages (publish.yml's
+# verify-windows job). The matrix is release-platforms.toml's Windows platforms;
+# scripts/check-release-targets.sh holds it to that file.
+
+name: windows-build
+
+on:
+  pull_request:
+    paths:
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "scripts/build-python-dist.sh"
+      - "scripts/build-python-wheel.sh"
+      - "scripts/stage-npm-binary.sh"
+      - "sdks/python/scripts/verify_bundled.py"
+      - "sdks/python/pyproject.toml"
+      - "release-platforms.toml"
+      - "release-targets.toml"
+      - ".releaserc.json"
+      - ".github/workflows/publish.yml"
+      - ".github/workflows/release.yml"
+      - ".github/workflows/windows-build.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-pc-windows-msvc, os: windows-latest, bin: skilltest.exe }
+          - { target: aarch64-pc-windows-msvc, os: windows-11-arm, bin: skilltest.exe }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (pinned in rust-toolchain.toml)
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          # Channel, components and targets come from rust-toolchain.toml. Turn
+          # off this action's own cache (Swatinem/rust-cache runs where wanted)
+          # and its default RUSTFLAGS="-D warnings", which would change builds.
+          cache: false
+          rustflags: ""
+
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      # llmlint: ignore[work_goes_through_command_surface] `just build` is nx's debug build of the affected projects; a release-profile build for one --target triple has no recipe, and publish.yml, release.yml and bundle-smoke.yml build their release binaries with this same cargo invocation
+      - name: Build the CLI
+        env:
+          RUSTFLAGS: -D warnings
+        run: cargo build --release --locked -p skilltest-cli --bin skilltest --target ${{ matrix.target }}
+
+      # rust-cache restores target/, so an earlier run's wheels and consumer
+      # environment can already be there: start each from empty.
+      - name: Build the platform skilltest-sdk wheel
+        run: |
+          rm -rf target/wheel-dist
+          bash scripts/build-python-wheel.sh ${{ matrix.target }} \
+            "target/${{ matrix.target }}/release/${{ matrix.bin }}" target/wheel-dist
+
+      - name: Install the wheel into a fresh environment
+        run: |
+          rm -rf target/consumer
+          uv venv --python 3.12 target/consumer
+          uv pip install --python target/consumer/Scripts/python.exe target/wheel-dist/skilltest_sdk-*-win_*.whl
+
+      - name: Run the bundled CLI through the SDK's resolution
+        run: |
+          version="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)"
+          target/consumer/Scripts/python.exe sdks/python/scripts/verify_bundled.py "$version" tests/fixtures/smoke/greeter

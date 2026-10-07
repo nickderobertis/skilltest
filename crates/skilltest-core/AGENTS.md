@@ -41,7 +41,7 @@ and the Rust types that are the single source of truth for the JSON contract
 (`src/provider.rs`) has two real backends:
 
 - **`OneharnessProvider` (default).** Targets
-  [`oneharness`](https://github.com/nickderobertis/oneharness) **v0.16.0** (the
+  [`oneharness`](https://github.com/nickderobertis/oneharness) **v0.21.3** (the
   line both SDKs bundle and `scripts/install-oneharness.sh` installs;
   `crates/skilltest-cli-e2e/tests/pins.rs` reconciles every restatement). It uses
   oneharness's normalized features rather than string-munging: `--system <skill
@@ -49,9 +49,10 @@ and the Rust types that are the single source of truth for the JSON contract
   <session_id>` continues a real harness session for the multi-turn loop where
   `supports_resume` is true (others inline the transcript); `--events` surfaces
   normalized tool events (`{kind, name, input, output, index}`) lifted onto each
-  assistant turn (`Message.events`); `results[*].usage` aggregates into the
-  report; `results[*].failure_kind` (`auth`/`rate_limit`/`model_not_found`/
-  `quota`) becomes `Error::Provider { kind }` so the CLI prints a pointed hint;
+  assistant turn (`Message.events`) — tool activity only: the
+  `message`/`reasoning` kinds v0.19+ adds are dropped; `results[*].usage`
+  aggregates into the report; `results[*].failure_kind` (`auth`/`rate_limit`/
+  `model_not_found`/`quota`) becomes `Error::Provider { kind }` so the CLI prints a pointed hint;
   and `--history --history-dir <dir> --history-name <name>` records each
   **skill** run to a shared history directory (default `<state
   dir>/skilltest/oneharness-history`; `provider.history_dir` /

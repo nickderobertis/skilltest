@@ -26,7 +26,7 @@ set -euo pipefail
 #
 # Upgrading past a release that changed the history store: `oneharness history
 # migrate` rewrites an older store in place — skilltest never does it for you.
-default_version="v0.16.0"
+default_version="v0.21.3"
 version="${1:-$default_version}"
 repo="nickderobertis/oneharness"
 dest="${ONEHARNESS_INSTALL_DIR:-$HOME/.local/bin}"

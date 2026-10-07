@@ -12,8 +12,8 @@ from the contract. No framework code — vitest support lives in `plugins/vitest
   through the real oneharness seam, and binary resolution. `build`/`typecheck`
   (tsc), `lint`/`format-check` (biome, one root config).
 - **Depends on.** `skilltest-cli` (the binary it wraps), `skilltest-contract`
-  (`src/generated/*.ts`) and the four `@skill-test/cli-*` carrier packages it
-  declares as `optionalDependencies`. Depended on by `@skill-test/vitest`.
+  (`src/generated/*.ts`) and the `@skill-test/cli-*` carrier packages (one per
+  `release-platforms.toml` platform, Windows included) it declares as `optionalDependencies`. Depended on by `@skill-test/vitest`.
 
 <!-- llmlint: ignore-end[agents_md_durable_and_terse] -->
 

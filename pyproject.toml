@@ -10,3 +10,10 @@
 # through its own `project.json`.
 [tool.uv.workspace]
 members = ["sdks/python", "plugins/pytest"]
+
+# Repo-level lint tools that belong to no member: actionlint over
+# .github/workflows/ (`just workflows-lint`, in `just check`), with shellcheck
+# pinned beside it so the `run:` scripts it hands to shellcheck are judged by the
+# same version locally and in CI. `just bootstrap`'s `uv sync` installs both.
+[dependency-groups]
+dev = ["actionlint-py==1.7.12.25", "shellcheck-py==0.11.0.1"]

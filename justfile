@@ -55,15 +55,18 @@ bootstrap:
 #                        merge-to-main, ahead of the release.
 # Live projects are excluded from both. Their code still lints here (compile-
 # but-skip: the live tier must not rot), but no live suite runs from this
-# recipe. Then the workspace-level gates, which run on every tier because they
-# span every stack, and the Rust coverage floor. just resolves the tier itself,
-# so a mistyped one aborts before anything runs, and the affected tier derives
-# its base first, so a bad NX_BASE fails closed before any gate spends time.
+# recipe. Then the workspace-level gates (contract, release targets, module
+# boundaries, workflow lint and routing, base derivation), which run on every
+# tier because they span every stack, and the Rust coverage floor. just resolves
+# the tier itself, so a mistyped one aborts before anything runs, and the
+# affected tier derives its base first, so a bad NX_BASE fails closed before any
+# gate spends time.
 check tier="affected":
     @{{ if tier == "affected" { "bash scripts/nx-base.sh >/dev/null" } else if tier == "all" { "true" } else { error("unknown tier '" + tier + "' — use 'affected' (the default) or 'all'") } }}
     @just contract-check
     @just release-targets-check
     @just boundaries-check
+    @just workflows-lint
     @just workflows-check
     @just base-check
     {{ if tier == "all" { "pnpm exec nx run-many" } else { affected } }} -t format-check lint typecheck test test-e2e --exclude={{live}}
@@ -90,11 +93,20 @@ contract-check:
 # Release-target gate (part of `just check`; workspace-level, not per-project,
 # so it runs even when only release-targets.toml or a workflow changed): the
 # declaration against what publish.yml publishes, that gate's own drift tests,
-# and the release probe's offline outcome tests (curl doubled; no network).
+# the release probe's offline outcome tests (curl doubled; no network), and the
+# release-archive verifier's tests on stand-in archives.
 release-targets-check:
     @bash scripts/check-release-targets.sh >/dev/null
     @bash scripts/check-release-targets-test.sh >/dev/null
     @bash scripts/check-release-probe.sh >/dev/null
+    @bash scripts/verify-release-archive-test.sh >/dev/null
+
+# Workflow lint (part of `just check`; workspace-level, since no nx project owns
+# .github/workflows/): actionlint over every workflow, handing each `run:` script
+# to the shellcheck pinned beside it in the root pyproject.toml's dev group, so
+# local and CI runs judge the same versions. Silent on success.
+workflows-lint:
+    @uv run --frozen actionlint
 
 # Live drift alarm for the release probe: drives it against the real crates.io,
 # PyPI and npm for every declared target. Network, so never part of `check`.
@@ -229,7 +241,7 @@ screenshots-bless: screenshots
 # both SDKs' bounds restate it, and the gate's
 # `oneharness_pin_is_lockstep_across_installer_recipe_and_both_sdks` reconciles
 # all four.
-install-oneharness version="v0.16.0":
+install-oneharness version="v0.21.3":
     @bash scripts/install-oneharness.sh {{version}}
 
 # Deep live suite against real oneharness + claude-code (needs CLAUDE_CODE_OAUTH_TOKEN

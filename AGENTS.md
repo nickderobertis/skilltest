@@ -60,7 +60,9 @@ added. What was pulled in, and why:
   split by tier and cost ("Project graph" below). `ci.md` gives clean checkout →
   `just bootstrap` → `just check` on a Linux/macOS matrix, the two staged gate
   tiers, the live tier in its own credential-gated workflows, the install-path
-  smoke (`bundle-smoke.yml`) and the notignored suppressions comment. `llmlint.md`
+  smoke (`bundle-smoke.yml` on Linux/macOS; `windows-build.yml` on PRs and
+  `publish.yml`'s `verify-windows` at release for the Windows targets) and the
+  notignored suppressions comment. `llmlint.md`
   gives the LLM-judge tier: `llmlint.yml` composing the per-reference fragments,
   the fallback `oneharness.toml`, and the blocking `llmlint` PR job.
 - **Product shape — `shapes/cli.md` + `shapes/library.md`.** The shipped artifact
@@ -126,17 +128,18 @@ added. What was pulled in, and why:
 | `crates/skilltest-cli-e2e` | The CLI's binary e2e tier (`publish = false`). |
 | `schemas/` | The generated CLI↔SDK contract (JSON Schemas) — project `skilltest-contract`. |
 | `sdks/python`, `sdks/typescript` | `skilltest-sdk` / `@skill-test/sdk`: one thin CLI wrapper per language, bundling the CLI. |
-| `sdks/typescript/platforms/cli-*` | The four `@skill-test/cli-*` npm packages that carry the prebuilt binary. |
+| `sdks/typescript/platforms/cli-*` | The `@skill-test/cli-<os>-<arch>` npm packages (linux, darwin, win32) that carry the prebuilt binary, one per `release-platforms.toml` platform. |
 | `plugins/pytest`, `plugins/vitest` | `skilltest-pytest` / `@skill-test/vitest`: one package per test framework, on its language's SDK. |
 | `live/{claude,judge-api}`, `live/harness/<id>` | The live suites, one project each: the deep claude-code suite, the direct-API judge, and one per-harness smoke per harness. |
 | `pyproject.toml`, `uv.lock` | The uv workspace root over `sdks/python` + `plugins/pytest`; publishes nothing. |
 | `tests/fixtures` | Sample skills and cases the e2e suites share (`tests/AGENTS.md`). |
 | `docs/` | The provider protocol, config/case schema, development and live-e2e references. |
-| `scripts/` | Repo-level glue, orchestrator-independent: contract generation, the release-target, module-boundary and workflow-routing gates, the affected-tier base (`nx-base.sh`), install/bundle/smoke/version scripts, screenshots. |
+| `scripts/` | Repo-level glue, orchestrator-independent: contract generation, the release-target, module-boundary and workflow-routing gates, the affected-tier base (`nx-base.sh`), install/bundle/smoke/version scripts, the release-archive verification, screenshots. |
+| `release-platforms.toml` | The one statement of the platforms a release ships a CLI for; `just release-targets-check` holds every build matrix, packaging script and npm-side list to it. |
 | `release-targets.toml` | What a release publishes, for onevcs; ids and short names are a cross-repository contract ("Commits, releases, and merging"). |
 | `screenshots/`, `screencomp.toml`, `shots/baseline/`, `docs/screenshots/` | Terminal screenshots, informational, never a gate (`screenshots/AGENTS.md`). |
 | `gh-secrets.json` | Declarative secret manifest, synced from Bitwarden via `gh-secrets manifest sync`. |
-| `.github/workflows/` | `ci.yml` (both gate tiers, the live calls, the release), `e2e-*.yml` (one live suite each), `semantic-release.yml`, `release.yml`/`publish.yml` (tag-triggered), `bundle-smoke.yml`, `visual-docs.yml`, `pr-title.yml`, `notignored.yml`. |
+| `.github/workflows/` | `ci.yml` (both gate tiers, the live calls, the release), `e2e-*.yml` (one live suite each), `semantic-release.yml`, `release.yml`/`publish.yml` (tag-triggered), `bundle-smoke.yml`, `windows-build.yml` (Windows install proof, not required), `visual-docs.yml`, `pr-title.yml`, `notignored.yml`. |
 | `nx.json`, `<project>/project.json` | The Nx workspace: named inputs, target defaults, and each project's targets, tags and edges. |
 | `rust-toolchain.toml` | The one Rust toolchain pin (channel, components, release targets); every workflow installs from it, and `just workflows-check` holds its targets to the build matrices. |
 
@@ -211,7 +214,11 @@ projects reach a real harness.
   `just gen-contract`, and commit the regenerated artifacts — then land it behind a
   `feat!:`/`BREAKING CHANGE` commit so the lockstep version moves on the next release
   (versions are never hand-bumped; see "Commits, releases, and merging").
-- Keep the artifact portable across the supported platform matrix (Linux, macOS).
+- Keep the artifact portable across the supported platform matrix (Linux, macOS,
+  Windows — x86_64 and arm64 each; `release-platforms.toml`). The shipped crates
+  must type-check for both Windows targets (`cargo check --target
+  x86_64-pc-windows-msvc` / `aarch64-pc-windows-msvc`); unix-only code stays
+  behind `cfg(unix)`.
 - Do not commit secrets, credentials, PII, or customer data. Real provider runs
   need API keys; those live in the environment, never in fixtures or config.
 - No non-determinism in the gate: the LLM is always faked in tests.
@@ -285,6 +292,12 @@ binary release, or vice versa.
   target ids and short names are named by other repositories' plans, so a
   rename, addition or removal is a deliberate cross-repository change, never a
   side effect.
+- **Which platforms a release ships** is declared once, in
+  `release-platforms.toml` (Linux, macOS and Windows; x86_64 and arm64 each).
+  To add or drop one, edit that file and let `just release-targets-check` name
+  every matrix, script and npm-side list that must follow. Its npm package
+  names are `node-sdk` covers, so they are part of the cross-repository contract
+  above.
 - **To cut a release:** merge a conventional-commit PR. That's it. The lockstep
   version is never hand-edited; if the JSON contract changed, run `just gen-contract`
   and commit the regenerated artifacts in the same PR — the version moves on its own at

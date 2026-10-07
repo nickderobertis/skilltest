@@ -7,7 +7,7 @@
 #
 #   crates.io : skilltest-core  -> skilltest-cli
 #   PyPI      : skilltest-sdk   -> skilltest-pytest
-#   npm       : @skill-test/cli-<os>-<arch> (x4) -> @skill-test/sdk -> @skill-test/vitest
+#   npm       : @skill-test/cli-<os>-<arch> (x6) -> @skill-test/sdk -> @skill-test/vitest
 #
 # The SDKs bundle the CLI so `pip install skilltest-sdk` / `pnpm add @skill-test/sdk`
 # need no separate binary install: the `binaries` job builds the CLI for each
@@ -55,13 +55,17 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Both macOS targets build on the arm runner; x86_64 cross-compiles via
-          # `--target`. The Intel runner (macos-13) queued unreliably and blocked
-          # the PyPI/npm publish (these jobs `needs: binaries`).
-          - { target: x86_64-unknown-linux-gnu, os: ubuntu-latest }
-          - { target: aarch64-unknown-linux-gnu, os: ubuntu-24.04-arm }
-          - { target: x86_64-apple-darwin, os: macos-14 }
-          - { target: aarch64-apple-darwin, os: macos-14 }
+          # release-platforms.toml's platforms, one per line; the release-target
+          # gate holds this list to it. Both macOS targets build on the arm
+          # runner; x86_64 cross-compiles via `--target`. The Intel runner
+          # (macos-13) queued unreliably and blocked the PyPI/npm publish (these
+          # jobs `needs: binaries`). Each Windows target builds natively.
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-latest, bin: skilltest }
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-24.04-arm, bin: skilltest }
+          - { target: x86_64-apple-darwin, os: macos-14, bin: skilltest }
+          - { target: aarch64-apple-darwin, os: macos-14, bin: skilltest }
+          - { target: x86_64-pc-windows-msvc, os: windows-latest, bin: skilltest.exe }
+          - { target: aarch64-pc-windows-msvc, os: windows-11-arm, bin: skilltest.exe }
     steps:
       - uses: actions/checkout@v4
 
@@ -81,7 +85,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: skilltest-${{ matrix.target }}
-          path: target/${{ matrix.target }}/release/skilltest
+          path: target/${{ matrix.target }}/release/${{ matrix.bin }}
           if-no-files-found: error
 
   crates:
@@ -166,7 +170,7 @@ jobs:
 
           # skilltest-sdk: a platform wheel per target (binary bundled) plus a
           # pure wheel + sdist fallback. build-python-dist.sh reads the binaries
-          # from artifacts/skilltest-<target>/skilltest.
+          # from artifacts/skilltest-<target>/skilltest (skilltest.exe on Windows).
           sdk_version=$(pyproject_version sdks/python)
           if on_pypi skilltest-sdk "$sdk_version"; then
             echo "skip: skilltest-sdk $sdk_version already on PyPI"
@@ -231,8 +235,12 @@ jobs:
           # optionalDependencies pin these exact versions (pnpm rewrites the
           # `workspace:*` specifiers on publish).
           for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu \
-                        x86_64-apple-darwin aarch64-apple-darwin; do
-            binary="artifacts/skilltest-$target/skilltest"
+                        x86_64-apple-darwin aarch64-apple-darwin \
+                        x86_64-pc-windows-msvc aarch64-pc-windows-msvc; do
+            case "$target" in
+              *-windows-*) binary="artifacts/skilltest-$target/skilltest.exe" ;;
+              *) binary="artifacts/skilltest-$target/skilltest" ;;
+            esac
             if [ ! -f "$binary" ]; then
               echo "notice: no binary for $target — skipping its package"
               continue
@@ -267,3 +275,61 @@ jobs:
 
           publish_pkg sdks/typescript @skill-test/sdk
           publish_pkg plugins/vitest @skill-test/vitest
+
+  # Release-time install proof for the Windows platforms: it proves what a
+  # consumer installs from the registries, so it runs only when a release is cut
+  # (each SDK's scripts/verify[-_]bundled.* states what passing means). The
+  # matrix is release-platforms.toml's Windows platforms; the release-target
+  # gate holds it to that file.
+  verify-windows:
+    name: verify ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    needs: [pypi, npm]
+    if: github.repository == 'nickderobertis/skilltest' && github.ref_name != 'v0.0.0'
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-pc-windows-msvc, os: windows-latest, bin: skilltest.exe }
+          - { target: aarch64-pc-windows-msvc, os: windows-11-arm, bin: skilltest.exe }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Install the published skilltest-sdk and run its bundled CLI
+        run: |
+          set -euo pipefail
+          version="$(grep -E '^version *= *"' sdks/python/pyproject.toml | head -1 | sed -E 's/^version *= *"([^"]+)".*/\1/')"
+          uv venv --python 3.12 consumer-py
+          # A fresh upload can take a minute to reach the index; retry, then fail.
+          for i in $(seq 1 10); do
+            uv pip install --python consumer-py/Scripts/python.exe --refresh "skilltest-sdk==$version" && break
+            [ "$i" -eq 10 ] && { echo "error: skilltest-sdk==$version did not install from PyPI" >&2; exit 1; }
+            echo "waiting for skilltest-sdk==$version on PyPI ($i)…"; sleep 30
+          done
+          consumer-py/Scripts/python.exe sdks/python/scripts/verify_bundled.py "$version" tests/fixtures/smoke/greeter
+
+      - name: Install the published @skill-test/sdk and run its bundled CLI
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./sdks/typescript/package.json').version")"
+          mkdir consumer-npm
+          cd consumer-npm
+          npm init -y >/dev/null
+          for i in $(seq 1 10); do
+            npm install --no-audit --no-fund "@skill-test/sdk@$version" && break
+            [ "$i" -eq 10 ] && { echo "error: @skill-test/sdk@$version did not install from npm" >&2; exit 1; }
+            echo "waiting for @skill-test/sdk@$version on npm ($i)…"; sleep 30
+          done
+          node ../sdks/typescript/scripts/verify-bundled.mjs "$version" ../tests/fixtures/smoke/greeter
