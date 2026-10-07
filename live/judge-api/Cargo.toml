@@ -1,0 +1,18 @@
+[package]
+name = "skilltest-live-judge-api"
+description = "Live suite: the direct-API judge against the real Anthropic and OpenAI APIs."
+# Test-only crate: never published. Its suite is `#[ignore]`d so the normal build
+# still compiles it while only `just test-judge-api` (CI's e2e-judge-api) runs it.
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+
+[dev-dependencies]
+skilltest-core = { workspace = true }

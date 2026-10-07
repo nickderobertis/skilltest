@@ -9,7 +9,7 @@
 
 use std::path::PathBuf;
 
-// llmlint: ignore-block[code_lands_in_the_domain_that_owns_it] Reading cross-language files from the CLI project has precedent: the contract check (`assert_schema_matches_golden` in tests/e2e.rs) already reads `schemas/` from here. The pin these manifests restate is the oneharness the CLI's provider drives, so the CLI project owns the reconciliation.
+// llmlint: ignore-block[code_lands_in_the_domain_that_owns_it] Reading cross-language files from the CLI's e2e project has precedent: the contract check (`assert_schema_matches_golden` in tests/e2e.rs) already reads `schemas/` from here. The pin these manifests restate is the oneharness the CLI's provider drives, so the CLI's test project owns the reconciliation.
 fn repo_file(rel: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
@@ -87,7 +87,8 @@ fn documented_oneharness_version_matches_the_installer_pin() {
     // it — so an unrelated historical mention cannot satisfy the check.
     for (doc, anchor) in [
         (
-            "AGENTS.md",
+            // The provider-boundary notes live with the provider's crate.
+            "crates/skilltest-core/AGENTS.md",
             "[`oneharness`](https://github.com/nickderobertis/oneharness) **v",
         ),
         ("README.md", "the default **oneharness** provider (v"),

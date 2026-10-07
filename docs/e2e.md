@@ -11,7 +11,7 @@ mirroring the live checks in
 
 ```bash
 just install-oneharness          # prebuilt oneharness on PATH (checksum-verified)
-just test-live                   # deep claude-code suite (crates/skilltest-cli/tests/live.rs)
+just test-live                   # deep claude-code suite (live/claude/tests/live.rs)
 just test-harness claude-code    # generic per-harness smoke (scripts/e2e-harness.sh)
 just test-harness goose          # any harness id; skips loudly if it can't run here
 ```
@@ -137,8 +137,17 @@ see the message itself rather than any harness's wrapper noise.
 2. **Config.** Confirm `scripts/e2e-lib.sh` has the harness in
    `e2e_harness_config` with the right model / auth env / extra env. When
    oneharness can carry the skill to it, set `H_DRIVABLE=1` and drop `H_BLOCKED`.
-3. **Validate locally:** `just test-harness <id>` (it builds the CLI, drives the
+3. **Project.** Copy a sibling `live/harness/<id>/` (its `project.json` named
+   `skilltest-live-harness-<id>`, tagged `type:live`, with the fixed `live`
+   command, and its `AGENTS.md`). The `type:live` tag keeps it out of `just check`.
+4. **Validate locally:** `just test-harness <id>` (it builds the CLI, drives the
    harness, asserts the report).
-4. **CI.** Copy `.github/workflows/e2e-claude.yml` to `e2e-<id>.yml`, swap the
+5. **CI.** Copy `.github/workflows/e2e-claude.yml` to `e2e-<id>.yml`, swap the
    secret name, the install step (`oneharness list` shows each `install_hint`),
-   and the run step (`just test-harness <id>`). Keep the `if:` repo+fork gate.
+   and the run step (`just test-harness <id>`). Keep the `if:` repo+fork gate,
+   the credential fail-fast and the `workflow_call`/`workflow_dispatch` triggers
+   (never `pull_request`). Then add a `live-<id>` job calling it to `ci.yml` and
+   add that job to the `release` job's `needs` — `just workflows-check` treats
+   every `e2e-*.yml` as a live suite and fails until the new one runs at
+   merge-to-main and gates the release, and until its `just test-harness <id>`
+   names an existing `live/harness/<id>` project.

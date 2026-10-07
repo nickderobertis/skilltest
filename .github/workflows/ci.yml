@@ -1,13 +1,9 @@
-# Prove the artifact from a clean checkout: bootstrap, then the full gate.
-#
-# skilltest ships a cross-platform CLI plus Python and TypeScript SDKs and
-# test-framework packages, so the matrix covers Linux and macOS. Each job
-# installs only what `just bootstrap` + `just check` need — Rust (+ nextest +
-# llvm-cov for the coverage gate), uv, and pnpm/Node — then runs `just
-# bootstrap` and `just check` (format, lint, type check, unit, e2e, and the 95%
-# Rust line-coverage gate). The gate job is named `check`, so its required
-# status contexts are `check (ubuntu-latest)` and `check (macos-latest)`. See
-# references/ci.md.
+# The gate, from a clean checkout: `just bootstrap`, then `just check` at the
+# tier the event is for — the affected tier on a pull request (the required
+# `check (ubuntu-latest)`/`check (macos-latest)` contexts), the full sweep plus
+# every live suite on a push to main, ahead of the release job. The routing and
+# why it is placed so: AGENTS.md "Commits, releases, and merging"; it is proven
+# by `just workflows-check`.
 
 name: ci
 
@@ -16,12 +12,23 @@ on:
     branches: [main]
   pull_request:
 
+# Least privilege: read-only by default; only the release job widens it.
+permissions:
+  contents: read
+
+# A superseded PR run is cancelled. Runs on main queue instead: cancelling one
+# mid-release could interrupt semantic-release between its commit and its tag.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   check:
+    # Every pull request (the required contexts), and every push to main except
+    # the release bot's own version-bump commit.
+    if: >-
+      github.event_name == 'pull_request' ||
+      !startsWith(github.event.head_commit.message, 'chore(release):')
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -30,17 +37,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # nx affected diffs against a base ref; fetch history so it can.
+          # The affected tier resolves its merge base from history; fetch it all.
           fetch-depth: 0
 
       - name: Install just
         uses: extractions/setup-just@v2
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust toolchain (pinned in rust-toolchain.toml)
+        uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          # llvm-tools is required by cargo-llvm-cov for the coverage gate.
-          components: clippy, rustfmt, llvm-tools
+          # Channel, components and targets come from rust-toolchain.toml. Turn
+          # off this action's own cache (Swatinem/rust-cache runs where wanted)
+          # and its default RUSTFLAGS="-D warnings", which would change builds.
+          cache: false
+          rustflags: ""
 
       - name: Install cargo-nextest and cargo-llvm-cov
         uses: taiki-e/install-action@v2
@@ -65,19 +75,106 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
 
-      # Derive the base/head SHAs nx uses to compute the affected project set
-      # (last successful run on push, the PR base on pull_request).
-      - name: Derive nx affected SHAs
+      # Derive the PR's merge base EXPLICITLY and export it as NX_BASE, which
+      # `just check` validates (a plain ref/SHA that resolves, else it fails
+      # closed) — never Nx's implicit default base.
+      - name: Derive the affected tier's base (NX_BASE)
+        if: github.event_name == 'pull_request'
         uses: nrwl/nx-set-shas@v4
 
       - name: Bootstrap
         run: just bootstrap
 
-      # On a PR, gate only the affected projects (vs the PR base); on push to
-      # main, nx-set-shas points at the last green commit. `check-all` (run-many)
-      # remains available locally to force every project.
-      - name: Check
-        run: just check
+      - name: Check (affected tier on a PR, full sweep at merge-to-main)
+        env:
+          TIER: ${{ github.event_name == 'push' && 'all' || 'affected' }}
+        run: just check "$TIER"
+
+  # One job per live suite; each workflow keeps its own credential fail-fast and
+  # fork guard.
+  live-claude:
+    if: >-
+      github.event_name == 'push' &&
+      !startsWith(github.event.head_commit.message, 'chore(release):')
+    uses: ./.github/workflows/e2e-claude.yml
+    secrets: inherit
+
+  live-codex:
+    if: >-
+      github.event_name == 'push' &&
+      !startsWith(github.event.head_commit.message, 'chore(release):')
+    uses: ./.github/workflows/e2e-codex.yml
+    secrets: inherit
+
+  live-copilot:
+    if: >-
+      github.event_name == 'push' &&
+      !startsWith(github.event.head_commit.message, 'chore(release):')
+    uses: ./.github/workflows/e2e-copilot.yml
+    secrets: inherit
+
+  live-crush:
+    if: >-
+      github.event_name == 'push' &&
+      !startsWith(github.event.head_commit.message, 'chore(release):')
+    uses: ./.github/workflows/e2e-crush.yml
+    secrets: inherit
+
+  live-cursor:
+    if: >-
+      github.event_name == 'push' &&
+      !startsWith(github.event.head_commit.message, 'chore(release):')
+    uses: ./.github/workflows/e2e-cursor.yml
+    secrets: inherit
+
+  live-goose:
+    if: >-
+      github.event_name == 'push' &&
+      !startsWith(github.event.head_commit.message, 'chore(release):')
+    uses: ./.github/workflows/e2e-goose.yml
+    secrets: inherit
+
+  live-opencode:
+    if: >-
+      github.event_name == 'push' &&
+      !startsWith(github.event.head_commit.message, 'chore(release):')
+    uses: ./.github/workflows/e2e-opencode.yml
+    secrets: inherit
+
+  live-qwen:
+    if: >-
+      github.event_name == 'push' &&
+      !startsWith(github.event.head_commit.message, 'chore(release):')
+    uses: ./.github/workflows/e2e-qwen.yml
+    secrets: inherit
+
+  live-judge-api:
+    if: >-
+      github.event_name == 'push' &&
+      !startsWith(github.event.head_commit.message, 'chore(release):')
+    uses: ./.github/workflows/e2e-judge-api.yml
+    secrets: inherit
+
+  # The called workflow repeats the repository and `chore(release):` guards.
+  release:
+    needs:
+      - check
+      - live-claude
+      - live-codex
+      - live-copilot
+      - live-crush
+      - live-cursor
+      - live-goose
+      - live-opencode
+      - live-qwen
+      - live-judge-api
+    if: >-
+      github.event_name == 'push' &&
+      !startsWith(github.event.head_commit.message, 'chore(release):')
+    permissions:
+      contents: write
+    uses: ./.github/workflows/semantic-release.yml
+    secrets: inherit
 
   llmlint:
     if: github.event_name == 'pull_request'
@@ -95,7 +192,9 @@ jobs:
       # check against the PR base — before anything is judged.
       - name: Validate llmlint config
         run: just lint-llm-config --diff-base origin/main
-      - name: Lint changed files
+      # Fail fast, before the harness is installed or anything is judged, when
+      # its credential is missing — never a green no-op.
+      - name: Require the harness credential
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
@@ -103,4 +202,24 @@ jobs:
             echo "::error::llmlint needs OPENAI_API_KEY for the Codex harness" >&2
             exit 1
           fi
-          just lint-llm-diff origin/main
+      # setup-llmlint.sh installs llmlint + oneharness only, NOT a harness. The
+      # fallback `oneharness.toml` names codex first, and OPENAI_API_KEY (checked
+      # above) is its credential, so install codex and prove it runs before the
+      # lint step — without a runnable harness llmlint would judge nothing.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install and verify the codex harness
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          npm install -g @openai/codex
+          codex --version
+          # codex reads ~/.codex/auth.json, not OPENAI_API_KEY, for its API calls
+          # (see e2e-codex.yml); `login --with-api-key` writes it from stdin.
+          printenv OPENAI_API_KEY | codex login --with-api-key
+          codex login status
+      - name: Lint changed files
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: just lint-llm-diff origin/main

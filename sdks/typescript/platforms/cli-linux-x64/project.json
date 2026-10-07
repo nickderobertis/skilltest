@@ -1,0 +1,7 @@
+{
+  "$schema": "../../../../node_modules/nx/schemas/project-schema.json",
+  "name": "@skill-test/cli-linux-x64",
+  "projectType": "library",
+  "tags": ["type:carrier", "lang:typescript"],
+  "targets": {}
+}

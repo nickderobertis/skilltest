@@ -1,0 +1,19 @@
+[package]
+name = "skilltest-live-claude"
+description = "Live suite: the built `skilltest` against real oneharness + claude-code."
+# Test-only crate: never published. Its one suite is `#[ignore]`d so the normal
+# build still compiles it while only `just test-live` (CI's e2e-claude) runs it.
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+
+[dev-dependencies]
+skilltest-core = { workspace = true }
+serde_json = { workspace = true }

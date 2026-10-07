@@ -2,7 +2,8 @@
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
   "name": "@skill-test/sdk",
   "projectType": "library",
-  "implicitDependencies": ["skilltest-cli"],
+  "tags": ["type:sdk", "lang:typescript"],
+  "implicitDependencies": ["skilltest-cli", "skilltest-contract"],
   "targets": {
     "build": {
       "executor": "nx:run-commands",

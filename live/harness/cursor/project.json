@@ -1,0 +1,29 @@
+{
+  "$schema": "../../../node_modules/nx/schemas/project-schema.json",
+  "name": "skilltest-live-harness-cursor",
+  "projectType": "application",
+  "tags": ["type:live", "lang:bash"],
+  "implicitDependencies": ["skilltest-cli"],
+  "namedInputs": {
+    "default": [
+      "{projectRoot}/**/*",
+      "sharedGlobals",
+      "{workspaceRoot}/scripts/e2e-harness.sh",
+      "{workspaceRoot}/scripts/e2e-lib.sh"
+    ]
+  },
+  "targets": {
+    "live": {
+      "command": "bash scripts/e2e-harness.sh cursor",
+      "dependsOn": [
+        {
+          "projects": ["skilltest-cli"],
+          "target": "build"
+        }
+      ]
+    },
+    "lint": {
+      "command": "uvx --from shellcheck-py==0.11.0.1 shellcheck -x scripts/e2e-harness.sh scripts/e2e-lib.sh"
+    }
+  }
+}

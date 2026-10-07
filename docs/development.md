@@ -7,7 +7,8 @@ test-framework package (Python: `sdks/python` + `plugins/pytest`; TypeScript:
 `sdks/typescript` + `plugins/vitest` in a pnpm workspace rooted at the repo), so
 `just` needs three toolchains on `PATH`:
 
-- **Rust** (stable) with `cargo`, plus [`cargo-nextest`](https://nexte.st).
+- **Rust** via `rustup`, which installs the toolchain `rust-toolchain.toml` pins
+  (run `rustup toolchain install` once), plus [`cargo-nextest`](https://nexte.st).
 - [**uv**](https://docs.astral.sh/uv/) for the Python packages.
 - **Node** 22+ and [**pnpm**](https://pnpm.io) for the TypeScript packages.
 
@@ -18,25 +19,38 @@ Linux and macOS runners carry.
 [`just`](https://github.com/casey/just) drives everything, as a thin wrapper
 over [nx](https://nx.dev): each package has a `project.json` with its targets,
 and the default recipes run only the projects **affected** by your change
-(`just check-all` forces all). nx itself is installed by `just bootstrap`.
+(`just check all` runs every project). nx itself is installed by `just bootstrap`.
 
 ## The loop
 
 ```bash
 just bootstrap   # pnpm install (nx + TS workspace) + cargo fetch + uv sync — works from a clean clone
-just check       # contract drift + release-target gates + the full gate (format, lint, types, unit + e2e) over affected projects
-just check-all   # the same gate across every project
+just check       # the affected tier: format, lint, types, unit + e2e over the projects your change reaches, plus the workspace gates
+just check all   # the broader tier: the same over every project (what CI runs at merge-to-main)
 just format      # auto-format all three stacks
 just test        # fast Rust unit tests only
 just test-e2e    # the cross-language e2e suites (nx builds prerequisites first)
 just release-targets-check # release-targets.toml vs publish.yml + the release probe's offline tests
 just gen-contract # regenerate schemas/ + the generated SDK models from the Rust types
 just graph       # open the interactive nx project graph
-just upgrade     # bump deps across all stacks, then re-run check-all
+just upgrade     # bump deps across all stacks, then re-run `just check all`
 ```
 
 `just check` is the single source of truth and is exactly what CI runs after a
-clean `just bootstrap` (CI uses `nrwl/nx-set-shas` to pick the affected base).
+clean `just bootstrap`.
+
+**The affected tier's base.** `scripts/nx-base.sh` derives it: `NX_BASE` when it
+is a plain ref name or SHA that resolves (CI exports it with `nrwl/nx-set-shas`),
+else the merge base of `HEAD` with `origin/main`; any other `NX_BASE` (a
+revision expression like `HEAD~1` included) fails the recipe before any gate
+runs, naming `NX_BASE`. Set `NX_BASE=<ref>` to diff against something else.
+
+**The workspace-level gates** run on both tiers because they span every stack:
+contract drift (`just contract-check`), release targets (`just
+release-targets-check`), module boundaries (`just boundaries-check`), workflow
+routing and toolchain targets (`just workflows-check`), the base derivation's
+own test (`just base-check`), and the Rust coverage floor (`just coverage`).
+Each is also a recipe of its own for iterating.
 It is strict: `clippy`, `ruff`, `ty`, `biome`, and `tsc` all fail the build on
 findings.
 
@@ -57,14 +71,14 @@ skilltest run cases/greet.yaml --provider oneharness -p claude-code -m claude-op
 ## Live tests against real oneharness
 
 The gate is deterministic (fake provider), so real model calls are never in it.
-The live suite (`crates/skilltest-cli/tests/live.rs`) drives the skilltest CLI
+The live suite (`live/claude/tests/live.rs`, nx project `skilltest-live-claude`) drives the skilltest CLI
 through **real** oneharness + a real harness, and is `#[ignore]`d so it only runs
 when you ask. Build [oneharness](https://github.com/nickderobertis/oneharness),
 then:
 
 ```bash
 SKILLTEST_ONEHARNESS_BIN=/path/to/oneharness/target/debug/oneharness \
-  cargo test -p skilltest-cli --test live -- --ignored
+  just test-live   # nx run skilltest-live-claude:live (builds the CLI first)
 ```
 
 It uses near-deterministic fixtures (`tests/fixtures/live/`) — a skill that always

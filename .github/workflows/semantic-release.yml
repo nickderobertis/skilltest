@@ -1,4 +1,9 @@
-# Lockstep versioning. On merge to main, semantic-release reads the conventional
+# Lockstep versioning. Called by ci.yml on every ordinary push to main, and only
+# once that commit's broader tier has passed: the full sweep (`just check all`)
+# and every live e2e suite. A red sweep or live suite therefore cuts no release.
+# Not triggered on its own, so nothing can release an unswept commit.
+#
+# On merge to main, semantic-release reads the conventional
 # commits, computes the next 0.x version, writes it into every manifest + lockfile
 # (scripts/set-version.sh) and CHANGELOG.md, commits `chore(release): X.Y.Z` to main,
 # and pushes tag vX.Y.Z. That PAT-pushed tag then triggers publish.yml (registries)
@@ -6,14 +11,14 @@
 #
 # Uses RELEASE_PAT (a real PAT, sourced from the GH_TOKEN gh-secrets item) — the
 # default GITHUB_TOKEN can neither push to protected main nor trigger the downstream
-# tag workflows. The `chore(release):` guard stops this workflow from re-running on
-# its own bump commit (no [skip ci], so the tag workflows are never muzzled).
+# tag workflows. The `chore(release):` guard (here and on ci.yml's calling job)
+# stops this from re-running on its own bump commit (no [skip ci], so the tag
+# workflows are never muzzled).
 
 name: semantic-release
 
 on:
-  push:
-    branches: [main]
+  workflow_call:
 
 concurrency:
   group: semantic-release
@@ -34,8 +39,14 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.RELEASE_PAT }}
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust toolchain (pinned in rust-toolchain.toml)
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          # Channel, components and targets come from rust-toolchain.toml. Turn
+          # off this action's own cache (Swatinem/rust-cache runs where wanted)
+          # and its default RUSTFLAGS="-D warnings", which would change builds.
+          cache: false
+          rustflags: ""
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5

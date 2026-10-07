@@ -8,6 +8,8 @@
 
 #![cfg(unix)]
 
+mod common;
+
 use std::io::Write as _;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::PathBuf;
@@ -17,14 +19,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use serde_json::Value;
 
 fn skilltest() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_skilltest"))
+    common::built_bin("skilltest")
 }
 
 fn fake_provider() -> PathBuf {
-    skilltest()
-        .parent()
-        .expect("binary has a parent dir")
-        .join("skilltest-fake-provider")
+    common::built_bin("skilltest-fake-provider")
 }
 
 fn fixtures() -> PathBuf {
@@ -273,8 +272,8 @@ fn json_stream_provider_error_emits_a_classified_terminal_line() {
 
 #[test]
 fn unclassified_provider_error_prints_generic_hint() {
-    // A provider command that simply crashes yields an *unclassified* provider
-    // error, which prints the generic "install / pass --provider" hint.
+    // A provider command that cannot even start yields an *unclassified*
+    // provider error, which prints the generic "install / pass --provider" hint.
     let out = Command::new(skilltest())
         .arg("run")
         .arg(fixtures().join("cases/greet_pass.yaml"))
@@ -289,7 +288,6 @@ fn unclassified_provider_error_prints_generic_hint() {
 
 #[test]
 fn explicit_config_flag_is_loaded() {
-    // `--config <path>` takes the explicit-load branch (vs the default lookup).
     let dir = temp_dir("config");
     let cfg = dir.join("custom.yaml");
     std::fs::write(
@@ -333,7 +331,6 @@ fn explicit_config_missing_file_exits_two() {
 
 #[test]
 fn run_human_format_prints_a_summary() {
-    // The default (human) format prints the PASS line and the run tally.
     let out = run_passing_case(&[]);
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -376,7 +373,7 @@ fn init_into_a_path_under_a_file_is_an_io_error() {
     let dir = temp_dir("init-io");
     let blocker = dir.join("blocker");
     std::fs::write(&blocker, "i am a file, not a dir").unwrap();
-    let target = blocker.join("nested"); // parent is a file
+    let target = blocker.join("nested");
     let out = Command::new(skilltest())
         .arg("init")
         .arg(&target)

@@ -1,0 +1,19 @@
+[package]
+name = "skilltest-cli-e2e"
+description = "End-to-end suites that drive the built `skilltest` binary as a subprocess."
+# Test-only crate: never published; it exists so the binary e2e tier is an nx
+# project of its own whose `test` target depends on `skilltest-cli:build`.
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+
+[dev-dependencies]
+skilltest-core = { workspace = true }
+serde_json = { workspace = true }

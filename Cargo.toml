@@ -1,6 +1,14 @@
 [workspace]
 resolver = "2"
-members = ["crates/skilltest-core", "crates/skilltest-cli"]
+members = [
+  "crates/skilltest-core",
+  "crates/skilltest-cli",
+  # Test-only crates (publish = false): the binary e2e tier and the live suites,
+  # each an nx project of its own (see AGENTS.md "Project graph").
+  "crates/skilltest-cli-e2e",
+  "live/claude",
+  "live/judge-api",
+]
 
 [workspace.package]
 version = "0.12.1"

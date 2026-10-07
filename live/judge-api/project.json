@@ -1,0 +1,21 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "skilltest-live-judge-api",
+  "projectType": "application",
+  "tags": ["type:live", "lang:rust"],
+  "implicitDependencies": ["skilltest-core"],
+  "targets": {
+    "live": {
+      "command": "cargo test -p skilltest-live-judge-api --test live_api_judge -- --ignored --nocapture"
+    },
+    "lint": {
+      "command": "cargo clippy -p skilltest-live-judge-api --all-targets -- -D warnings"
+    },
+    "format-check": {
+      "command": "cargo fmt -p skilltest-live-judge-api --check"
+    },
+    "format": {
+      "command": "cargo fmt -p skilltest-live-judge-api"
+    }
+  }
+}

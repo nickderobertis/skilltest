@@ -2,6 +2,7 @@
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
   "name": "@skill-test/vitest",
   "projectType": "library",
+  "tags": ["type:plugin", "lang:typescript"],
   "implicitDependencies": ["@skill-test/sdk"],
   "targets": {
     "build": {

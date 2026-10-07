@@ -4,7 +4,7 @@
 //! covering the protocol's happy paths *and* its malformed-input handling, which
 //! the framework-level e2e tests don't reach directly.
 
-#![cfg(feature = "fake-provider")]
+mod common;
 
 use std::io::Write as _;
 use std::path::PathBuf;
@@ -13,10 +13,7 @@ use std::process::{Command, Output, Stdio};
 use serde_json::{json, Value};
 
 fn fake_provider() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_skilltest"))
-        .parent()
-        .expect("binary has a parent dir")
-        .join("skilltest-fake-provider")
+    common::built_bin("skilltest-fake-provider")
 }
 
 /// Feed `input` to the fake provider on stdin and capture its output.
@@ -108,14 +105,12 @@ fn judge_boolean_requires_all_backtick_substrings() {
         { "role": "user", "content": "hi" },
         { "role": "assistant", "content": "Hello, Dr. Smith!" },
     ]);
-    // Both required substrings present -> true.
     let present = json!({
         "op": "judge", "kind": "boolean",
         "criterion": "greets `Dr. Smith` and says `Hello`",
         "messages": messages,
     });
     assert_eq!(response(&present.to_string())["value"], Value::Bool(true));
-    // A required substring missing -> false.
     let missing = json!({
         "op": "judge", "kind": "boolean",
         "criterion": "mentions `appointment`",

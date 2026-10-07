@@ -1,0 +1,21 @@
+# The one Rust toolchain pin for this workspace: local builds, `just check`, and
+# every workflow that installs Rust read this file (rustup honours it; CI installs
+# it with `actions-rust-lang/setup-rust-toolchain`, which reads it when given no
+# toolchain), so local and CI cannot drift. Bump `channel` deliberately — e.g. when
+# a dependency raises its MSRV past it — and let `just check` prove the bump.
+[toolchain]
+channel = "1.99.0"
+# clippy + rustfmt are gate steps; llvm-tools backs `cargo llvm-cov` (`just coverage`).
+components = ["clippy", "rustfmt", "llvm-tools"]
+# The release targets release.yml / publish.yml / bundle-smoke.yml /
+# windows-build.yml build (release-platforms.toml's platforms); `just
+# workflows-check` fails when this list and those build matrices differ.
+targets = [
+  "x86_64-unknown-linux-gnu",
+  "aarch64-unknown-linux-gnu",
+  "x86_64-apple-darwin",
+  "aarch64-apple-darwin",
+  "x86_64-pc-windows-msvc",
+  "aarch64-pc-windows-msvc",
+]
+profile = "minimal"

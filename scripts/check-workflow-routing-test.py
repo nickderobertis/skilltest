@@ -1,0 +1,206 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["pyyaml==6.0.2"]
+# ///
+# llmlint: ignore-file[new_code_lands_in_a_project] tests scripts/check-workflow-routing.py, a repo-level gate that belongs to no Nx project; run workspace-wide from `just workflows-check` (AGENTS.md: scripts/* are orchestrator-independent glue).
+"""Test of scripts/check-workflow-routing.py, driven as a subprocess.
+
+The checker's own mutations prove its routing assertions can fail; this proves
+its command boundary: green on a copy of the committed workflows, exit 1 naming
+the drift when a copy breaks the routing, reaches Nx before installing the
+workspace, or the toolchain falls behind a build matrix, and exit 2 on input it
+cannot model — a malformed workflow, a malformed
+`if:` expression, unreadable TOML — or an unknown argument. Quiet on success,
+one line.
+"""
+
+from __future__ import annotations
+
+import shutil
+import subprocess
+import sys
+import tempfile
+from collections.abc import Callable
+from pathlib import Path
+from typing import NamedTuple
+
+ROOT = Path(__file__).resolve().parent.parent
+CHECKER = ROOT / "scripts" / "check-workflow-routing.py"
+FIX = "fix scripts/check-workflow-routing.py (or this test, if the contract changed on purpose)"
+
+
+class Case(NamedTuple):
+    label: str
+    edit: Callable[[Path, Path], None]  # (workflows dir, toolchain file) -> None, edits the scratch copies
+    exit_code: int
+    needle: str
+    extra_args: tuple[str, ...] = ()
+
+
+def _replace(path: Path, old: str, new: str) -> None:
+    text = path.read_text()
+    if old not in text:
+        raise SystemExit(
+            f"check-workflow-routing-test: {path.name} no longer contains {old!r}; update this test's edit"
+        )
+    path.write_text(text.replace(old, new, 1))
+
+
+def _unchanged(_wf: Path, _tc: Path) -> None:
+    return None
+
+
+CASES = (
+    Case("the committed workflows", _unchanged, 0, "route as the release model requires"),
+    Case("an unknown argument", _unchanged, 2, "unrecognized arguments: --bogus", ("--bogus",)),
+    Case(
+        "a live suite triggered on pull_request",
+        lambda wf, _tc: _replace(wf / "e2e-claude.yml", "  workflow_call:\n", "  workflow_call:\n  pull_request:\n"),
+        1,
+        "live suite e2e-claude.yml is triggered",
+    ),
+    Case(
+        "the toolchain missing a release target",
+        lambda _wf, tc: _replace(tc, '  "x86_64-apple-darwin",\n', ""),
+        1,
+        "x86_64-apple-darwin is built by",
+    ),
+    Case(
+        "a workflow whose jobs are a list",
+        lambda wf, _tc: (wf / "notignored.yml").write_text("on: pull_request\njobs: [a, b]\n"),
+        2,
+        "notignored.yml: jobs must be a mapping",
+    ),
+    Case(
+        "an if: with an unclosed parenthesis",
+        lambda wf, _tc: _replace(wf / "pr-title.yml", "if: github.repository ==", "if: (github.repository =="),
+        2,
+        "expected ')'",
+    ),
+    Case(
+        "an if: with arguments missing their comma",
+        lambda wf, _tc: _replace(wf / "pr-title.yml", "if: github.repository ==", "if: startsWith('a' 'b') ||"),
+        2,
+        "expected ')'",
+    ),
+    Case(
+        "an if: calling an unsupported function",
+        lambda wf, _tc: _replace(wf / "pr-title.yml", "if: github.repository ==", "if: contains(github.ref) ||"),
+        2,
+        "unsupported function contains()",
+    ),
+    Case("an unreadable toolchain", lambda _wf, tc: tc.write_text("[toolchain\n"), 2, "cannot model the workflows"),
+    Case(
+        "a trigger filter the model does not simulate",
+        lambda wf, _tc: _replace(
+            wf / "ci.yml", "    branches: [main]\n", "    branches: [main]\n    paths: [src/**]\n"
+        ),
+        2,
+        "on.push.paths is not a filter this model simulates",
+    ),
+    Case(
+        "a negated path filter the model does not simulate",
+        lambda wf, _tc: _replace(wf / "windows-build.yml", '      - "crates/**"\n', '      - "!docs/**"\n'),
+        2,
+        "on.pull_request.paths: a negated (`!`) pattern is not simulated",
+    ),
+    Case(
+        "a required context behind a path filter",
+        lambda wf, _tc: _replace(wf / "ci.yml", "  pull_request:\n", "  pull_request:\n    paths: [crates/**]\n"),
+        1,
+        "docs-only): required context `check (ubuntu-latest)` is not reported",
+    ),
+    Case(
+        "a matrix the model does not expand",
+        lambda wf, _tc: _replace(
+            wf / "ci.yml", "os: [ubuntu-latest, macos-latest]", "os: [ubuntu-latest]\n        rust: [a, b]"
+        ),
+        2,
+        "must be one axis or only `include` rows",
+    ),
+    Case(
+        "a workflow with a null job",
+        lambda wf, _tc: (wf / "notignored.yml").write_text("on: pull_request\njobs:\n  review:\n"),
+        2,
+        "notignored.yml: jobs.review is missing or null",
+    ),
+    Case(
+        "a workflow without jobs",
+        lambda wf, _tc: (wf / "notignored.yml").write_text("on: pull_request\n"),
+        2,
+        "notignored.yml: jobs is missing or null",
+    ),
+    Case(
+        "a live suite reaching nx before installing the workspace",
+        lambda wf, _tc: _replace(
+            wf / "e2e-goose.yml", "        run: just bootstrap-node\n", "        run: echo skipped\n"
+        ),
+        1,
+        "e2e-goose.yml:live runs `just test-harness`, which invokes nx, before installing pnpm",
+    ),
+    Case(
+        "a justfile with no nx recipe",
+        lambda _wf, tc: (tc.parent / "justfile").write_text("default:\n    @echo hi\n"),
+        2,
+        "no recipe invokes nx",
+        ("--justfile", "{tmp}/justfile"),
+    ),
+    Case(
+        "a harness lane with no live project",
+        lambda wf, _tc: _replace(wf / "e2e-codex.yml", "just test-harness codex", "just test-harness no-such-harness"),
+        1,
+        "live/harness/no-such-harness/project.json does not exist",
+    ),
+    Case(
+        "a job that tolerates its own failure",
+        lambda wf, _tc: _replace(
+            wf / "ci.yml",
+            "    runs-on: ${{ matrix.os }}\n",
+            "    runs-on: ${{ matrix.os }}\n    continue-on-error: true\n",
+        ),
+        2,
+        "jobs.check.continue-on-error is not simulated",
+    ),
+    Case(
+        "a matrix target that is not a string",
+        lambda wf, _tc: _replace(wf / "release.yml", "{ target: x86_64-unknown-linux-gnu,", "{ target: 42,"),
+        2,
+        "names a non-string matrix target 42",
+    ),
+    Case(
+        "a called workflow without workflow_call",
+        lambda wf, _tc: _replace(wf / "e2e-codex.yml", "  workflow_call:\n", ""),
+        2,
+        "calls e2e-codex.yml, which declares no workflow_call trigger",
+    ),
+)
+
+
+def run(case: Case, tmp: Path) -> subprocess.CompletedProcess[str]:
+    workflows, toolchain = tmp / "workflows", tmp / "rust-toolchain.toml"
+    shutil.copytree(ROOT / ".github" / "workflows", workflows)
+    shutil.copy(ROOT / "rust-toolchain.toml", toolchain)
+    case.edit(workflows, toolchain)
+    args = [sys.executable, str(CHECKER), "--workflows", str(workflows), "--toolchain", str(toolchain)]
+    extra = [a.replace("{tmp}", str(tmp)) for a in case.extra_args]
+    return subprocess.run([*args, *extra], capture_output=True, text=True, check=False)
+
+
+def main() -> None:
+    for case in CASES:
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                out = run(case, Path(tmp))
+        except OSError as exc:
+            sys.exit(f"check-workflow-routing-test: cannot stage {case.label}: {exc}; check that $TMPDIR is writable")
+        if out.returncode != case.exit_code or case.needle not in out.stdout + out.stderr:
+            sys.exit(
+                f"check-workflow-routing-test: {case.label}: expected exit {case.exit_code} naming {case.needle!r}, "
+                f"got exit {out.returncode}:\n{out.stdout}{out.stderr}\n{FIX}"
+            )
+    print(f"check-workflow-routing-test: {len(CASES)} cases (green, drift, unmodellable input) behave")
+
+
+if __name__ == "__main__":
+    main()

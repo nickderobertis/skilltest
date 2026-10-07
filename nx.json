@@ -9,13 +9,15 @@
       "{workspaceRoot}/Cargo.toml",
       "{workspaceRoot}/Cargo.lock",
       "{workspaceRoot}/rustfmt.toml",
+      "{workspaceRoot}/rust-toolchain.toml",
+      "{workspaceRoot}/.cargo/config.toml",
       "{workspaceRoot}/deny.toml",
       "{workspaceRoot}/nx.json",
       "{workspaceRoot}/biome.json",
       "{workspaceRoot}/pnpm-workspace.yaml",
       "{workspaceRoot}/pnpm-lock.yaml",
-      "{workspaceRoot}/schemas/**/*",
-      "{workspaceRoot}/tests/fixtures/**/*"
+      "{workspaceRoot}/tests/fixtures/**/*",
+      "!{workspaceRoot}/tests/fixtures/contract/**/*"
     ]
   },
   "targetDefaults": {
@@ -25,7 +27,7 @@
       "cache": false
     },
     "lint": {
-      "inputs": ["default"],
+      "inputs": ["default", "^default"],
       "cache": true
     },
     "format-check": {
@@ -36,17 +38,20 @@
       "cache": false
     },
     "typecheck": {
-      "inputs": ["default"],
+      "inputs": ["default", "^default"],
       "cache": true
     },
     "test": {
-      "inputs": ["default"],
+      "inputs": ["default", "^default"],
       "cache": true
     },
     "test-e2e": {
       "dependsOn": ["^build"],
-      "inputs": ["default"],
+      "inputs": ["default", "^default"],
       "cache": true
+    },
+    "live": {
+      "cache": false
     }
   }
 }

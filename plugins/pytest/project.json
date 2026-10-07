@@ -2,6 +2,7 @@
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
   "name": "skilltest-pytest",
   "projectType": "library",
+  "tags": ["type:plugin", "lang:python"],
   "implicitDependencies": ["skilltest-sdk"],
   "namedInputs": {
     "default": [

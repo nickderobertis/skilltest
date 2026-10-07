@@ -208,6 +208,9 @@ impl<'a> Runner<'a> {
     /// a simulated-user loop for multi-turn cases. Streams each turn's tool
     /// events to `on_event`; returns the transcript plus whether the sink asked
     /// to short-circuit.
+    // One over clippy's arg limit: `run_case_on`'s own inputs plus the mock set
+    // it builds and the usage totals this loop accumulates into. It is the one
+    // private call site's loop body, so a params struct would only rename them.
     #[allow(clippy::too_many_arguments)]
     fn converse(
         &self,

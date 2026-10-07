@@ -54,11 +54,13 @@ always replies "pong" and an `echo-ok` two-turn skill — kept *separate* from
 fake-provider cases. They are near-deterministic on purpose so a real judge has an
 unambiguous verdict.
 
-Exactly two suites may be `#[ignore]`, both because they need the `oneharness`
-binary on PATH (never to speed up the gate — split genuinely slow journeys into
-a target CI still runs instead): `live.rs` (real harness + model; `just
-test-live`) and `oneharness_integration.rs` (deterministic, credential-free —
-the `fake-claude.sh` shim executes the installed mock hook; `just
+Only two kinds of suite may be `#[ignore]` (never to speed up the gate — split
+genuinely slow journeys into a target CI still runs instead): the live projects'
+suites under `live/` (`live/claude/tests/live.rs`, `just test-live`;
+`live/judge-api/tests/live_api_judge.rs`, `just test-judge-api` — real harness,
+model or API), and `crates/skilltest-cli/tests/oneharness_integration.rs`
+(deterministic and credential-free, but it needs the `oneharness` binary on
+PATH — the `fake-claude.sh` shim executes the installed mock hook; `just
 test-oneharness`).
 
 When the JSON contract changes, run `just gen-contract` (the SDK models are

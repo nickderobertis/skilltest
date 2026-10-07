@@ -1,13 +1,13 @@
 //! Live end-to-end tests against **real** oneharness + a real harness
-//! (claude-code by default). These are the only `#[ignore]` tests in the repo
-//! (see `tests/AGENTS.md`): they make real model calls — money, network,
+//! (claude-code by default). Like every live suite they are `#[ignore]`d (see
+//! `tests/AGENTS.md`): they make real model calls — money, network,
 //! non-determinism — so they must never be in the deterministic gate.
 //!
 //! Run them explicitly, pointing at a built oneharness:
 //!
 //! ```bash
 //! SKILLTEST_ONEHARNESS_BIN=/path/to/oneharness \
-//!   cargo test -p skilltest-cli --test live -- --ignored
+//!   just test-live   # nx run skilltest-live-claude:live — builds the CLI first
 //! ```
 //!
 //! Knobs (all optional): `SKILLTEST_LIVE_PLATFORM` (default `claude-code`),
@@ -20,8 +20,24 @@ use std::process::{Command, Output};
 
 use serde_json::Value;
 
+/// The `skilltest` binary `skilltest-cli:build` produced. A crate other than the
+/// binary's own gets no `CARGO_BIN_EXE_*`, so resolve it beside this test
+/// executable (`<target>/<profile>/deps/..`), where cargo puts workspace binaries.
 fn skilltest() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_skilltest"))
+    let exe = std::env::current_exe().expect("the test executable has a path");
+    let path = exe
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("test executables live in <target>/<profile>/deps")
+        .join("skilltest");
+    assert!(
+        path.is_file(),
+        "{} is missing: build the CLI first (`cargo build -p skilltest-cli`, or run \
+         this suite through `just test-live`, whose nx target depends on \
+         `skilltest-cli:build`)",
+        path.display()
+    );
+    path
 }
 
 fn live_fixtures() -> PathBuf {
@@ -112,14 +128,11 @@ fn live_respond_and_judge_boolean_and_numeric() {
         .map(|m| m["content"].as_str().unwrap_or("").to_lowercase())
         .collect();
     assert!(assistant.contains("pong"), "assistant said: {assistant}");
-    // Both a boolean and a numeric eval ran and passed.
     assert_eq!(run["evals"][0]["detail"]["kind"], "boolean");
     assert_eq!(run["evals"][1]["detail"]["kind"], "numeric");
 
-    // Normalized usage flowed through: every claude-code call reports tokens
-    // and cost, so the run *and* the report summary must carry usage with
-    // input/output token counts. cost_usd is omitted on subscription auth, so
-    // we only require it to be a number when present.
+    // Every claude-code call reports token counts, so the run *and* the report
+    // summary must carry usage with input/output tokens.
     let usage = &run["usage"];
     assert!(usage.is_object(), "expected per-run usage; got {usage}");
     assert!(
@@ -170,11 +183,10 @@ fn live_multi_turn_drives_simulated_user() {
 #[test]
 #[ignore = "live: needs oneharness + a real harness; run with --ignored"]
 fn live_streaming_emits_ndjson_and_a_terminal_result() {
-    // Exercises the *real* `oneharness run --stream` wire (the
-    // `OneharnessProvider::run_streaming` path the deterministic gate can only
-    // reach via the buffered-replay default): the CLI must emit NDJSON and finish
-    // with a `result` line carrying the same kind of report the buffered format
-    // returns.
+    // The real `oneharness run --stream` wire against a real harness (the gate
+    // drives `OneharnessProvider::run_streaming` only through scripted fake
+    // oneharness binaries): the CLI must emit NDJSON and finish with a `result`
+    // line carrying the same kind of report the buffered format returns.
     let out = run_live_fmt("pong.yaml", "json-stream");
     assert!(
         out.status.code() == Some(0) || out.status.code() == Some(1),
@@ -216,13 +228,11 @@ fn live_streaming_emits_ndjson_and_a_terminal_result() {
     assert!(assistant.contains("pong"), "assistant said: {assistant}");
 }
 
-// ---------------------------------------------------------------------------
 // Tool mocking/spying against the REAL harness — the live drift alarm between
 // skilltest's mirrored decision engine (proven in the gate) and the hook-side
 // one inside oneharness. The toolrunner skill makes the model run one marked
 // shell command; the cases intercept or observe it. `ONEHARNESS_MODE=bypass`
 // lets the harness execute tools, exactly as a user configures approval.
-// ---------------------------------------------------------------------------
 
 #[test]
 #[ignore = "live: needs oneharness + a real harness; run with --ignored"]

@@ -26,6 +26,11 @@ permissions:
 
 jobs:
   visual-docs:
+    # Skip the release bot's `chore(release):` commit: its tree differs from the
+    # commit already checked only in version strings (gate a given commit once).
+    if: >-
+      github.event_name != 'push' ||
+      !startsWith(github.event.head_commit.message, 'chore(release):')
     uses: nickderobertis/screencomp/.github/workflows/visual-docs-reusable.yml@v0.4.2
     with:
       # Strict gate (the safe default): CI FAILS if the capture drifts from the
@@ -40,16 +45,18 @@ jobs:
       # The capture-command runs INSIDE this container (the reusable workflow's
       # default is a Playwright image for web apps). Ours needs Rust to build the
       # binaries, so pin a Rust image (it carries curl/git/tar via buildpack-deps).
-      # `rust:1-bookworm` tracks the latest stable 1.x (matching CI's
-      # `dtolnay/rust-toolchain@stable`), so `cargo build --locked` never trips a
-      # dependency's MSRV. The shots are deterministic SVGs (vendored font), so the
-      # image only has to build + render — the compiler version doesn't affect the
-      # SVG bytes, and there are no Playwright or pinned-CPU concerns.
+      # The image only supplies rustup: the capture command installs the toolchain
+      # rust-toolchain.toml pins (the same one every other workflow installs), so
+      # the build here uses exactly CI's compiler. The shots are deterministic SVGs
+      # (vendored font), so the image only has to build + render — the compiler
+      # version doesn't affect the SVG bytes, and there are no Playwright or
+      # pinned-CPU concerns.
       container: rust:1-bookworm
       # Install the pinned `freeze` from its prebuilt release (no Go needed), then
       # capture. The reusable workflow exports $SHOTS_OUT as shots/current/<arch>;
       # the script writes captures.json + SVGs (and the docs/screenshots/ copies).
       capture-command: |
+        rustup toolchain install
         curl -fsSL -o /tmp/freeze.tgz https://github.com/charmbracelet/freeze/releases/download/v0.2.2/freeze_0.2.2_Linux_x86_64.tar.gz
         tar -xzf /tmp/freeze.tgz -C /tmp
         install /tmp/freeze_0.2.2_Linux_x86_64/freeze /usr/local/bin/freeze
