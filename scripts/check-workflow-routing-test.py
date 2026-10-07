@@ -135,6 +135,12 @@ CASES = (
         "jobs.check.continue-on-error is not simulated",
     ),
     Case(
+        "a matrix target that is not a string",
+        lambda wf, _tc: _replace(wf / "release.yml", "- target: x86_64-unknown-linux-gnu", "- target: 42"),
+        2,
+        "names a non-string matrix target 42",
+    ),
+    Case(
         "a called workflow without workflow_call",
         lambda wf, _tc: _replace(wf / "e2e-codex.yml", "  workflow_call:\n", ""),
         2,

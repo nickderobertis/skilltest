@@ -30,11 +30,8 @@
 # llmlint: ignore-file[robust_shell, tool_output_is_signal, boundary_inputs_validated] deliberate for a session-startup installer (see header): `set -e` is omitted so a flaky install can't abort the hook — the script owns its exit codes and always exits 0; success stays quiet while failures log-and-continue rather than block startup; and the toolchain is installed from PyPI (`uv tool install llmlint-cli`) whose wheels ship with Trusted Publishing + PEP 740 attestations, so no unvalidated external input is executed.
 set -uo pipefail
 
-# Version floor, as a PyPI constraint (`llmlint-cli` tracks the binary's version);
-# `uv tool install --upgrade` takes the newest release satisfying it. 0.3.23 is the
-# create-repo minimum: it finds `oneharness` beside its own executable, scopes
-# `--diff` to the changed files, and ships the model-free `validate` gate with
-# config_lint v1.2 — what the `lint-llm*` recipes rely on.
+# Version floor (a PyPI constraint on `llmlint-cli`): 0.3.23 is the create-repo
+# v1.47.3 minimum, the first release bundling config_lint v1.2.
 readonly LLMLINT_MIN="0.3.23"
 readonly BIN_DIR="$HOME/.local/bin"
 

@@ -464,8 +464,13 @@ def matrix_targets(wfs: dict[WorkflowFile, Workflow]) -> dict[str, set[str]]:
             rows = job.matrix.get("include")
             named = [*(axis if isinstance(axis, list) else []), *(r.get("target") for r in rows or [])]
             for target in named:
-                if isinstance(target, str):
-                    out.setdefault(target, set()).add(wf.filename)
+                match target:
+                    case None:
+                        pass  # an `include` row that names no target
+                    case str():
+                        out.setdefault(target, set()).add(wf.filename)
+                    case _:
+                        raise WorkflowError(f"{wf.filename}: jobs.{job.id} names a non-string matrix target {target!r}")
     return out
 
 
