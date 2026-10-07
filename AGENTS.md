@@ -70,7 +70,8 @@ a single template. What was pulled in, and why:
   gives clean-checkout → `just bootstrap` → `just check` on a Linux/macOS matrix,
   the live/integration test tier kept out of the gate in its own fork-safe
   workflows (the `e2e-*` and `*-api` workflows), the install-path smoke proof
-  (`bundle-smoke.yml`), and the merge model in "Publishing" / "Repository
+  (`bundle-smoke.yml` on Linux/macOS; `windows-build.yml` on PRs and
+  `publish.yml`'s `verify-windows` at release for the two Windows targets), and the merge model in "Publishing" / "Repository
   settings" below. `monorepo.md` applies because the repo holds **>1 deliverable
   in >1 language** (a Rust workspace + Python and TypeScript SDKs + per-framework
   packages): it is orchestrated by **Nx** (root `just` recipes delegate to `nx
@@ -120,9 +121,9 @@ a single template. What was pulled in, and why:
 | --- | --- |
 | `crates/skilltest-core` | Library: config, skill model + validation, test-case model, provider protocol, evals, runner, report. The stable Rust API the CLI builds on, and the source of truth for the JSON contract. |
 | `crates/skilltest-cli` | The `skilltest` binary (clap), including `skilltest schema` (emits the contract's JSON Schemas). `run` ingests cases from positional YAML `PATH`s **or** `--case-json <FILE>` — a JSON case object/array (the delivery channel for a case built in an SDK; `skill` resolves relative to CWD, not a file). Also carries `skilltest-fake-provider`, a deterministic reference provider used by the e2e suite — a second `[[bin]]` gated behind the non-default `fake-provider` feature so a published `cargo install` ships only `skilltest`; the nx `build`/`lint` targets enable the feature, release builds don't. |
-| `sdks/python` | `skilltest-sdk`: the Python SDK — runs the CLI as a subprocess and parses its JSON contract into Pydantic models (`run_skill`), plus an opt-in async streaming API (`stream_skill` → `SkillStream`, an `async for` of tool events that `break`s to short-circuit) and `tool_calls`/`ToolEvent` for tool-event analysis. `run_skill`/`stream_skill` take a YAML path **or** a code-defined `TestCase` (the `case.py` builders — `TestCase`/`user`/`boolean`/`numeric`/`called`/`not_called`, reusing the `mock.py` builders; the builders construct the **generated** `_case.py` models from the input contract, so the payload cannot drift from the Rust parse — delivered via `--case-json`). No framework code. Ships a per-target **platform wheel** that bundles the CLI at `skilltest_sdk/_bin/skilltest` (plus a pure-wheel/sdist fallback), so `pip install` needs no separate binary step; the runner resolves the bundled binary, falling back to `$SKILLTEST_BIN`/`PATH`. Depends on the `oneharness-cli` package (bounded to the release line `scripts/install-oneharness.sh` pins; `crates/skilltest-cli/tests/pins.rs` reconciles the two) so the default provider's `oneharness` binary comes with the install too; the runner points the CLI at it via `SKILLTEST_ONEHARNESS_BIN` (a config `provider.bin` or a caller-set var still wins). <!-- llmlint: ignore[instruction_layer_localized] The layout table is the repo-wide map of every package. --> |
+| `sdks/python` | `skilltest-sdk`: the Python SDK — runs the CLI as a subprocess and parses its JSON contract into Pydantic models (`run_skill`), plus an opt-in async streaming API (`stream_skill` → `SkillStream`, an `async for` of tool events that `break`s to short-circuit) and `tool_calls`/`ToolEvent` for tool-event analysis. `run_skill`/`stream_skill` take a YAML path **or** a code-defined `TestCase` (the `case.py` builders — `TestCase`/`user`/`boolean`/`numeric`/`called`/`not_called`, reusing the `mock.py` builders; the builders construct the **generated** `_case.py` models from the input contract, so the payload cannot drift from the Rust parse — delivered via `--case-json`). No framework code. Ships a per-target **platform wheel** (Linux, macOS and Windows) that bundles the CLI under `skilltest_sdk/_bin/` (plus a pure-wheel/sdist fallback), so `pip install` needs no separate binary step; the runner resolves the bundled binary, falling back to `$SKILLTEST_BIN`/`PATH`. Depends on the `oneharness-cli` package (bounded to the release line `scripts/install-oneharness.sh` pins; `crates/skilltest-cli/tests/pins.rs` reconciles the two) so the default provider's `oneharness` binary comes with the install too; the runner points the CLI at it via `SKILLTEST_ONEHARNESS_BIN` (a config `provider.bin` or a caller-set var still wins). <!-- llmlint: ignore[instruction_layer_localized] The layout table is the repo-wide map of every package. --> |
 | `sdks/typescript` | `@skill-test/sdk`: the TypeScript SDK — same wrapper with generated type declarations (`runSkill`), plus the matching async streaming API (`streamSkill` → `SkillStream`, a `for await` of tool events that `break`s to short-circuit) and `toolCalls`/`ToolEvent`. `runSkill`/`streamSkill` take a YAML path **or** a code-defined case (the `case.ts` builders — `testCase`/`user`/`boolean`/`numeric`/`called`/`notCalled`, typed against the **generated** `src/generated/case.ts` input-contract types). No framework code. Bundles the CLI via the per-platform `@skill-test/cli-*` packages (see `sdks/typescript/platforms`), declared as `optionalDependencies` so `pnpm add` pulls only the matching host's binary; the runner resolves it, falling back to `$SKILLTEST_BIN`/`PATH`. Depends on `oneharness-cli` (bounded to the same release line as the Python SDK — see above) so the default provider's `oneharness` comes with the install; the runner resolves the **native** binary in the host's `@oneharness/cli-*` package (execing it directly, never the `oneharness-cli` node launcher) and points the CLI at it via `SKILLTEST_ONEHARNESS_BIN` (a config `provider.bin` or a caller-set var still wins), falling back to `oneharness` on `PATH` — `node_modules/.bin` need not be on `PATH`. <!-- llmlint: ignore[instruction_layer_localized] The layout table is the repo-wide map of every package. --> |
-| `sdks/typescript/platforms/cli-*` | The four binary-carrier npm packages (`@skill-test/cli-{linux,darwin}-{x64,arm64}`), each `os`/`cpu`-scoped with a git-ignored `bin/` filled at publish time. Workspace members pinned by the SDK via `workspace:*`; `scripts/set-version.sh` keeps their versions in lockstep. |
+| `sdks/typescript/platforms/cli-*` | The binary-carrier npm packages, `@skill-test/cli-<os>-<arch>` for linux, darwin and win32 (one per `release-platforms.toml` platform), each `os`/`cpu`-scoped with a git-ignored `bin/` filled at publish time. Workspace members pinned by the SDK via `workspace:*`; `scripts/set-version.sh` keeps their versions in lockstep. |
 | `plugins/pytest` | `skilltest-pytest`: pytest collection of `*.skilltest.yaml` cases, built on (and re-exporting) `skilltest-sdk`. |
 | `plugins/vitest` | `@skill-test/vitest`: `skillTest`/`discover` vitest helpers, built on (and re-exporting) `@skill-test/sdk`. |
 | `pyproject.toml`, `uv.lock` | The Python side's workspace root: `[tool.uv.workspace]` over `sdks/python` + `plugins/pytest`, and the single lockfile both resolve into. Virtual root — nothing is published from here. <!-- llmlint: ignore[instruction_layer_localized] The layout table is the repo-wide map of every package. --> |
@@ -130,15 +131,18 @@ a single template. What was pulled in, and why:
 | `tests/fixtures` | Sample skills and YAML test cases shared by the e2e suites. |
 | `docs/` | The provider protocol, config/test-case schema, and live-e2e (`docs/e2e.md`) references. |
 | `scripts/install.sh` | Installs a prebuilt `skilltest` from a GitHub Release (verifies checksum). |
+| `release-platforms.toml` | The one statement of the platforms a release ships a CLI for (target, runner, binary name, wheel tag, npm package). `scripts/check-release-targets.sh` holds every build matrix, packaging script and npm-side list to it. |
 | `scripts/stage-npm-binary.sh` | Stages a built binary into its `@skill-test/cli-*` package's `bin/` for packing/publishing. |
 | `scripts/build-python-wheel.sh`, `scripts/build-python-dist.sh` | Build a platform-tagged `skilltest-sdk` wheel that bundles the CLI (the former, one target); assemble the full dist — every platform wheel + pure wheel + sdist (the latter). |
 | `scripts/smoke-python-bundle.sh`, `scripts/smoke-npm-bundle.sh` | Bundle smoke: install the publish-shape package with the binary bundled into a fresh consumer project and run a case through the plugin with `SKILLTEST_BIN` unset, so a pass can only come from the bundled binary. Driven per platform by `bundle-smoke.yml`. |
+| `sdks/python/scripts/verify_bundled.py`, `sdks/typescript/scripts/verify-bundled.mjs` | The install proof where `bundle-smoke.yml`'s POSIX/`sh` scripts cannot run (`windows-build.yml`, `publish.yml`'s `verify-windows`). Not shipped. |
 | `scripts/install-oneharness.sh` | Installs the prebuilt `oneharness` the live e2e drives (verifies checksum). |
 | `scripts/e2e-lib.sh`, `scripts/e2e-harness.sh` | Live, per-harness e2e: drive the built CLI against a *real* harness through oneharness. See `docs/e2e.md`. |
 | `release-targets.toml` | The onevcs release-target declaration: which registry artifacts a dependent can wait on, by id and short name. The short names are a cross-repository contract; see "Publishing". |
 | `scripts/release-probe.sh`, `scripts/release-probe-live.sh` | The probe the declaration names, which onevcs runs to learn what a registry serves for one target; its opt-in live drift alarm against the real registries (`just release-probe-live`, never in the gate). |
 | `scripts/check-release-targets.sh`, `scripts/check-release-targets-test.sh`, `scripts/check-release-probe.sh` | The release-target gate (`just release-targets-check`, in `just check`): the declaration held to what `publish.yml` publishes, and tests of that check and of the probe. |
-| `scripts/set-version.sh` | Writes one lockstep version into all six manifests + the four `@skill-test/cli-*` platform packages + every lockfile + the two cross-package pins. Invoked by semantic-release each release; idempotent and runnable by hand. |
+| `scripts/verify-release-archive.sh`, `scripts/verify-release-archive-test.sh` | The release-time proof of each GitHub Release archive (`release.yml` downloads what it uploaded and runs the binary on that target's runner), and its stand-in-archive tests in `just release-targets-check`. |
+| `scripts/set-version.sh` | Writes one lockstep version into all six manifests + every `@skill-test/cli-*` platform package + every lockfile + the two cross-package pins. Invoked by semantic-release each release; idempotent and runnable by hand. |
 | `scripts/screenshots.sh`, `scripts/demo-gif.py` | Terminal screenshots (informational; never a gate). The former drives the **real** CLI against the bundled fake provider + `screenshots/fixture/` and renders each scene to a deterministic SVG via `freeze` + the vendored pinned font, so screencomp can hash-gate the bytes; the latter renders the README hero GIF of a typical run (Pillow, not hash-gated). See `screenshots/AGENTS.md`. |
 | `screenshots/`, `screencomp.toml`, `shots/baseline/`, `docs/screenshots/` | The screenshot inputs and outputs: `screenshots/fixture/` (the skills + cases the scenes drive) and `screenshots/fonts/` (the vendored JetBrains Mono); `screencomp.toml` (arches, the `format` toggle, `[guard].paths`); `shots/baseline/<arch>.json` (the committed digest baseline — no images; `shots/current`/`review`/`verify` are gitignored); `docs/screenshots/*.svg` + `demo.gif` (the committed README images). |
 | `gh-secrets.json` | Declarative secret manifest, synced from Bitwarden to the GitHub repo + a gitignored local `.env` via `gh-secrets manifest sync`. |
@@ -146,7 +150,8 @@ a single template. What was pulled in, and why:
 | `.github/workflows/release.yml` | Tag-triggered cross-platform binary build + checksums for the GitHub Release `scripts/install.sh` consumes (fired by the `v*` tag semantic-release pushes). |
 | `.github/workflows/publish.yml` | Tag-triggered registry publish (crates.io, PyPI, npm) in dependency order; skips any version already live, so re-fired tags are idempotent. A `binaries` matrix builds the CLI per target so the npm/PyPI jobs can bundle it into the per-platform packages/wheels. See "Publishing". |
 | `.github/workflows/pr-title.yml` | Enforces a Conventional-Commits PR title (the squash-merge subject semantic-release parses). |
-| `.github/workflows/bundle-smoke.yml` | On PR + push to `main`, proves the SDKs run the **bundled** CLI (not `$SKILLTEST_BIN`): builds the CLI per target, installs the publish-shape packages, and runs a case through each plugin on a native runner. Covers linux x64/arm64 + darwin arm64; the Intel-macOS (`macos-13`) runner is skipped here (unreliable queue) though that binary is still built/published. |
+| `.github/workflows/bundle-smoke.yml` | On PR + push to `main`, proves the SDKs run the **bundled** CLI (not `$SKILLTEST_BIN`): builds the CLI per target, installs the publish-shape packages, and runs a case through each plugin on a native runner. Covers linux x64/arm64 + darwin arm64; the Intel-macOS (`macos-13`) runner is skipped here (unreliable queue) though that binary is still built/published. Windows is proven by `windows-build.yml` instead. |
+| `.github/workflows/windows-build.yml` | On PRs touching what the Windows build depends on, builds each Windows target's platform wheel and runs its bundled CLI through the SDK. Deliberately **not** a required check: ARM runners queue, and that must never hold a merge; the release's `verify-windows` job proves the published packages. |
 | `.github/workflows/visual-docs.yml` | Terminal screenshots (informational; **never a gate blocker in `ci.yml`**). Uses screencomp's reusable workflow: builds the CLI + captures the SVGs in a pinned Rust container, classifies against `shots/baseline/<arch>.json` (`fail-on-drift: true`), publishes a GitHub Pages gallery, and posts a sticky before/after PR comment. `.githooks/pre-push` is the local guard that regenerates the baseline on drift. See `screenshots/AGENTS.md`. |
 | `.github/workflows/e2e-<id>.yml` | One live per-harness e2e each (claude, codex, goose, opencode, cursor, crush, qwen, copilot), gated to the canonical repo and non-fork PRs. |
 | `.github/workflows/e2e-judge-api.yml` | Live e2e for the **direct-API judge** (`ApiJudgeProvider`): calls the real Anthropic + OpenAI APIs (strict-JSON structured outputs, verdict parsing, usage), needs `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`, gated to the canonical repo and non-fork PRs. No oneharness/harness CLI. |
@@ -164,10 +169,11 @@ language's SDK), so nx builds prerequisites in order and, for the default
 recipes, runs **only the [affected](https://nx.dev/ci/features/affected)
 projects** (diffed against the `main` base in `nx.json`). A TS-only change
 never spends time on the Rust or Python suites; a core change fans out to the
-CLI, both SDKs, and both framework packages. The two workspace-level exceptions
-are the contract drift gate (`just contract-check`) and the release-target gate
-(`just release-targets-check`): they span every stack, so they always run as
-part of `just check` rather than when nx calls a project affected.
+CLI, both SDKs, and both framework packages. The workspace-level exceptions
+are the contract drift gate (`just contract-check`), the release-target gate
+(`just release-targets-check`) and the workflow lint (`just workflows-lint`): they
+span every stack, so they always run as part of `just check` rather than when nx
+calls a project affected.
 
 - `just bootstrap` — set up from a clean clone. Every stack installs from its
   own workspace root, so each language has one dependency tree, not one per
@@ -213,7 +219,7 @@ projects per PR. Locally, install the toolchains once (see `docs/development.md`
 (`provider.rs`) has two real backends; see [`docs/protocol.md`](docs/protocol.md).
 
 - **`OneharnessProvider` (default).** Targets
-  [`oneharness`](https://github.com/nickderobertis/oneharness) **v0.16.0** (the
+  [`oneharness`](https://github.com/nickderobertis/oneharness) **v0.21.3** (the
   line both SDKs bundle and `scripts/install-oneharness.sh` installs) and
   uses six of its normalized features directly so skilltest can stop string-
   munging: `--system <skill instructions>` carries the skill as a real system
@@ -222,7 +228,8 @@ projects per PR. Locally, install the toolchains once (see `docs/development.md`
   back to inlining the transcript);
   `--events` surfaces normalized tool events (`{kind, name, input, output,
   index}`) skilltest lifts onto each assistant turn (`Message.events`) so
-  consumers can assert on *what the skill did*, not just its text;
+  consumers can assert on *what the skill did*, not just its text — tool
+  activity only: the `message`/`reasoning` kinds v0.19+ adds are dropped;
   `results[*].usage` is aggregated into the report (`{input_tokens,
   output_tokens, cost_usd}`); `results[*].failure_kind` (`auth` /
   `rate_limit` / `model_not_found` / `quota`) is surfaced through `Error::Provider
@@ -316,7 +323,11 @@ and the runbook for adding a harness.
   `just gen-contract`, and commit the regenerated artifacts — then land it behind a
   `feat!:`/`BREAKING CHANGE` commit so the lockstep version moves on the next release
   (versions are never hand-bumped; see "Publishing").
-- Keep the artifact portable across the supported platform matrix (Linux, macOS).
+- Keep the artifact portable across the supported platform matrix (Linux, macOS,
+  Windows — x86_64 and arm64 each; `release-platforms.toml`). The shipped crates
+  must type-check for both Windows targets (`cargo check --target
+  x86_64-pc-windows-msvc` / `aarch64-pc-windows-msvc`); unix-only code stays
+  behind `cfg(unix)`.
 - Do not commit secrets, credentials, PII, or customer data. Real provider runs
   need API keys; those live in the environment, never in fixtures or config.
 - No non-determinism in the gate: the LLM is always faked in tests.
@@ -366,6 +377,12 @@ registry hiccup must not block the binary release, or vice versa.
   target ids and short names are named by other repositories' plans, so a
   rename, addition or removal is a deliberate cross-repository change, never a
   side effect.
+- **Which platforms a release ships** is declared once, in
+  `release-platforms.toml` (Linux, macOS and Windows; x86_64 and arm64 each).
+  To add or drop one, edit that file and let `just release-targets-check` name
+  every matrix, script and npm-side list that must follow. Its npm package
+  names are `node-sdk` covers, so they are part of the cross-repository contract
+  above.
 - **To cut a release:** merge a conventional-commit PR. That's it. The lockstep
   version is never hand-edited; if the JSON contract changed, run `just gen-contract`
   and commit the regenerated artifacts in the same PR — the version moves on its own at

@@ -1,0 +1,71 @@
+# The platforms a skilltest release ships a prebuilt CLI for, stated once.
+#
+# Every list that builds, bundles, publishes or smokes a per-platform artifact
+# restates part of this set, because a GitHub Actions matrix or a shell `case`
+# cannot read a file: publish.yml's `binaries` matrix, release.yml's archive
+# matrix, scripts/build-python-dist.sh's targets, scripts/build-python-wheel.sh's
+# wheel-tag map, the npm job's `for target in` loop, scripts/stage-npm-binary.sh,
+# the `@skill-test/cli-*` platform packages, release-targets.toml's `covers`, the
+# SDK's optionalDependencies, .releaserc.json's assets, scripts/set-version.sh,
+# windows-build.yml's matrix and bundle-smoke.yml's matrix.
+# scripts/check-release-targets.sh holds each of them to this file in `just
+# check`, so adding or dropping a platform starts here and the gate names every
+# list that still has to move.
+#
+# Fields, all required:
+#   target       the Rust target triple `cargo build --target` takes
+#   runner       the GitHub Actions runner that builds it (both macOS targets
+#                build on the arm runner; x86_64 cross-compiles)
+#   bin          the executable's file name, as built and as bundled
+#   wheel_tag    the `skilltest-sdk` platform wheel's tag
+#   npm_package  the npm package that carries the binary; a cross-repository
+#                name (release-targets.toml's `covers`), so never renamed
+#   npm_dir      that package's directory under sdks/typescript/platforms/
+
+[[platform]]
+target = "x86_64-unknown-linux-gnu"
+runner = "ubuntu-latest"
+bin = "skilltest"
+wheel_tag = "manylinux_2_17_x86_64"
+npm_package = "@skill-test/cli-linux-x64"
+npm_dir = "cli-linux-x64"
+
+[[platform]]
+target = "aarch64-unknown-linux-gnu"
+runner = "ubuntu-24.04-arm"
+bin = "skilltest"
+wheel_tag = "manylinux_2_17_aarch64"
+npm_package = "@skill-test/cli-linux-arm64"
+npm_dir = "cli-linux-arm64"
+
+[[platform]]
+target = "x86_64-apple-darwin"
+runner = "macos-14"
+bin = "skilltest"
+wheel_tag = "macosx_10_12_x86_64"
+npm_package = "@skill-test/cli-darwin-x64"
+npm_dir = "cli-darwin-x64"
+
+[[platform]]
+target = "aarch64-apple-darwin"
+runner = "macos-14"
+bin = "skilltest"
+wheel_tag = "macosx_11_0_arm64"
+npm_package = "@skill-test/cli-darwin-arm64"
+npm_dir = "cli-darwin-arm64"
+
+[[platform]]
+target = "x86_64-pc-windows-msvc"
+runner = "windows-latest"
+bin = "skilltest.exe"
+wheel_tag = "win_amd64"
+npm_package = "@skill-test/cli-win32-x64"
+npm_dir = "cli-win32-x64"
+
+[[platform]]
+target = "aarch64-pc-windows-msvc"
+runner = "windows-11-arm"
+bin = "skilltest.exe"
+wheel_tag = "win_arm64"
+npm_package = "@skill-test/cli-win32-arm64"
+npm_dir = "cli-win32-arm64"

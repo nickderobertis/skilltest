@@ -7,7 +7,7 @@ provider backends.
 
 ## 1. The oneharness provider (default)
 
-[`oneharness`](https://github.com/nickderobertis/oneharness) (v0.16.0) is a
+[`oneharness`](https://github.com/nickderobertis/oneharness) (v0.21.3) is a
 prompt→text runner over many agentic harnesses (Claude Code, Codex, OpenCode,
 Cursor, …). skilltest's `OneharnessProvider` wires six real oneharness features
 into the runner:
@@ -16,7 +16,7 @@ into the runner:
   prompt (e.g. `--append-system-prompt` for claude-code), not inlined into the
   user turn.
 - **`--resume <session>`** — for harnesses that support session continuation
-  (every harness in the v0.16 registry; see `oneharness list` and
+  (every harness in the v0.21 registry; see `oneharness list` and
   `supports_resume`), the runner threads the `session_id` returned on each turn
   into the next `respond` call, so the harness sees a real continuing
   conversation and keeps its tool state. A harness that reports no `session_id`
@@ -26,7 +26,10 @@ into the runner:
   lifted from each harness's transcript. skilltest attaches them to the assistant
   turn (`Message.events` in the [report](schema.md)) so consumers can inspect
   *what the skill did* — shell commands, file edits, tool uses — not just its
-  final text. Empty for harnesses that expose no machine-readable transcript.
+  final text. Only tool activity (`tool_call`/`tool_result`) is kept, live and
+  buffered: the `message` and `reasoning` events oneharness v0.19+ also reports
+  are dropped, so `index` stays ordered but may skip numbers. Empty for
+  harnesses that expose no machine-readable transcript.
 - **Normalized `usage`** — `{input_tokens, output_tokens, cost_usd}` is parsed
   off each result and aggregated into the [report](schema.md) so cross-model
   cost reporting is portable instead of harness-specific.

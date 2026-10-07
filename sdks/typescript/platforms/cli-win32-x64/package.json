@@ -1,0 +1,17 @@
+{
+  "name": "@skill-test/cli-win32-x64",
+  "version": "0.12.0",
+  "description": "Prebuilt skilltest CLI binary for win32-x64. Installed automatically as an optional dependency of @skill-test/sdk on a matching host.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nickderobertis/skilltest.git",
+    "directory": "sdks/typescript/platforms/cli-win32-x64"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "os": ["win32"],
+  "cpu": ["x64"],
+  "files": ["bin"]
+}

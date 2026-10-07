@@ -7,13 +7,14 @@
  * `bundledBin()` is undefined and the runner falls back — exactly how the e2e
  * suite reaches the locally built CLI via `$SKILLTEST_BIN`.
  */
-import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   ENV_BIN,
   ENV_ONEHARNESS_BIN,
+  ONEHARNESS_PACKAGES,
   bundledBin,
   bundledOneharness,
   childEnv,
@@ -105,6 +106,34 @@ describe("oneharness resolution", () => {
   it("points SKILLTEST_ONEHARNESS_BIN at the bundled launcher when unset", () => {
     delete process.env[ENV_ONEHARNESS_BIN];
     expect(childEnv()[ENV_ONEHARNESS_BIN]).toBe(bundledOneharness());
+  });
+
+  // Resolving and running another host's native oneharness needs that host, which
+  // the release's verify-windows job is; what a missing map entry breaks — and what
+  // this holds on every host — is the name lookup the resolution above starts from.
+  it("maps every platform the SDK ships to a package oneharness-cli publishes", () => {
+    const optionalDependencies = (path: string): string[] => {
+      const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+      const deps =
+        typeof parsed === "object" && parsed !== null && "optionalDependencies" in parsed
+          ? parsed.optionalDependencies
+          : undefined;
+      if (typeof deps !== "object" || deps === null || Array.isArray(deps)) {
+        throw new Error(
+          `${path} has no optionalDependencies object; restore it from git or reinstall`,
+        );
+      }
+      return Object.keys(deps);
+    };
+    const shipped = optionalDependencies(require.resolve("../package.json")).map((name) =>
+      name.replace("@skill-test/cli-", ""),
+    );
+    const published = optionalDependencies(require.resolve("oneharness-cli/package.json"));
+
+    expect(shipped.length).toBeGreaterThan(0);
+    for (const platform of shipped) {
+      expect(published, `oneharness-cli for ${platform}`).toContain(ONEHARNESS_PACKAGES[platform]);
+    }
   });
 
   it("leaves a caller-set SKILLTEST_ONEHARNESS_BIN untouched", () => {
