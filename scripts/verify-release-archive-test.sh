@@ -223,7 +223,8 @@ expect_red "the tarball lists cleanly but cannot be extracted" "could not extrac
 
 # Unreadable and unwritable files stop nothing for root, so these cases need
 # an ordinary user, as every CI runner and a developer's shell are.
-if [ "$(id -u)" != 0 ]; then
+uid="$(id -u)" || fail "could not read this user's id, so the unreadable-file cases cannot be chosen; check that id is on PATH"
+if [ "$uid" != 0 ]; then
   pack x86_64-unknown-linux-gnu skilltest 1.2.3
   chmod 000 "$work/x86_64-unknown-linux-gnu/skilltest-x86_64-unknown-linux-gnu.tar.gz" || fail "could not make the stand-in tarball unreadable; check that $work is on a filesystem that honors chmod, or run this test from a POSIX checkout"
   expect_red "the archive cannot be read" "could not hash $work/x86_64-unknown-linux-gnu/skilltest-x86_64-unknown-linux-gnu.tar.gz" \

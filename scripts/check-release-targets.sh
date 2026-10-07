@@ -456,9 +456,9 @@ done
 # fix. Fails once per line on either side alone.
 compare_platforms() {
   local what="$1" want="$2" got="$3" fix="$4" line missing extra dupes
-  missing="$(set_op "$what" set_minus "$want" "$got")"
-  extra="$(set_op "$what" set_minus "$got" "$want")"
-  dupes="$(set_op "$what" repeated "$got")"
+  missing="$(set_op "$what" set_minus "$want" "$got")" || exit 1
+  extra="$(set_op "$what" set_minus "$got" "$want")" || exit 1
+  dupes="$(set_op "$what" repeated "$got")" || exit 1
   while read -r line; do
     if [ -n "$line" ]; then fail "$what lacks '$line', which $platforms_file declares; $fix"; fi
   done <<<"$missing"

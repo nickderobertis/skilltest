@@ -138,6 +138,7 @@ describe("verify-bundled.mjs", () => {
 
     expect(ran.status).toBe(1);
     expect(ran.stderr).toContain(`${platformPackage()} is not installed in ${bare}`);
+    expect(ran.stderr).toContain(`Cannot find module '${platformPackage()}/package.json'`);
   });
 
   it("refuses a platform package that carries no binary", () => {

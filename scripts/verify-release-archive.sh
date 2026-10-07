@@ -51,7 +51,7 @@ case "$asset" in
   *) members="$(tar -tzf "$dir/$asset" 2>&1)" || err "could not list $asset ($members); download it and open it by hand" ;;
 esac
 [ "$members" = "$bin" ] ||
-  err "$asset holds $(printf '%s' "$members" | tr '\n' ' ' | sed 's/ $//') rather than only $bin at its root, where scripts/install.sh and users look; check release.yml's bin and archive settings"
+  err "$asset holds ${members//$'\n'/ } rather than only $bin at its root, where scripts/install.sh and users look; check release.yml's bin and archive settings"
 
 out="$dir/extracted"
 { rm -rf "$out" && mkdir -p "$out"; } || err "could not prepare $out to extract into; check that $dir is writable"

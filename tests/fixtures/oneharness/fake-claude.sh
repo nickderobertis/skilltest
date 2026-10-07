@@ -110,17 +110,26 @@ surfaced=""
 index=0
 
 # llmlint: ignore-block[tool_output_is_signal] These emit the records of Claude Code's `stream-json` transcript, which the real oneharness binary parses; its stdout is that protocol, one JSON record per transcript event, not human-facing output.
-emit_text() { # emit_text <text> — an assistant line of prose, as a real turn writes
-    jq -cn --arg t "$1" '{type:"assistant", message:{content:[{type:"text", text:$t}]}}'
+emit() { # emit <jq args…> — one transcript record, or stop the run loudly
+    jq -cn "$@" || {
+        echo "fake-claude: jq could not write a transcript record (see its error above); fix the record's arguments and rerun" >&2
+        exit 1
+    }
 }
 
+# shellcheck disable=SC2016 # the single-quoted programs are jq's; their $ names are jq variables, not shell expansions
+emit_text() { # emit_text <text> — an assistant line of prose, as a real turn writes
+    emit --arg t "$1" '{type:"assistant", message:{content:[{type:"text", text:$t}]}}'
+}
+
+# shellcheck disable=SC2016 # the single-quoted programs are jq's; their $ names are jq variables, not shell expansions
 emit_call() { # emit_call <index> <name> <input-json> <output-text>
-    jq -cn --arg n "$2" \
+    emit --arg n "$2" \
         '{type:"assistant", message:{content:[{type:"thinking", thinking:("deciding to call " + $n)}]}}'
     emit_text "calling $2"
-    jq -cn --arg n "$2" --argjson i "$3" --argjson idx "$1" \
+    emit --arg n "$2" --argjson i "$3" --argjson idx "$1" \
         '{type:"assistant", message:{content:[{type:"tool_use", id:("toolu_" + ($idx|tostring)), name:$n, input:$i}]}}'
-    jq -cn --arg o "$4" --argjson idx "$1" \
+    emit --arg o "$4" --argjson idx "$1" \
         '{type:"user", message:{content:[{type:"tool_result", tool_use_id:("toolu_" + ($idx|tostring)), content:$o}]}}'
 }
 # llmlint: ignore-end[tool_output_is_signal]

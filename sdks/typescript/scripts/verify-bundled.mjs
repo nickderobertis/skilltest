@@ -24,13 +24,17 @@ function fail(message) {
 }
 
 const [expectedVersion, skillDir, ...extra] = process.argv.slice(2);
-if (
-  !expectedVersion ||
-  !skillDir ||
-  extra.length > 0 ||
-  !existsSync(skillDir) ||
-  !statSync(skillDir).isDirectory()
-) {
+let isDir = false;
+if (skillDir && existsSync(skillDir)) {
+  try {
+    isDir = statSync(skillDir).isDirectory();
+  } catch (error) {
+    fail(
+      `could not read ${skillDir} (${error}); check its permissions, or pass another skill directory`,
+    );
+  }
+}
+if (!expectedVersion || !skillDir || extra.length > 0 || !isDir) {
   fail(
     "usage: verify-bundled.mjs <expected-version> <skill-dir>; pass the release version and an existing skill directory",
   );
@@ -52,9 +56,9 @@ const pkg = `@skill-test/cli-${process.platform}-${process.arch}`;
 let pkgJson;
 try {
   pkgJson = require.resolve(`${pkg}/package.json`);
-} catch {
+} catch (error) {
   fail(
-    `${pkg} is not installed in ${process.cwd()}; run this from the consumer project and reinstall @skill-test/sdk there without --no-optional`,
+    `${pkg} is not installed in ${process.cwd()} (${error}); run this from the consumer project and reinstall @skill-test/sdk there without --no-optional`,
   );
 }
 const bundled = join(dirname(pkgJson), "bin", exe);
