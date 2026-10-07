@@ -57,7 +57,6 @@ PLATFORMS = (
     Platform("aarch64-pc-windows-msvc", "win_arm64", "skilltest.exe"),
 )
 
-#: The hosts this suite runs on, mapped to the platform whose wheel they install.
 HOST_PLATFORMS = {
     Host("Linux", "x86_64"): PLATFORMS[0],
     Host("Linux", "aarch64"): PLATFORMS[1],

@@ -157,6 +157,17 @@ describe("verify-bundled.mjs", () => {
     expect(ran.stderr).toContain("--version exited 126 (cannot execute binary file)");
   });
 
+  it("refuses a bundled binary that cannot start", () => {
+    const { dir, hostBin } = copyOfConsumer("unstartable");
+    chmodSync(hostBin, 0o644);
+
+    const ran = verify([version, GREETER], { cwd: dir });
+
+    expect(ran.status).toBe(1);
+    expect(ran.stderr).toContain(`${hostBin} --version exited Error: spawnSync ${hostBin} EACCES`);
+    expect(ran.stderr).toContain("rebuild");
+  });
+
   it("refuses when validation through the bundle throws", () => {
     const { dir, hostBin } = copyOfConsumer("crash");
     writeFileSync(

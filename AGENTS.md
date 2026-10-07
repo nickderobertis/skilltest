@@ -192,7 +192,6 @@ calls a project affected.
   from the schemas. Run it whenever the report types change; `just
   contract-check` fails while anything is stale.
 - `just release-targets-check` — the release-target gate (see "Publishing").
-- `just workflows-lint` — actionlint over `.github/workflows/` (part of `just check`).
 - `just graph` — open the interactive nx project graph.
 - `just upgrade` — upgrade dependencies across nx + all three stacks, then
   `just check-all`.
