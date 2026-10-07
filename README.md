@@ -28,7 +28,8 @@ models.
 
 ## Install
 
-Prebuilt binary (Linux/macOS, x86_64/aarch64) from the latest GitHub Release:
+Prebuilt binaries ship for Linux, macOS and Windows, each on x86_64 and
+aarch64. On Linux/macOS, install one from the latest GitHub Release:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/nickderobertis/skilltest/main/scripts/install.sh | sh
@@ -36,7 +37,14 @@ curl -fsSL https://raw.githubusercontent.com/nickderobertis/skilltest/main/scrip
 
 Pin a version or install location with `SKILLTEST_VERSION` and
 `SKILLTEST_INSTALL_DIR`; the script verifies the sha256 checksum before
-installing.
+installing. On Windows, download `skilltest-<target>.zip` (`x86_64-pc-windows-msvc`
+or `aarch64-pc-windows-msvc`) and its `.sha256` from the release.
+
+The SDKs bundle the CLI, so `pip install skilltest-sdk` or
+`pnpm add @skill-test/sdk` needs no separate binary on any of those platforms:
+PyPI serves a platform wheel per target (`manylinux`, `macosx`, `win_amd64`,
+`win_arm64`) and npm a `@skill-test/cli-<os>-<arch>` package per target
+(`linux`, `darwin`, `win32` × `x64`, `arm64`).
 
 ### Build from source
 
