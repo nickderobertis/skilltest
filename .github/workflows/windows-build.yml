@@ -69,13 +69,17 @@ jobs:
           RUSTFLAGS: -D warnings
         run: cargo build --release --locked -p skilltest-cli --bin skilltest --target ${{ matrix.target }}
 
+      # rust-cache restores target/, so an earlier run's wheels and consumer
+      # environment can already be there: start each from empty.
       - name: Build the platform skilltest-sdk wheel
         run: |
+          rm -rf target/wheel-dist
           bash scripts/build-python-wheel.sh ${{ matrix.target }} \
             "target/${{ matrix.target }}/release/${{ matrix.bin }}" target/wheel-dist
 
       - name: Install the wheel into a fresh environment
         run: |
+          rm -rf target/consumer
           uv venv --python 3.12 target/consumer
           uv pip install --python target/consumer/Scripts/python.exe target/wheel-dist/skilltest_sdk-*-win_*.whl
 
