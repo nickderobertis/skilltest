@@ -403,8 +403,23 @@ platform_rows="$(printf '%s\n' "$platform_rows" | awk '!/^!/')" || {
   echo "check-release-targets: could not drop the refused rows from $platforms_file's platforms (awk failed); check that awk is on PATH" >&2
   exit 1
 }
-# $1 = column (1-based). That column of every declared platform, one per line.
-declared_col() { printf '%s\n' "$platform_rows" | sed '/^$/d' | cut -f"$1"; }
+# $1 = what is being read, rest = the command that reads it. Its output, or an
+# exit naming what could not be read; callers assign it before use, so the
+# status is never lost inside another command's arguments.
+extract() {
+  local what="$1" out
+  shift
+  out="$("$@")" || {
+    echo "check-release-targets: could not read $what (a text tool failed); check that sed, cut, awk, tr and jq are on PATH, then rerun" >&2
+    exit 1
+  }
+  printf '%s' "$out"
+}
+# $1 = columns (cut -f). Those columns of every declared platform, one per line.
+declared_cols() { printf '%s\n' "$platform_rows" | sed '/^$/d' | cut -f"$1"; }
+declared_targets="$(extract "$platforms_file's targets" declared_cols 1)" || exit 1
+declared_npm_packages="$(extract "$platforms_file's npm packages" declared_cols 5)" || exit 1
+declared_npm_dirs="$(extract "$platforms_file's npm dirs" declared_cols 6)" || exit 1
 # Set operations over newline lists, in one awk each so a failure is the
 # command's own exit status rather than a process substitution's lost one.
 # $1 = A, $2 = B: the lines of A not in B, each once, in A's order.
@@ -430,8 +445,8 @@ set_op() {
   printf '%s' "$out"
 }
 
-for col in 1 5 6; do
-  dupes="$(set_op "$platforms_file's column $col" repeated "$(declared_col "$col")")"
+for declared in "$declared_targets" "$declared_npm_packages" "$declared_npm_dirs"; do
+  dupes="$(set_op "$platforms_file's platforms" repeated "$declared")" || exit 1
   while read -r dup; do
     if [ -n "$dup" ]; then fail "$platforms_file declares '$dup' on more than one [[platform]]; each platform is one target, one npm package and one directory, so drop the extra"; fi
   done <<<"$dupes"
@@ -474,34 +489,41 @@ matrix_rows() {
       exit 1
     }
   fi
-  printf '%s\n' "$body" | sed -n 's/^ *- { *target: *\([^ ,}]*\), *os: *\([^ ,}]*\)\(, *bin: *\([^ ,}]*\)\)\{0,1\} *}$/\1	\2	\4/p' | sed 's/	$//'
+  printf '%s\n' "$body" | sed -n 's/^ *- { *target: *\([^ ,}]*\), *os: *\([^ ,}]*\)\(, *bin: *\([^ ,}]*\)\)\{0,1\} *}$/\1	\2	\4/p' | sed 's/	$//' || {
+    echo "check-release-targets: could not read $1's matrix rows (sed failed); check that sed is on PATH, then rerun" >&2
+    exit 1
+  }
 }
 
-declared_builds="$(printf '%s\n' "$platform_rows" | sed '/^$/d' | cut -f1-3)"
+declared_builds="$(extract "$platforms_file's builds" declared_cols 1-3)" || exit 1
 matrix_fix="write one '- { target: <triple>, os: <runner>, bin: <file> }' row per $platforms_file platform, with its runner and bin"
 for spec in "$workflow binaries" "$release_workflow upload"; do
   file="${spec% *}"
   job="${spec#* }"
-  rows="$(matrix_rows "$file" "$job")"
+  rows="$(matrix_rows "$file" "$job")" || exit 1
   [ -n "$rows" ] || fail "$file's $job job has no one-line '- { target: ..., os: ..., bin: ... }' matrix rows; restore that shape so this gate can read its platforms"
   compare_platforms "$file's $job matrix" "$declared_builds" "$rows" "$matrix_fix"
 done
 
-windows_builds="$(printf '%s\n' "$declared_builds" | awk -F'\t' '$1 ~ /-windows-/')"
+windows_only() { printf '%s\n' "$declared_builds" | awk -F'\t' '$1 ~ /-windows-/'; }
+windows_builds="$(extract "$platforms_file's Windows builds" windows_only)" || exit 1
 for spec in "$windows_workflow:" "$workflow:verify-windows"; do
   file="${spec%:*}"
   job="${spec#*:}"
   what="$file's ${job:+$job }matrix"
-  rows="$(matrix_rows "$file" "$job")"
+  rows="$(matrix_rows "$file" "$job")" || exit 1
   [ -n "$rows" ] || fail "$what has no one-line '- { target: ..., os: ..., bin: ... }' rows; restore that shape so this gate can read its platforms"
   compare_platforms "$what" "$windows_builds" "$rows" "it proves every declared Windows platform, and only those; $matrix_fix"
 done
 
-rows="$(matrix_rows "$smoke_workflow" "")"
+rows="$(matrix_rows "$smoke_workflow" "")" || exit 1
 [ -n "$rows" ] || fail "$smoke_workflow has no one-line '- { target: ..., os: ... }' matrix rows; restore that shape so this gate can read its platforms"
 while IFS=$'\t' read -r target runner _; do
   [ -n "$target" ] || continue
-  want="$(printf '%s\n' "$declared_builds" | awk -F'\t' -v t="$target" '$1 == t { print $2 }')"
+  want="$(printf '%s\n' "$declared_builds" | awk -F'\t' -v t="$target" '$1 == t { print $2 }')" || {
+    echo "check-release-targets: could not look up $target's declared runner (awk failed); check that awk is on PATH, then rerun" >&2
+    exit 1
+  }
   if [ -z "$want" ]; then
     fail "$smoke_workflow smokes '$target', which $platforms_file does not declare; smoke only a platform the release ships, or declare it"
   elif [ "$want" != "$runner" ]; then
@@ -517,36 +539,47 @@ read_lines() {
   }
 }
 
-dist_targets="$(read_lines "$dist_script" 's/^targets="\([^"]*\)"$/\1/p' | tr ' ' '\n')"
+dist_line="$(read_lines "$dist_script" 's/^targets="\([^"]*\)"$/\1/p')" || exit 1
+dist_targets="${dist_line// /$'\n'}"
 [ -n "$dist_targets" ] || fail "$dist_script has no 'targets=\"...\"' line; restore it so this gate can read which platform wheels it builds"
-compare_platforms "$dist_script's targets" "$(declared_col 1)" "$dist_targets" "list every declared target in its targets=\"...\" line"
+compare_platforms "$dist_script's targets" "$declared_targets" "$dist_targets" "list every declared target in its targets=\"...\" line"
 
-wheel_tags="$(read_lines "$wheel_script" 's/^\([A-Za-z0-9_.-]*\)) plat="\([^"]*\)" ;;$/\1	\2/p')"
-compare_platforms "$wheel_script's tag map" "$(printf '%s\n' "$platform_rows" | sed '/^$/d' | cut -f1,4)" "$wheel_tags" \
+wheel_tags="$(read_lines "$wheel_script" 's/^\([A-Za-z0-9_.-]*\)) plat="\([^"]*\)" ;;$/\1	\2/p')" || exit 1
+declared_tags="$(extract "$platforms_file's wheel tags" declared_cols 1,4)" || exit 1
+compare_platforms "$wheel_script's tag map" "$declared_tags" "$wheel_tags" \
   "give each declared target a '<target>) plat=\"<wheel_tag>\" ;;' arm with its declared wheel_tag"
 
-stager_dirs="$(read_lines "$stager" 's/^\([A-Za-z0-9_.-]*\)) pkg="\([^"]*\)" ;;$/\1	\2/p')"
-compare_platforms "$stager's package map" "$(printf '%s\n' "$platform_rows" | sed '/^$/d' | cut -f1,6)" "$stager_dirs" \
+stager_dirs="$(read_lines "$stager" 's/^\([A-Za-z0-9_.-]*\)) pkg="\([^"]*\)" ;;$/\1	\2/p')" || exit 1
+declared_target_dirs="$(extract "$platforms_file's npm dirs by target" declared_cols 1,6)" || exit 1
+compare_platforms "$stager's package map" "$declared_target_dirs" "$stager_dirs" \
   "give each declared target a '<target>) pkg=\"<npm_dir>\" ;;' arm with its declared npm_dir"
 
-compare_platforms "$workflow's npm 'for target in' loop" "$(declared_col 1)" "$targets" "loop over every declared target"
+compare_platforms "$workflow's npm 'for target in' loop" "$declared_targets" "$targets" "loop over every declared target"
 
 committed_packages=""
 for manifest in sdks/typescript/platforms/*/package.json; do
   [ -f "$manifest" ] || continue
   dir="${manifest#sdks/typescript/platforms/}"
-  committed_packages="${committed_packages}${dir%/package.json}	$(json_name "$manifest")
+  name="$(json_name "$manifest")"
+  if [ -z "$name" ]; then
+    fail "$manifest is not JSON with a string \"name\"; restore it from git, or give it its declared npm_package as name"
+    continue
+  fi
+  committed_packages="${committed_packages}${dir%/package.json}	$name
 "
 done
-compare_platforms "sdks/typescript/platforms/" "$(printf '%s\n' "$platform_rows" | awk -F'\t' 'NF { print $6 "\t" $5 }')" "$committed_packages" \
+dir_packages() { printf '%s\n' "$platform_rows" | awk -F'\t' 'NF { print $6 "\t" $5 }'; }
+declared_dir_packages="$(extract "$platforms_file's npm packages by dir" dir_packages)" || exit 1
+compare_platforms "sdks/typescript/platforms/" "$declared_dir_packages" "$committed_packages" \
   "commit one <npm_dir>/package.json per declared platform, named its npm_package, and none other"
 
-sdk_covers="$(printf '%s' "$covered" | awk -F'\t' '$2 == "npm:@skill-test/sdk" { sub(/^npm:/, "", $1); print $1 }')"
-compare_platforms "$declarations's npm:@skill-test/sdk covers" "$(declared_col 5)" "$sdk_covers" "cover \"npm:<npm_package>\" for every declared platform"
+sdk_covers_of() { printf '%s' "$covered" | awk -F'\t' '$2 == "npm:@skill-test/sdk" { sub(/^npm:/, "", $1); print $1 }'; }
+sdk_covers="$(extract "$declarations's npm:@skill-test/sdk covers" sdk_covers_of)" || exit 1
+compare_platforms "$declarations's npm:@skill-test/sdk covers" "$declared_npm_packages" "$sdk_covers" "cover \"npm:<npm_package>\" for every declared platform"
 
 if optional="$(jq -rs 'if length != 1 then error("it is not exactly one JSON document") else .[0] end
     | .optionalDependencies // {} | if type == "object" then keys[] else error("optionalDependencies is not an object") end' "$sdk_manifest" 2>&1)"; then
-  compare_platforms "$sdk_manifest's optionalDependencies" "$(declared_col 5)" "$optional" "pin \"<npm_package>\": \"workspace:*\" for every declared platform"
+  compare_platforms "$sdk_manifest's optionalDependencies" "$declared_npm_packages" "$optional" "pin \"<npm_package>\": \"workspace:*\" for every declared platform"
 else
   fail "$sdk_manifest's optionalDependencies cannot be read ($optional); make it one JSON object whose optionalDependencies maps each platform package to a version spec"
 fi
@@ -554,8 +587,9 @@ fi
 if assets="$(jq -rs 'if length != 1 then error("it is not exactly one JSON document") else .[0] end
     | [.plugins[]? | select(type == "array" and .[0] == "@semantic-release/git")]
     | if length == 1 then .[0][1].assets[] else error("it configures @semantic-release/git \(length) times, not once") end' "$releaserc" 2>&1)"; then
-  assets="$(printf '%s\n' "$assets" | sed -n 's|^sdks/typescript/platforms/\([^/]*\)/package.json$|\1|p')"
-  compare_platforms "$releaserc's @semantic-release/git assets" "$(declared_col 6)" "$assets" \
+  asset_dirs() { printf '%s\n' "$assets" | sed -n 's|^sdks/typescript/platforms/\([^/]*\)/package.json$|\1|p'; }
+  assets="$(extract "$releaserc's @semantic-release/git assets" asset_dirs)" || exit 1
+  compare_platforms "$releaserc's @semantic-release/git assets" "$declared_npm_dirs" "$assets" \
     "list sdks/typescript/platforms/<npm_dir>/package.json for every declared platform, so the release commit carries its version"
 else
   fail "$releaserc's @semantic-release/git assets cannot be read ($assets); restore that plugin entry with an assets list"

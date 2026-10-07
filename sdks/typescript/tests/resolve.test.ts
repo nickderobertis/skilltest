@@ -108,15 +108,27 @@ describe("oneharness resolution", () => {
     expect(childEnv()[ENV_ONEHARNESS_BIN]).toBe(bundledOneharness());
   });
 
+  // Resolving and running another host's native oneharness needs that host, which
+  // the release's verify-windows job is; what a missing map entry breaks — and what
+  // this holds on every host — is the name lookup the resolution above starts from.
   it("maps every platform the SDK ships to a package oneharness-cli publishes", () => {
-    const manifest = (path: string): { optionalDependencies?: Record<string, string> } =>
-      JSON.parse(readFileSync(path, "utf8"));
-    const shipped = Object.keys(
-      manifest(require.resolve("../package.json")).optionalDependencies ?? {},
-    ).map((name) => name.replace("@skill-test/cli-", ""));
-    const published = Object.keys(
-      manifest(require.resolve("oneharness-cli/package.json")).optionalDependencies ?? {},
+    const optionalDependencies = (path: string): string[] => {
+      const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+      const deps =
+        typeof parsed === "object" && parsed !== null
+          ? (parsed as { optionalDependencies?: unknown }).optionalDependencies
+          : undefined;
+      if (typeof deps !== "object" || deps === null || Array.isArray(deps)) {
+        throw new Error(
+          `${path} has no optionalDependencies object; restore it from git or reinstall`,
+        );
+      }
+      return Object.keys(deps);
+    };
+    const shipped = optionalDependencies(require.resolve("../package.json")).map((name) =>
+      name.replace("@skill-test/cli-", ""),
     );
+    const published = optionalDependencies(require.resolve("oneharness-cli/package.json"));
 
     expect(shipped.length).toBeGreaterThan(0);
     for (const platform of shipped) {

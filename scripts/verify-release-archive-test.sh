@@ -62,7 +62,10 @@ EOF
 
 # Runs the verifier, on $verify_path instead of PATH when a case sets it.
 verify_path=""
-verify() { PATH="${verify_path:-$PATH}" "$BASH" scripts/verify-release-archive.sh "$@" >"$work/out" 2>&1; }
+verify() {
+  : >"$work/out" || fail "could not write $work/out to capture the verifier's output; check that $work is writable and has space"
+  PATH="${verify_path:-$PATH}" "$BASH" scripts/verify-release-archive.sh "$@" >"$work/out" 2>&1
+}
 
 # Prints a directory of links to the verifier's tools minus those named, for a
 # case that needs one missing.
