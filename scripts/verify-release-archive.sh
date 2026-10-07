@@ -17,36 +17,36 @@ err() {
   exit 1
 }
 
-[ $# -eq 4 ] && [ -d "$1" ] && [ -n "$2" ] && [ -n "$3" ] && [ -n "$4" ] ||
-  err "usage: verify-release-archive.sh <dir> <target> <bin> <version>; pass the download directory, the target triple, the binary name and the release version"
+usage="usage: verify-release-archive.sh <dir> <target> <bin> <version>; pass the download directory, a target triple, skilltest or skilltest.exe, and the release version X.Y.Z"
+[ $# -eq 4 ] && [ -d "$1" ] || err "$usage"
 dir=$1 target=$2 bin=$3 version=$4
-
+[[ $target =~ ^[A-Za-z0-9_]+(-[A-Za-z0-9_]+)+$ ]] || err "target '$target' is not a target triple; $usage"
+[[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]] || err "version '$version' is not X.Y.Z; $usage"
 case $bin in
-  *.exe) asset="skilltest-$target.zip" ;;
-  *) asset="skilltest-$target.tar.gz" ;;
+  skilltest.exe) asset="skilltest-$target.zip" ;;
+  skilltest) asset="skilltest-$target.tar.gz" ;;
+  *) err "bin '$bin' is neither skilltest nor skilltest.exe; $usage" ;;
 esac
 [ -f "$dir/$asset" ] || err "$dir has no $asset; check release.yml's archive name and that the upload step ran"
 [ -f "$dir/$asset.sha256" ] || err "$dir has no $asset.sha256; check release.yml's checksum setting"
 
 if command -v sha256sum >/dev/null 2>&1; then
-  actual="$(sha256sum "$dir/$asset" | awk '{print $1}')"
+  hashed="$(sha256sum "$dir/$asset")" || err "sha256sum could not read $dir/$asset; check its permissions and re-download it"
 else
-  actual="$(shasum -a 256 "$dir/$asset" | awk '{print $1}')"
+  hashed="$(shasum -a 256 "$dir/$asset")" || err "neither sha256sum nor a working shasum could hash $dir/$asset; install coreutils or perl's shasum and rerun"
 fi
-expected="$(tr -d '\r' <"$dir/$asset.sha256" | awk '{print $1}')"
+actual="${hashed%% *}"
+recorded="$(tr -d '\r' <"$dir/$asset.sha256")" || err "could not read $dir/$asset.sha256; check its permissions and re-download it"
+expected="${recorded%% *}"
 [ "$expected" = "$actual" ] ||
   err "checksum mismatch for $asset (its .sha256 says $expected, the archive hashes to $actual); re-run release.yml for $target"
 
 out="$dir/extracted"
-rm -rf "$out" && mkdir -p "$out"
+{ rm -rf "$out" && mkdir -p "$out"; } || err "could not prepare $out to extract into; check that $dir is writable"
 case $asset in
   *.zip)
-    if command -v unzip >/dev/null 2>&1; then
-      unzip -q "$dir/$asset" -d "$out" || err "could not extract $asset; download it and open it by hand"
-    else
-      pwsh -NoProfile -Command "Expand-Archive -LiteralPath '$dir/$asset' -DestinationPath '$out'" ||
-        err "could not extract $asset; download it and open it by hand"
-    fi
+    command -v unzip >/dev/null 2>&1 || err "unzip is not on PATH, so $asset cannot be opened; install unzip (Git for Windows' bash ships it) and rerun"
+    unzip -q "$dir/$asset" -d "$out" || err "could not extract $asset; download it and open it by hand"
     ;;
   *) tar -xzf "$dir/$asset" -C "$out" || err "could not extract $asset; download it and open it by hand" ;;
 esac

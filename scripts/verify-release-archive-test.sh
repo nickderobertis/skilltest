@@ -39,7 +39,7 @@ pack() {
   local target=$1 bin=$2 dir="$work/$1" asset
   { rm -rf "$dir" "$work/src" && mkdir -p "$dir" "$work/src"; } || fail "could not create $dir; check that $work is writable"
   { printf '#!/bin/sh\necho "skilltest %s"\n' "$3" >"$work/src/$bin" && chmod +x "$work/src/$bin"; } ||
-    fail "could not write the stand-in $bin"
+    fail "could not write the stand-in $bin into $work/src; check that $work is writable"
   case $bin in
     *.exe)
       asset="skilltest-$target.zip"
@@ -54,7 +54,7 @@ EOF
       ;;
     *)
       asset="skilltest-$target.tar.gz"
-      tar -czf "$dir/$asset" -C "$work/src" "$bin" || fail "could not tar the stand-in"
+      tar -czf "$dir/$asset" -C "$work/src" "$bin" || fail "could not tar the stand-in; check that tar and gzip are on PATH and $work is writable"
       ;;
   esac
   (cd "$dir" && checksum "$asset") || fail "could not checksum $asset; check that sha256sum or shasum is on PATH"
@@ -66,9 +66,9 @@ verify() { bash scripts/verify-release-archive.sh "$@" >"$work/out" 2>&1; }
 expect_red() {
   local what=$1 says=$2
   shift 2
-  if verify "$@"; then fail "the verifier passed an archive where $what"; fi
+  if verify "$@"; then fail "the verifier passed an archive where $what; restore the check in scripts/verify-release-archive.sh that refuses it"; fi
   grep -Fq -- "$says" "$work/out" ||
-    fail "the verifier refused an archive where $what, but not for that reason (expected it to say '$says')"
+    fail "the verifier refused an archive where $what, but not for that reason (expected it to say '$says'); fix the branch of scripts/verify-release-archive.sh that now reports it, or this case if it no longer produces that fault"
 }
 
 pack x86_64-unknown-linux-gnu skilltest 1.2.3
@@ -84,30 +84,44 @@ expect_red "the binary is from another release" "reports 'skilltest 1.2.3', not 
   "$work/x86_64-pc-windows-msvc" x86_64-pc-windows-msvc skilltest.exe 1.2.2
 
 pack x86_64-pc-windows-msvc skilltest.exe 1.2.3
-printf 'tampered' >>"$work/x86_64-pc-windows-msvc/skilltest-x86_64-pc-windows-msvc.zip"
+printf 'tampered' >>"$work/x86_64-pc-windows-msvc/skilltest-x86_64-pc-windows-msvc.zip" ||
+  fail "could not tamper with the stand-in zip; check that $work is writable"
 expect_red "the archive does not match its checksum" "checksum mismatch for skilltest-x86_64-pc-windows-msvc.zip" \
   "$work/x86_64-pc-windows-msvc" x86_64-pc-windows-msvc skilltest.exe 1.2.3
 
 pack aarch64-pc-windows-msvc skilltest 1.2.3
-mv "$work/aarch64-pc-windows-msvc/skilltest-aarch64-pc-windows-msvc.tar.gz" "$work/aarch64-pc-windows-msvc/skilltest-aarch64-pc-windows-msvc.zip"
-mv "$work/aarch64-pc-windows-msvc/skilltest-aarch64-pc-windows-msvc.tar.gz.sha256" "$work/aarch64-pc-windows-msvc/skilltest-aarch64-pc-windows-msvc.zip.sha256"
+{
+  mv "$work/aarch64-pc-windows-msvc/skilltest-aarch64-pc-windows-msvc.tar.gz" "$work/aarch64-pc-windows-msvc/skilltest-aarch64-pc-windows-msvc.zip" &&
+    mv "$work/aarch64-pc-windows-msvc/skilltest-aarch64-pc-windows-msvc.tar.gz.sha256" "$work/aarch64-pc-windows-msvc/skilltest-aarch64-pc-windows-msvc.zip.sha256"
+} || fail "could not rename the stand-in tarball as a zip; check that $work is writable"
 expect_red "the Windows archive holds no skilltest.exe" "could not extract skilltest-aarch64-pc-windows-msvc.zip" \
   "$work/aarch64-pc-windows-msvc" aarch64-pc-windows-msvc skilltest.exe 1.2.3
 
 pack x86_64-pc-windows-msvc skilltest.exe 1.2.3
-python3 - "$work/x86_64-pc-windows-msvc/skilltest-x86_64-pc-windows-msvc.zip" <<'EOF' || fail "could not rewrite the stand-in zip"
+python3 - "$work/x86_64-pc-windows-msvc/skilltest-x86_64-pc-windows-msvc.zip" <<'EOF' || fail "could not rewrite the stand-in zip; check that python3 is on PATH and $work is writable"
 import sys, zipfile
 with zipfile.ZipFile(sys.argv[1], "w") as z:
     z.writestr("skilltest", "#!/bin/sh\n")
 EOF
 (cd "$work/x86_64-pc-windows-msvc" && checksum skilltest-x86_64-pc-windows-msvc.zip) ||
-  fail "could not re-checksum the stand-in zip"
+  fail "could not re-checksum the stand-in zip; check that sha256sum or shasum is on PATH"
 expect_red "the Windows archive holds its binary without .exe" "holds no skilltest.exe at its root" \
   "$work/x86_64-pc-windows-msvc" x86_64-pc-windows-msvc skilltest.exe 1.2.3
 
-rm "$work/x86_64-unknown-linux-gnu/skilltest-x86_64-unknown-linux-gnu.tar.gz.sha256"
+rm "$work/x86_64-unknown-linux-gnu/skilltest-x86_64-unknown-linux-gnu.tar.gz.sha256" ||
+  fail "could not remove the stand-in checksum; check that $work is writable"
 expect_red "the checksum was not uploaded" "has no skilltest-x86_64-unknown-linux-gnu.tar.gz.sha256" \
   "$work/x86_64-unknown-linux-gnu" x86_64-unknown-linux-gnu skilltest 1.2.3
+
+pack x86_64-unknown-linux-gnu skilltest 1.2.3
+{ printf '#!/bin/sh\nexit 3\n' >"$work/src/skilltest" && tar -czf "$work/x86_64-unknown-linux-gnu/skilltest-x86_64-unknown-linux-gnu.tar.gz" -C "$work/src" skilltest &&
+  (cd "$work/x86_64-unknown-linux-gnu" && checksum skilltest-x86_64-unknown-linux-gnu.tar.gz); } ||
+  fail "could not repack the stand-in as a failing binary; check that tar is on PATH and $work is writable"
+expect_red "the binary does not run" "skilltest from skilltest-x86_64-unknown-linux-gnu.tar.gz did not run" \
+  "$work/x86_64-unknown-linux-gnu" x86_64-unknown-linux-gnu skilltest 1.2.3
+
+expect_red "the binary name escapes the archive" "bin '../skilltest' is neither skilltest nor skilltest.exe" \
+  "$work/x86_64-unknown-linux-gnu" x86_64-unknown-linux-gnu ../skilltest 1.2.3
 
 expect_red "it was called without a version" "usage: verify-release-archive.sh" \
   "$work/x86_64-unknown-linux-gnu" x86_64-unknown-linux-gnu skilltest
