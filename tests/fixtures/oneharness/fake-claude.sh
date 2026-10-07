@@ -104,10 +104,12 @@ reply="$(marker_text 'fake-reply:')"
 surfaced=""
 index=0
 
+# llmlint: ignore[tool_output_is_signal] Emits one record of Claude Code's `stream-json` transcript, which the real oneharness binary parses; its stdout is that protocol, one JSON record per transcript event, not human-facing output.
 emit_text() { # emit_text <text> — an assistant line of prose, as a real turn writes
     jq -cn --arg t "$1" '{type:"assistant", message:{content:[{type:"text", text:$t}]}}'
 }
 
+# llmlint: ignore[tool_output_is_signal] Emits the records of one tool call in Claude Code's `stream-json` transcript, which the real oneharness binary parses; its stdout is that protocol, one JSON record per transcript event, not human-facing output.
 emit_call() { # emit_call <index> <name> <input-json> <output-text>
     jq -cn --arg n "$2" \
         '{type:"assistant", message:{content:[{type:"thinking", thinking:("deciding to call " + $n)}]}}'
@@ -162,6 +164,7 @@ while IFS= read -r line; do
     index=$((index + 1))
 done < <(printf '%s\n' "$system" | grep 'fake-tool:' || true)
 
+# llmlint: ignore[tool_output_is_signal] The closing records of Claude Code's `stream-json` transcript, which the real oneharness binary parses; its stdout is that protocol, one JSON record per transcript event, not human-facing output.
 emit_text "$reply"
 jq -cn --arg t "$reply$surfaced" \
     '{type:"result", result:$t, session_id:"fake-claude-1", usage:{input_tokens:11, output_tokens:5}}'

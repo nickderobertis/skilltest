@@ -19,10 +19,10 @@ err() {
 
 usage="usage: verify-release-archive.sh <dir> <target> <bin> <version>; pass the download directory, a target triple, skilltest or skilltest.exe, and the release version X.Y.Z"
 [ $# -eq 4 ] && [ -d "$1" ] || err "$usage"
-dir=$1 target=$2 bin=$3 version=$4
+dir="$1" target="$2" bin="$3" version="$4"
 [[ $target =~ ^[A-Za-z0-9_]+(-[A-Za-z0-9_]+)+$ ]] || err "target '$target' is not a target triple; $usage"
 [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]] || err "version '$version' is not X.Y.Z; $usage"
-case $bin in
+case "$bin" in
   skilltest.exe) asset="skilltest-$target.zip" ;;
   skilltest) asset="skilltest-$target.tar.gz" ;;
   *) err "bin '$bin' is neither skilltest nor skilltest.exe; $usage" ;;
@@ -41,16 +41,26 @@ expected="${recorded%% *}"
 [ "$expected" = "$actual" ] ||
   err "checksum mismatch for $asset (its .sha256 says $expected, the archive hashes to $actual); re-run release.yml for $target"
 
-out="$dir/extracted"
-{ rm -rf "$out" && mkdir -p "$out"; } || err "could not prepare $out to extract into; check that $dir is writable"
-case $asset in
+# The archive must hold exactly the binary at its root, checked from its
+# listing before anything is written, so no entry can land outside $out.
+case "$asset" in
   *.zip)
     command -v unzip >/dev/null 2>&1 || err "unzip is not on PATH, so $asset cannot be opened; install unzip (Git for Windows' bash ships it) and rerun"
-    unzip -q "$dir/$asset" -d "$out" || err "could not extract $asset; download it and open it by hand"
+    members="$(unzip -Z1 "$dir/$asset" 2>&1)" || err "could not list $asset ($members); download it and open it by hand"
     ;;
+  *) members="$(tar -tzf "$dir/$asset" 2>&1)" || err "could not list $asset ($members); download it and open it by hand" ;;
+esac
+[ "$members" = "$bin" ] ||
+  err "$asset holds $(printf '%s' "$members" | tr '\n' ' ' | sed 's/ $//') rather than only $bin at its root, where scripts/install.sh and users look; check release.yml's bin and archive settings"
+
+out="$dir/extracted"
+{ rm -rf "$out" && mkdir -p "$out"; } || err "could not prepare $out to extract into; check that $dir is writable"
+case "$asset" in
+  *.zip) unzip -q "$dir/$asset" -d "$out" || err "could not extract $asset; download it and open it by hand" ;;
   *) tar -xzf "$dir/$asset" -C "$out" || err "could not extract $asset; download it and open it by hand" ;;
 esac
-[ -f "$out/$bin" ] || err "$asset holds no $bin at its root, where scripts/install.sh and users look; check release.yml's bin setting"
+{ [ -f "$out/$bin" ] && [ ! -L "$out/$bin" ]; } ||
+  err "$asset's $bin is not a regular file; check release.yml's bin setting"
 
 reported="$("$out/$bin" --version 2>&1)" ||
   err "$bin from $asset did not run ($reported); rebuild $target and re-run release.yml"
