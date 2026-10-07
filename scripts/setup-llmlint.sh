@@ -30,18 +30,11 @@
 # llmlint: ignore-file[robust_shell, tool_output_is_signal, boundary_inputs_validated] deliberate for a session-startup installer (see header): `set -e` is omitted so a flaky install can't abort the hook — the script owns its exit codes and always exits 0; success stays quiet while failures log-and-continue rather than block startup; and the toolchain is installed from PyPI (`uv tool install llmlint-cli`) whose wheels ship with Trusted Publishing + PEP 740 attestations, so no unvalidated external input is executed.
 set -uo pipefail
 
-# Version floor, as a PyPI constraint (the `llmlint-cli` package version tracks the
-# wrapped binary version). `uv tool install --upgrade` installs the newest release
-# satisfying it; oneharness comes along transitively at a compatible version.
-# llmlint >= 0.3.23 finds `oneharness` beside its own executable (so a lone
-# `uv tool install llmlint-cli` works), gives the whole-tree default the composed
-# llmlint.yml relies on (it omits `files.include`), restricts `--diff` to the
-# changed files (skipping empty diffs) so `just lint-llm-diff` judges only the
-# branch's changes, treats a plain `--diff-base <ref>` as three-dot/merge-base
-# (0.3.15), and ships the deterministic `validate` gate — config structure +
-# `llmlint: ignore` directives + fragment version bumps — that `just
-# lint-llm-validate` runs with no model call (0.3.17), and bundles config_lint v1.2
-# so `line_localizable_rules_require_attribution` is enforced (0.3.23).
+# Version floor, as a PyPI constraint (`llmlint-cli` tracks the binary's version);
+# `uv tool install --upgrade` takes the newest release satisfying it. 0.3.23 is the
+# create-repo minimum: it finds `oneharness` beside its own executable, scopes
+# `--diff` to the changed files, and ships the model-free `validate` gate with
+# config_lint v1.2 — what the `lint-llm*` recipes rely on.
 readonly LLMLINT_MIN="0.3.23"
 readonly BIN_DIR="$HOME/.local/bin"
 
