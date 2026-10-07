@@ -54,6 +54,7 @@ fn script(dir: &std::path::Path, name: &str, body: &str) -> PathBuf {
     path
 }
 
+// llmlint: ignore-block[e2e_not_mocked] A wire-format stub of `oneharness`, a separately published CLI, not a reproduction of it: it tests skilltest's own handling of its output (each classified `failure_kind`). The real binary is proven by crates/skilltest-cli/tests/oneharness_integration.rs (`just test-oneharness`, e2e-claude.yml) and ci.yml's `live-*` jobs.
 /// A fake `oneharness` that emits a single result with the given `failure_kind`,
 /// so the CLI's classified-error hint for that kind is exercised end to end.
 fn fake_oneharness(dir: &std::path::Path, failure_kind: &str) -> PathBuf {
@@ -66,7 +67,9 @@ fn fake_oneharness(dir: &std::path::Path, failure_kind: &str) -> PathBuf {
         ),
     )
 }
+// llmlint: ignore-end[e2e_not_mocked]
 
+// llmlint: ignore-block[e2e_not_mocked] A wire-format stub of `oneharness`, a separately published CLI, not a reproduction of it: it tests skilltest's own handling of its output (a failed `--stream` result). The real binary is proven by crates/skilltest-cli/tests/oneharness_integration.rs (`just test-oneharness`, e2e-claude.yml) and ci.yml's `live-*` jobs.
 /// A fake `oneharness` speaking the `run --stream` NDJSON protocol: a single
 /// terminal `{"type":"result","report":{…}}` line whose result has the given
 /// `status` (no `failure_kind`), so the streaming pipeline's failure path is
@@ -81,7 +84,9 @@ fn fake_oneharness_stream(dir: &std::path::Path, status: &str) -> PathBuf {
         ),
     )
 }
+// llmlint: ignore-end[e2e_not_mocked]
 
+// llmlint: ignore-block[e2e_not_mocked] Fakes only the paid model boundary: `skilltest-fake-provider` speaks the real `CommandProvider` protocol in place of a model. ci.yml's `live-*` jobs (live/claude, live/harness/<id>) drive the real one; see docs/e2e.md.
 fn run_passing_case(extra: &[&str]) -> Output {
     let mut cmd = Command::new(skilltest());
     cmd.arg("run")
@@ -92,6 +97,7 @@ fn run_passing_case(extra: &[&str]) -> Output {
         .args(extra);
     cmd.output().expect("skilltest run executes")
 }
+// llmlint: ignore-end[e2e_not_mocked]
 
 #[test]
 fn classified_provider_errors_print_their_hint() {
