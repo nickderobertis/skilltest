@@ -221,7 +221,7 @@ fn run_case_json(json: &str, extra: &[&str]) -> Output {
     static N: AtomicU64 = AtomicU64::new(0);
     // A per-call unique tag: these tests run in parallel, so a shared dir would
     // let one case.json clobber another's.
-    let dir = unique_dir(&format!("case-json-{}", N.fetch_add(1, Ordering::Relaxed)));
+    let dir = fresh_dir(&format!("case-json-{}", N.fetch_add(1, Ordering::Relaxed)));
     let file = dir.join("case.json");
     std::fs::write(&file, json).unwrap();
     let mut cmd = Command::new(skilltest());
@@ -288,7 +288,7 @@ fn case_json_array_runs_every_case() {
 fn case_json_resolves_relative_skill_against_the_working_directory() {
     // A code-defined case's `skill` resolves relative to CWD (the SDKs run the
     // CLI from the user's project), not to the temp file the JSON lives in.
-    let dir = unique_dir("case-json-cwd");
+    let dir = fresh_dir("case-json-cwd");
     let file = dir.join("case.json");
     std::fs::write(
         &file,
@@ -341,7 +341,7 @@ fn greeter_case_json(name: &str) -> String {
 fn case_json_combines_with_positional_yaml_paths() {
     // The two ingestion channels compose in one run: a positional YAML PATH
     // and a --case-json file both contribute cases to the same report.
-    let dir = unique_dir("case-json-combined");
+    let dir = fresh_dir("case-json-combined");
     let file = dir.join("inline.json");
     std::fs::write(&file, greeter_case_json("from_json")).unwrap();
     let out = Command::new(skilltest())
@@ -375,7 +375,7 @@ fn case_json_combines_with_positional_yaml_paths() {
 
 #[test]
 fn case_json_flag_is_repeatable() {
-    let dir = unique_dir("case-json-repeat");
+    let dir = fresh_dir("case-json-repeat");
     let first = dir.join("a.json");
     let second = dir.join("b.json");
     std::fs::write(&first, greeter_case_json("first")).unwrap();
@@ -409,7 +409,7 @@ fn case_json_malformed_exits_two() {
 fn yaml_case_with_typoed_eval_field_exits_two_naming_the_field() {
     // The same strictness through the YAML ingestion path: a typo'd key inside
     // an eval aborts the run with the field named.
-    let dir = unique_dir("yaml-eval-typo");
+    let dir = fresh_dir("yaml-eval-typo");
     let case_path = dir.join("typo.yaml");
     std::fs::write(
         &case_path,
@@ -755,8 +755,9 @@ fn help_exits_zero() {
     assert!(stdout.contains("validate"));
 }
 
-/// A fresh, unique temp directory for a test.
-fn unique_dir(tag: &str) -> PathBuf {
+/// An empty temp directory for a test, keyed by this process and `tag`: any
+/// contents a previous call left there are removed, so give each test its own tag.
+fn fresh_dir(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("skilltest-e2e-{}-{tag}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -765,7 +766,7 @@ fn unique_dir(tag: &str) -> PathBuf {
 
 #[test]
 fn init_scaffolds_a_runnable_project() {
-    let dir = unique_dir("init");
+    let dir = fresh_dir("init");
     let out = Command::new(skilltest())
         .arg("init")
         .arg(&dir)
@@ -792,7 +793,7 @@ fn init_scaffolds_a_runnable_project() {
 
 #[test]
 fn init_refuses_to_overwrite() {
-    let dir = unique_dir("init-clobber");
+    let dir = fresh_dir("init-clobber");
     let first = Command::new(skilltest())
         .arg("init")
         .arg(&dir)
@@ -979,7 +980,7 @@ fn stub_sequence_counts_restart_for_every_run() {
 fn one_item_stub_sequence_answers_every_call_like_a_single_stub() {
     // A one-item list is the single-stub form: no counter, oneharness's own
     // stateless stub, the same response and exit code on every call.
-    let dir = unique_dir("mock-oneitem");
+    let dir = fresh_dir("mock-oneitem");
     let case_path = dir.join("one.yaml");
     std::fs::write(
         &case_path,
@@ -1013,7 +1014,7 @@ fn one_item_stub_sequence_answers_every_call_like_a_single_stub() {
 fn two_stub_sequences_in_one_run_count_independently() {
     // Each sequence declaration has its own counter: interleaved calls to two
     // stubbed commands each walk their own responses.
-    let dir = unique_dir("mock-twosequences");
+    let dir = fresh_dir("mock-twosequences");
     std::fs::create_dir_all(dir.join("skill")).unwrap();
     std::fs::write(
         dir.join("skill/SKILL.md"),
@@ -1054,7 +1055,7 @@ fn two_stub_sequences_in_one_run_count_independently() {
 
 #[test]
 fn malformed_stub_sequences_are_usage_errors_before_any_run() {
-    let dir = unique_dir("mock-badsequence");
+    let dir = fresh_dir("mock-badsequence");
     let skill = fixtures().join("skills/poller");
     for (tag, stub, expect) in [
         ("empty", "[]", "at least one response"),
@@ -1106,7 +1107,7 @@ fn mock_violation_fails_not_called_and_reports_the_call() {
 fn invalid_mock_pattern_is_a_usage_error() {
     // An invalid regex must abort at load (exit 2) — never degrade to a rule
     // that silently matches nothing.
-    let dir = unique_dir("mock-badregex");
+    let dir = fresh_dir("mock-badregex");
     let case_path = dir.join("bad.yaml");
     std::fs::write(
         &case_path,
@@ -1126,7 +1127,7 @@ fn invalid_mock_pattern_is_a_usage_error() {
 fn unknown_mock_reference_is_a_usage_error_listing_names() {
     // A `called` eval naming a mock that doesn't exist is a loud usage error
     // that lists what is declared — a typo must never match nothing.
-    let dir = unique_dir("mock-unknown");
+    let dir = fresh_dir("mock-unknown");
     let case_path = dir.join("typo.yaml");
     std::fs::write(
         &case_path,
@@ -1150,7 +1151,7 @@ fn cli_mocks_file_applies_shared_declarations_to_every_case() {
     // Code-level mocks (what the SDKs send) ride `--mocks <file>`: the case
     // declares none itself, yet the shared stub intercepts and its name
     // resolves for the case's `called` eval.
-    let dir = unique_dir("mock-clifile");
+    let dir = fresh_dir("mock-clifile");
     let mocks_path = dir.join("mocks.yaml");
     std::fs::write(
         &mocks_path,
