@@ -144,6 +144,14 @@ expect_red "the tarball is corrupt" "could not list skilltest-x86_64-unknown-lin
   "$work/x86_64-unknown-linux-gnu" x86_64-unknown-linux-gnu skilltest 1.2.3
 
 pack x86_64-unknown-linux-gnu skilltest 1.2.3
+{ rm -f "$work/src/skilltest" && ln -s /bin/true "$work/src/skilltest" &&
+  tar -czf "$work/x86_64-unknown-linux-gnu/skilltest-x86_64-unknown-linux-gnu.tar.gz" -C "$work/src" skilltest &&
+  (cd "$work/x86_64-unknown-linux-gnu" && checksum skilltest-x86_64-unknown-linux-gnu.tar.gz); } ||
+  fail "could not repack the stand-in as a symlink; check that tar is on PATH and $work is writable"
+expect_red "the binary is a link to a file outside the archive" "skilltest-x86_64-unknown-linux-gnu.tar.gz's skilltest is not a regular file" \
+  "$work/x86_64-unknown-linux-gnu" x86_64-unknown-linux-gnu skilltest 1.2.3
+
+pack x86_64-unknown-linux-gnu skilltest 1.2.3
 expect_red "the archive was never uploaded" "has no skilltest-aarch64-unknown-linux-gnu.tar.gz" \
   "$work/x86_64-unknown-linux-gnu" aarch64-unknown-linux-gnu skilltest 1.2.3
 
