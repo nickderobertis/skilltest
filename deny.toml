@@ -4,6 +4,9 @@
 [advisories]
 version = 2
 yanked = "deny"
+ignore = [
+    { id = "RUSTSEC-2024-0449", reason = "unsafe-libyaml is unmaintained (an unmaintained notice, not a known vulnerability); it arrives via serde_yaml 0.9.34+deprecated, a direct dependency of skilltest-core and skilltest-cli. Remove this entry once this repository's YAML parsing moves to serde_norway." },
+]
 
 [licenses]
 version = 2
