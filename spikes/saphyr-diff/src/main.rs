@@ -18,7 +18,7 @@ use std::time::Instant;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::Value;
-use serde_saphyr::{DuplicateKeyPolicy, Options, SerializerOptions};
+use serde_saphyr::{DuplicateKeyPolicy, MergeKeyPolicy, Options, SerializerOptions};
 use skilltest_core::skill::{load_skill, validate_skill, Frontmatter, SkillDefinition};
 use skilltest_core::{
     ApiJudgeConfig, ApiVendor, Config, Finding, JudgeConfig, MockDecl, TestCase,
@@ -68,6 +68,12 @@ fn presets() -> Vec<Engine> {
     let mut o = Options::default();
     o.duplicate_keys = DuplicateKeyPolicy::FirstWins;
     v.push(Engine::Saphyr("duplicate_keys=FirstWins", o));
+    let mut o = Options::default();
+    o.merge_keys = MergeKeyPolicy::AsOrdinary;
+    v.push(Engine::Saphyr("merge_keys=AsOrdinary", o));
+    let mut o = Options::default();
+    o.merge_keys = MergeKeyPolicy::Error;
+    v.push(Engine::Saphyr("merge_keys=Error", o));
     let mut o = Options::default();
     o.legacy_octal_numbers = true;
     v.push(Engine::Saphyr("legacy_octal_numbers", o));
@@ -193,7 +199,12 @@ fn real_docs(root: &Path) -> Vec<Doc> {
 fn spike_docs() -> Vec<Doc> {
     let dir = spike_dir().join("fixtures");
     let mut docs = Vec::new();
-    for name in ["python.json", "typescript.json"] {
+    for name in [
+        "python.json",
+        "typescript.json",
+        "python-astral.json",
+        "typescript-astral.json",
+    ] {
         docs.push(Doc {
             kind: Kind::Mocks,
             origin: Origin::Real,
@@ -283,8 +294,6 @@ fn probe_docs(dir: &Path) -> Vec<Doc> {
         (Probe, Case, "multi-document", format!("{CASE_BASE}---\n{CASE_BASE}")),
         (Probe, Case, "explicit --- and ...", format!("---\n{CASE_BASE}...\n")),
         (Probe, Case, "tab indentation", "skill: ./x\ninput: hi\nevals:\n\t- type: boolean\n\t  criterion: c\n".into()),
-        (Probe, Case, "rewrite scalar typing", case_mock("  - match: { tool: read }\n    rewrite: { n: 010, o: 0o17, h: 0x1F, b: yes, B: True, f: .inf, nan: .nan, d: 2026-01-01, k: ~, empty: , big: 18446744073709551616, e: 1e3, s: '010', neg: -0, y: y, off: off }\n")),
-        (Probe, Case, "rewrite tagged + non-string key", case_mock("  - match: { tool: read }\n    rewrite: { file_path: !!str 12, 1: one, true: t, null: n }\n")),
         (Probe, Case, "rewrite block scalars", case_mock("  - match: { tool: read }\n    rewrite:\n      lit: |\n        a\n        b\n      fold: >-\n        c\n        d\n")),
         (Probe, Config, "empty file", String::new()),
         (Probe, Config, "comments only", "# nothing configured yet\n".into()),
@@ -294,6 +303,9 @@ fn probe_docs(dir: &Path) -> Vec<Doc> {
         (Probe, Config, "platforms scalar", "platforms: claude-code\n".into()),
         (Probe, Config, "spy: yes", "spy: yes\n".into()),
         (Probe, Config, "judge_model: null", "judge_model: null\n".into()),
+        (Probe, Config, "judge_model: (empty)", "judge_model:\nmax_turns: 3\n".into()),
+        (Probe, Case, "input: (empty)", "skill: ./x\ninput:\nevals:\n  - type: boolean\n    criterion: c\n".into()),
+        (Probe, Case, "criterion: ~", "skill: ./x\ninput: hi\nevals:\n  - type: boolean\n    criterion: ~\n".into()),
         (Probe, Mocks, "empty list", "[]\n".into()),
         (Probe, Mocks, "YAML list", "- match: { tool: bash }\n  deny: no\n".into()),
         (Probe, Skill, "name: 123", "---\nname: 123\ndescription: a description long enough\n---\nbody\n".into()),
@@ -302,8 +314,36 @@ fn probe_docs(dir: &Path) -> Vec<Doc> {
         (Probe, Skill, "duplicate name", "---\nname: x\nname: y\ndescription: a description long enough\n---\nbody\n".into()),
         (Probe, Skill, "comments-only frontmatter", "---\n# todo\n---\nbody\n".into()),
         (Probe, Skill, "license: ~", "---\nname: x\ndescription: a description long enough\nlicense: ~\n---\nbody\n".into()),
-        (Probe, Skill, "description: folded", "---\nname: x\ndescription: >\n  A long\n  folded description.\n---\nbody\n".into()),
+        (Probe, Skill, "description: > as last key", "---\nname: x\ndescription: >\n  A long\n  folded description.\n---\nbody\n".into()),
+        (Probe, Skill, "description: | as last key", "---\nname: x\ndescription: |\n  A long\n  literal description.\n---\nbody\n".into()),
+        (Probe, Skill, "description: >- as last key", "---\nname: x\ndescription: >-\n  A long\n  stripped description.\n---\nbody\n".into()),
+        (Probe, Skill, "description: > then another key", "---\nname: x\ndescription: >\n  A long\n  folded description.\nlicense: MIT\n---\nbody\n".into()),
+        (Probe, Skill, "description: (empty)", "---\nname: x\ndescription:\n---\nbody\n".into()),
+        (Probe, Skill, "CRLF frontmatter", "---\r\nname: x\r\ndescription: a description long enough\r\n---\r\nbody\r\n".into()),
     ];
+    // One probe per scalar spelling inside `rewrite` (a serde_json::Value), so
+    // each spelling's typing is measured on its own.
+    let mut probes = probes;
+    for scalar in [
+        "010", "0o17", "0x1F", "yes", "True", "off", "y", ".inf", ".nan", "2026-01-01",
+        "~", "", "18446744073709551616", "1e3", "'010'", "-0", "1_000", "!!str 12",
+        "!!int '7'", "!custom x",
+    ] {
+        probes.push((
+            Probe,
+            Case,
+            Box::leak(format!("rewrite value `{scalar}`").into_boxed_str()),
+            case_mock(&format!("  - match: {{ tool: read }}\n    rewrite: {{ v: {scalar} }}\n")),
+        ));
+    }
+    for key in ["1", "true", "null", "~", "[a, b]"] {
+        probes.push((
+            Probe,
+            Case,
+            Box::leak(format!("rewrite key `{key}`").into_boxed_str()),
+            case_mock(&format!("  - match: {{ tool: read }}\n    rewrite: {{ {key}: v }}\n")),
+        ));
+    }
     let mut docs = Vec::new();
     for (i, (origin, kind, label, text)) in probes.into_iter().enumerate() {
         let path = if kind == Skill {
@@ -522,6 +562,8 @@ struct Diff {
     after: Outcome,
     /// Option presets under which serde-saphyr matches serde_yaml.
     reproduced_by: Vec<&'static str>,
+    /// serde-saphyr's outcome with `with_snippet: false`, when it differs.
+    no_snippet: Option<Outcome>,
 }
 
 fn show(o: &Outcome) -> String {
@@ -551,6 +593,9 @@ fn check(
     if before == after {
         return true;
     }
+    let mut o = Options::default();
+    o.with_snippet = false;
+    let no_snippet = Some(f(&Engine::Saphyr("with_snippet=false", o))).filter(|n| *n != after);
     let mut reproduced_by = Vec::new();
     for p in presets() {
         if f(&p) == before {
@@ -567,6 +612,7 @@ fn check(
         before,
         after,
         reproduced_by,
+        no_snippet,
     });
     false
 }
@@ -597,6 +643,7 @@ fn run_doc(doc: &Doc, diffs: &mut Vec<Diff>, failures: &mut Vec<String>) {
             check(diffs, doc, "typed read", &|e| dbg(config_load(e, &p)));
             check(diffs, doc, "rewrite values (schema-less)", &|e| {
                 config_load(e, &p).map(|c| rewrites(&c.mocks).join("\n"))
+                    .or_else(|_| Ok("<load failed: see typed read>".into()))
             });
         }
         Kind::Case => {
@@ -610,12 +657,14 @@ fn run_doc(doc: &Doc, diffs: &mut Vec<Diff>, failures: &mut Vec<String>) {
             check(diffs, doc, "typed read", &|e| dbg(case_load(e, &p)));
             check(diffs, doc, "rewrite values (schema-less)", &|e| {
                 case_load(e, &p).map(|c| rewrites(&c.mocks).join("\n"))
+                    .or_else(|_| Ok("<load failed: see typed read>".into()))
             });
         }
         Kind::Mocks => {
             check(diffs, doc, "typed read", &|e| dbg(mocks_load(e, &p)));
             check(diffs, doc, "rewrite values (schema-less)", &|e| {
                 mocks_load(e, &p).map(|m| rewrites(&m).join("\n"))
+                    .or_else(|_| Ok("<load failed: see typed read>".into()))
             });
         }
         Kind::Skill => {
@@ -757,15 +806,21 @@ fn writes(name: &str, value: &Config) {
 // Timing
 // ---------------------------------------------------------------------------
 
+/// Best (minimum) mean over 5 rounds of `iters` parses, in µs per parse: the
+/// minimum is the least host-load-sensitive estimate on a shared machine.
 fn time<F: FnMut()>(iters: u32, mut f: F) -> f64 {
     for _ in 0..iters / 10 {
         f();
     }
-    let start = Instant::now();
-    for _ in 0..iters {
-        f();
-    }
-    start.elapsed().as_secs_f64() * 1e6 / f64::from(iters)
+    (0..5)
+        .map(|_| {
+            let start = Instant::now();
+            for _ in 0..iters {
+                f();
+            }
+            start.elapsed().as_secs_f64() * 1e6 / f64::from(iters)
+        })
+        .fold(f64::INFINITY, f64::min)
 }
 
 fn timing(docs: &[Doc]) {
@@ -777,7 +832,7 @@ fn timing(docs: &[Doc]) {
         .unwrap();
     let (n, doc, text) = largest;
     println!("\n== parse time: largest real YAML document: {} ({n} bytes, {:?}) ==", doc.label, doc.kind);
-    let iters = 20_000;
+    let iters = 5_000;
     macro_rules! typed {
         ($t:ty) => {{
             let a = time(iters, || {
@@ -794,7 +849,7 @@ fn timing(docs: &[Doc]) {
         Kind::Case => typed!(TestCase),
         _ => typed!(Value),
     };
-    println!("typed ({:?}): serde_yaml {a:.2} µs/parse, serde-saphyr {b:.2} µs/parse ({iters} iterations, release build)", doc.kind);
+    println!("typed ({:?}): serde_yaml {a:.2} µs/parse, serde-saphyr {b:.2} µs/parse (best of 5 rounds x {iters}, release build)", doc.kind);
     let (a, b) = typed!(Value);
     let c = time(iters, || {
         use saphyr::LoadableYamlNode;
@@ -857,6 +912,9 @@ fn main() {
                 println!("[DIFF] {} :: {}", d.doc, d.check);
                 println!("  serde_yaml   {}", show(&d.before));
                 println!("  serde-saphyr {}", show(&d.after));
+                if let Some(n) = &d.no_snippet {
+                    println!("  serde-saphyr with_snippet=false {}", show(n));
+                }
                 let both_err = d.before.is_err() && d.after.is_err();
                 if both_err {
                     println!("  (both reject; message text differs)");

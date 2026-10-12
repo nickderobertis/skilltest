@@ -1,0 +1,1 @@
+[{"name": "__mock_0", "match": {"contains": "cat"}, "rewrite": {"command": "echo \ud83d\ude00"}}]

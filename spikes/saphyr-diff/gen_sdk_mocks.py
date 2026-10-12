@@ -31,20 +31,29 @@ mocks = [
             "zeta": 1,
             "alpha": [True, None, 1.5, "s", "yes", "010"],
             "nested": {"b": 2, "a": {"c": []}},
-            "unicode": "café — \U0001f600",
+            "unicode": "café — ü",
             "big": 2**63,
         },
     ),
 ]
-decls = compile_decls(mocks)
+# A character outside the Basic Multilingual Plane: Python's json.dump writes
+# it as a UTF-16 surrogate-pair escape (`\ud83d\ude00`), node writes it raw.
+astral = [rewrite("cat", input={"command": "echo \U0001f600"})]
+
+
+def write(name: str, decls: list) -> None:
+    with (OUT / f"python{name}.json").open("w") as handle:
+        json.dump(decls, handle)
+    node = subprocess.run(
+        ["node", "-e", "process.stdout.write(JSON.stringify(JSON.parse(require('fs').readFileSync(0,'utf8'))))"],
+        input=json.dumps(decls),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    (OUT / f"typescript{name}.json").write_text(node.stdout)
+
+
 OUT.mkdir(parents=True, exist_ok=True)
-with (OUT / "python.json").open("w") as handle:
-    json.dump(decls, handle)
-node = subprocess.run(
-    ["node", "-e", "process.stdout.write(JSON.stringify(JSON.parse(require('fs').readFileSync(0,'utf8'))))"],
-    input=json.dumps(decls),
-    capture_output=True,
-    text=True,
-    check=True,
-)
-(OUT / "typescript.json").write_text(node.stdout)
+write("", compile_decls(mocks))
+write("-astral", compile_decls(astral))
