@@ -1009,6 +1009,16 @@ fn timing(docs: &[Doc]) {
 
 // ---------------------------------------------------------------------------
 
+/// Compile-time: `serde_saphyr::Error` can replace `serde_yaml::Error` as
+/// `skilltest_core::Error::Yaml`'s `#[source]` without losing a bound the
+/// current error type has.
+const _: fn() = || {
+    fn bounds<E: std::error::Error + Send + Sync + 'static>() {}
+    bounds::<serde_yaml::Error>();
+    bounds::<serde_saphyr::Error>();
+    bounds::<skilltest_core::Error>();
+};
+
 fn main() {
     let root = repo_root();
     let scratch = std::env::temp_dir().join(format!("saphyr-diff-{}", std::process::id()));
