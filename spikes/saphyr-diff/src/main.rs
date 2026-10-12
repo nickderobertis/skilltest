@@ -123,6 +123,8 @@ enum Origin {
     Probe,
     /// One of the error cases the task names.
     Error,
+    /// A real document of another repository (`--external <dir>`, read-only).
+    External,
 }
 
 struct Doc {
@@ -230,6 +232,53 @@ fn spike_docs() -> Vec<Doc> {
             label: format!("variants/{name}"),
             path,
         });
+    }
+    docs
+}
+
+/// Real documents of another checkout, read-only: every SKILL.md, every
+/// `skilltest.yaml` (config), and every other YAML file whose top level has
+/// both `skill` and `evals` (a test case).
+fn external_docs(dir: &Path) -> Vec<Doc> {
+    fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        for e in entries.flatten() {
+            let p = e.path();
+            let name = e.file_name().to_string_lossy().to_string();
+            if p.is_dir() {
+                if !["node_modules", "target", ".git", ".venv", "dist"].contains(&name.as_str()) {
+                    walk(&p, out);
+                }
+            } else {
+                out.push(p);
+            }
+        }
+    }
+    let mut files = Vec::new();
+    walk(dir, &mut files);
+    files.sort();
+    let mut docs = Vec::new();
+    for path in files {
+        let rel = path.strip_prefix(dir).unwrap_or(&path).display().to_string();
+        let label = format!("{}/{rel}", dir.file_name().map_or(String::new(), |n| n.to_string_lossy().to_string()));
+        let name = path.file_name().unwrap().to_string_lossy().to_string();
+        let kind = if name == "SKILL.md" {
+            Some(Kind::Skill)
+        } else if name == "skilltest.yaml" {
+            Some(Kind::Config)
+        } else if name.ends_with(".yaml") || name.ends_with(".yml") {
+            let text = std::fs::read_to_string(&path).unwrap_or_default();
+            let is_case = ["skill", "evals"].iter().all(|k| {
+                text.lines().any(|l| l.starts_with(&format!("{k}:")))
+            });
+            is_case.then_some(Kind::Case)
+        } else {
+            None
+        };
+        if let Some(kind) = kind {
+            let path = if kind == Kind::Skill { path.parent().unwrap().to_path_buf() } else { path };
+            docs.push(Doc { kind, origin: Origin::External, label, path });
+        }
     }
     docs
 }
@@ -560,10 +609,24 @@ struct Diff {
     check: String,
     before: Outcome,
     after: Outcome,
-    /// Option presets under which serde-saphyr matches serde_yaml.
+    /// Option presets under which serde-saphyr matches serde_yaml exactly.
     reproduced_by: Vec<&'static str>,
+    /// Presets under which it accepts/rejects the same and reads the same
+    /// value (error wording aside).
+    accepts_like: Vec<&'static str>,
     /// serde-saphyr's outcome with `with_snippet: false`, when it differs.
     no_snippet: Option<Outcome>,
+}
+
+fn clip(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        return s.to_string();
+    }
+    let mut end = max;
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}… [{} bytes]", &s[..end], s.len())
 }
 
 fn show(o: &Outcome) -> String {
@@ -571,12 +634,37 @@ fn show(o: &Outcome) -> String {
         Ok(s) => ("ok", s.as_str()),
         Err(s) => ("ERROR", s.as_str()),
     };
-    let body = if body.len() > 1200 {
-        format!("{}… [{} bytes]", &body[..1200], body.len())
-    } else {
-        body.to_string()
+    format!("{tag}: {}", clip(body, 1200).replace('\n', "\n        "))
+}
+
+/// For two long successful outcomes, the region around their first
+/// difference (so a one-byte change deep in a document is visible).
+fn focus(a: &Outcome, b: &Outcome) -> Option<String> {
+    let (Ok(a), Ok(b)) = (a, b) else { return None };
+    if a.len() <= 1200 && b.len() <= 1200 {
+        return None;
+    }
+    let at = a
+        .char_indices()
+        .zip(b.chars())
+        .find(|((_, x), y)| x != y)
+        .map_or(a.len().min(b.len()), |((i, _), _)| i);
+    let mut start = at.saturating_sub(120);
+    while !a.is_char_boundary(start) {
+        start -= 1;
+    }
+    let window = |s: &str| {
+        let mut end = (at + 120).min(s.len());
+        while !s.is_char_boundary(end) {
+            end += 1;
+        }
+        format!("{:?}", &s[start.min(s.len())..end])
     };
-    format!("{tag}: {}", body.replace('\n', "\n        "))
+    Some(format!(
+        "first difference at byte {at}:\n    serde_yaml   …{}…\n    serde-saphyr …{}…",
+        window(a),
+        window(b)
+    ))
 }
 
 /// One check: run `f` with serde_yaml and serde-saphyr defaults; on a
@@ -597,10 +685,20 @@ fn check(
     o.with_snippet = false;
     let no_snippet = Some(f(&Engine::Saphyr("with_snippet=false", o))).filter(|n| *n != after);
     let mut reproduced_by = Vec::new();
+    let mut accepts_like = Vec::new();
     for p in presets() {
-        if f(&p) == before {
-            if let Engine::Saphyr(n, _) = p {
+        let got = f(&p);
+        if let Engine::Saphyr(n, _) = p {
+            if got == before {
                 reproduced_by.push(n);
+            }
+            let alike = match (&got, &before) {
+                (Ok(x), Ok(y)) => x == y,
+                (Err(_), Err(_)) => true,
+                _ => false,
+            };
+            if alike {
+                accepts_like.push(n);
             }
         }
     }
@@ -612,6 +710,7 @@ fn check(
         before,
         after,
         reproduced_by,
+        accepts_like,
         no_snippet,
     });
     false
@@ -710,6 +809,56 @@ fn tree_diffs(docs: &[Doc]) -> Vec<(String, Outcome, Outcome)> {
         }
     }
     out
+}
+
+/// Classify every SKILL.md frontmatter difference (real and external) by cause.
+fn frontmatter_causes(docs: &[Doc]) {
+    let mut same = 0;
+    let mut newline: Vec<(String, Vec<&str>)> = Vec::new();
+    let mut other = Vec::new();
+    let mut considered = 0;
+    for doc in docs.iter().filter(|d| {
+        d.kind == Kind::Skill && matches!(d.origin, Origin::Real | Origin::External)
+    }) {
+        let Some(fm) = doc.yaml() else { continue };
+        considered += 1;
+        let a = serde_yaml::from_str::<Frontmatter>(&fm).map_err(|e| e.to_string());
+        let b = serde_saphyr::from_str::<Frontmatter>(&fm).map_err(|e| e.to_string());
+        match (&a, &b) {
+            (Ok(a), Ok(b)) => {
+                let fields = [
+                    ("name", &a.name, &b.name),
+                    ("description", &a.description, &b.description),
+                    ("license", &a.license, &b.license),
+                ];
+                let differing: Vec<_> = fields.iter().filter(|(_, x, y)| x != y).collect();
+                if differing.is_empty() {
+                    same += 1;
+                } else if differing.iter().all(|(_, x, y)| {
+                    matches!((x, y), (Some(x), Some(y)) if format!("{x}\n") == *y)
+                }) {
+                    newline.push((doc.label.clone(), differing.iter().map(|(n, _, _)| *n).collect()));
+                } else {
+                    other.push(format!("{}: {:?} vs {:?}", doc.label, a, b));
+                }
+            }
+            (Err(_), Err(_)) => same += 1,
+            _ => other.push(format!("{}: {:?} vs {:?}", doc.label, a.as_ref().map(|_| "ok"), b.as_ref().map(|_| "ok"))),
+        }
+    }
+    println!("\n== SKILL.md frontmatter differences by cause (real + external, typed Frontmatter) ==");
+    println!("{considered} frontmatters: {same} identical, {} differ only by a trailing \\n serde-saphyr adds to a field, {} other", newline.len(), other.len());
+    let mut by_field = std::collections::BTreeMap::new();
+    for (_, fields) in &newline {
+        *by_field.entry(fields.join("+")).or_insert(0) += 1;
+    }
+    println!("  trailing-newline fields: {by_field:?}");
+    for (label, _) in newline.iter().take(5) {
+        println!("  e.g. {label}");
+    }
+    for o in &other {
+        println!("  OTHER {}", clip(o, 600));
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -868,17 +1017,28 @@ fn main() {
     let mut docs = real_docs(&root);
     docs.extend(spike_docs());
     docs.extend(probe_docs(&scratch));
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    for pair in args.chunks(2) {
+        match pair {
+            [flag, dir] if flag == "--external" => docs.extend(external_docs(Path::new(dir))),
+            _ => {
+                eprintln!("usage: run.sh [--external <checkout-dir>]...");
+                std::process::exit(2);
+            }
+        }
+    }
 
     println!("serde_yaml 0.9.34 vs serde-saphyr 1.3.0 (+ saphyr 0.2.1 tree)");
     for kind in [Kind::Config, Kind::Case, Kind::Skill, Kind::Mocks] {
         let count = |o| docs.iter().filter(|d| d.kind == kind && d.origin == o).count();
         println!(
-            "  {:<42} real {:>2}, variant {:>2}, probe {:>2}, error-case {:>2}",
+            "  {:<42} real {:>2}, variant {:>2}, probe {:>2}, error-case {:>2}, external {:>3}",
             kind.label(),
             count(Origin::Real),
             count(Origin::Variant),
             count(Origin::Probe),
-            count(Origin::Error)
+            count(Origin::Error),
+            count(Origin::External)
         );
     }
 
@@ -890,7 +1050,13 @@ fn main() {
 
     for kind in [Kind::Config, Kind::Case, Kind::Skill, Kind::Mocks] {
         println!("\n== {} ==", kind.label());
-        for origin in [Origin::Real, Origin::Variant, Origin::Probe, Origin::Error] {
+        for origin in [
+            Origin::Real,
+            Origin::External,
+            Origin::Variant,
+            Origin::Probe,
+            Origin::Error,
+        ] {
             let n_docs = docs.iter().filter(|d| d.kind == kind && d.origin == origin).count();
             if n_docs == 0 {
                 continue;
@@ -912,6 +1078,9 @@ fn main() {
                 println!("[DIFF] {} :: {}", d.doc, d.check);
                 println!("  serde_yaml   {}", show(&d.before));
                 println!("  serde-saphyr {}", show(&d.after));
+                if let Some(f) = focus(&d.before, &d.after) {
+                    println!("  {f}");
+                }
                 if let Some(n) = &d.no_snippet {
                     println!("  serde-saphyr with_snippet=false {}", show(n));
                 }
@@ -923,9 +1092,21 @@ fn main() {
                 } else {
                     println!("  reproduced by: {}", d.reproduced_by.join(", "));
                 }
+                if !both_err && d.reproduced_by.is_empty() {
+                    if d.accepts_like.is_empty() {
+                        println!("  same accept/reject + value (wording aside) under: no Options preset");
+                    } else {
+                        println!(
+                            "  same accept/reject + value (wording aside) under: {}",
+                            d.accepts_like.join(", ")
+                        );
+                    }
+                }
             }
         }
     }
+
+    frontmatter_causes(&docs);
 
     println!("\n== serde_yaml Value vs saphyr YamlOwned tree (schema-less, whole document) ==");
     let td = tree_diffs(&docs);
