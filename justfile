@@ -202,8 +202,8 @@ upgrade:
 # Deterministic SVGs of the real CLI output, rendered by `freeze` from a vendored
 # pinned font, gated/galleried/PR-commented by screencomp (see
 # screenshots/AGENTS.md). Regenerating is out of the gate; CI's Visual-docs
-# workflow owns the comparison, and the pre-push guard regenerates the baseline
-# locally on drift.
+# workflow owns the comparison; use screenshots-bless to refresh the baseline
+# locally after an intended change.
 
 # Install the pinned screenshot renderer (`freeze`) on demand. Needs Go.
 screenshots-tools:

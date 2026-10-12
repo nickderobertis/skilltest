@@ -108,11 +108,10 @@ Regenerate it when the run/report format changes (`crates/skilltest-core/src/rep
 ## The strict gate
 
 CI (`fail-on-drift: true`) fails when a capture diverges from the committed
-baseline. The local pre-push guard (`.githooks/pre-push`, enable with
-`git config core.hooksPath .githooks`) re-captures **only** when a
-`[guard].paths` file changes (`screencomp.toml`), and on drift it regenerates the
-baseline, builds a review gallery (`shots/review/index.html`), and blocks the
-push so you commit the refreshed baseline + README images deliberately.
+baseline. Ordinary Git pushes do not capture or classify screenshots. For local
+visual review, run
+`screencomp gallery --input shots/current --output shots/review` and open
+`shots/review/index.html`.
 
 ## Changing the screenshots
 
