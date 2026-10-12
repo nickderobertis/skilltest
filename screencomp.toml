@@ -23,10 +23,9 @@ label = "Format"
 values = ["human", "json"]
 
 [guard]
-# Local pre-push guard (.githooks/pre-push): re-capture only when something that
-# can change the rendered output changes — the report/eval formatters, the CLI
-# surface, the scaffold text, the fake provider, the capture machinery, or the
-# fixtures/font.
+# Paths for manual `screencomp scope` queries: changes to the report/eval
+# formatters, CLI surface, scaffold text, fake provider, capture machinery, or
+# fixtures/font can affect the rendered output. Git pushes do not run capture.
 paths = [
   "crates/skilltest-core/src/report.rs",
   "crates/skilltest-core/src/eval.rs",
