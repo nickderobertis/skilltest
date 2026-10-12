@@ -87,7 +87,17 @@ fn presets() -> Vec<Engine> {
     o.strict_booleans = true;
     o.with_snippet = false;
     v.push(Engine::Saphyr("strict_booleans+with_snippet=false", o));
+    v.push(recommended());
     v
+}
+
+/// The option set the report recommends, measured as one preset.
+fn recommended() -> Engine {
+    let mut o = Options::default();
+    o.strict_booleans = true;
+    o.with_snippet = false;
+    o.merge_keys = MergeKeyPolicy::Error;
+    Engine::Saphyr("RECOMMENDED(strict_booleans+with_snippet=false+merge_keys=Error)", o)
 }
 
 // ---------------------------------------------------------------------------
@@ -818,7 +828,7 @@ fn frontmatter_causes(docs: &[Doc]) {
     let mut other = Vec::new();
     let mut considered = 0;
     for doc in docs.iter().filter(|d| {
-        d.kind == Kind::Skill && matches!(d.origin, Origin::Real | Origin::External)
+        d.kind == Kind::Skill && matches!(d.origin, Origin::Real | Origin::External | Origin::Probe)
     }) {
         let Some(fm) = doc.yaml() else { continue };
         considered += 1;
@@ -846,13 +856,85 @@ fn frontmatter_causes(docs: &[Doc]) {
             _ => other.push(format!("{}: {:?} vs {:?}", doc.label, a.as_ref().map(|_| "ok"), b.as_ref().map(|_| "ok"))),
         }
     }
-    println!("\n== SKILL.md frontmatter differences by cause (real + external, typed Frontmatter) ==");
+    println!("\n== SKILL.md frontmatter differences by cause (real + external + probe, typed Frontmatter) ==");
     println!("{considered} frontmatters: {same} identical, {} differ only by a trailing \\n serde-saphyr adds to a field, {} other", newline.len(), other.len());
     let mut by_field = std::collections::BTreeMap::new();
     for (_, fields) in &newline {
         *by_field.entry(fields.join("+")).or_insert(0) += 1;
     }
     println!("  trailing-newline fields: {by_field:?}");
+    // Candidate code changes for load_skill, each judged over every
+    // frontmatter: does it make serde-saphyr's Frontmatter equal serde_yaml's?
+    //  C1: when the frontmatter text's last line is indented, strip one
+    //      trailing '\n' from every string field.
+    //  C2: read the fields as `Spanned<String>`; strip one trailing '\n' from
+    //      a field only when its span ends at the end of the frontmatter text.
+    #[derive(serde::Deserialize)]
+    struct SpannedFm {
+        name: Option<serde_saphyr::Spanned<String>>,
+        description: Option<serde_saphyr::Spanned<String>>,
+        license: Option<serde_saphyr::Spanned<String>>,
+    }
+    let mut tally = [(0, Vec::new(), Vec::new()), (0, Vec::new(), Vec::new())];
+    for doc in docs.iter().filter(|d| d.kind == Kind::Skill) {
+        let Some(fm) = doc.yaml() else { continue };
+        let (Ok(a), Ok(b)) = (
+            serde_yaml::from_str::<Frontmatter>(&fm),
+            serde_saphyr::from_str::<Frontmatter>(&fm),
+        ) else {
+            continue;
+        };
+        let before_equal = format!("{a:?}") == format!("{b:?}");
+        let mut c1 = b.clone();
+        if fm.lines().last().is_some_and(|l| l.starts_with([' ', '\t'])) {
+            for f in [&mut c1.name, &mut c1.description, &mut c1.license] {
+                if let Some(v) = f.as_mut() {
+                    if v.ends_with('\n') {
+                        v.pop();
+                    }
+                }
+            }
+        }
+        let c2 = match serde_saphyr::from_str::<SpannedFm>(&fm) {
+            Ok(sp) => {
+                let fix = |f: Option<serde_saphyr::Spanned<String>>| {
+                    f.map(|s| {
+                        let span = s.defined.span();
+                        let end = span.byte_offset().unwrap_or(0) + span.byte_len().unwrap_or(0);
+                        let mut v = s.value;
+                        if end as usize >= fm.len() && v.ends_with('\n') {
+                            v.pop();
+                        }
+                        v
+                    })
+                };
+                Frontmatter {
+                    name: fix(sp.name),
+                    description: fix(sp.description),
+                    license: fix(sp.license),
+                }
+            }
+            Err(_) => b.clone(),
+        };
+        for (i, cand) in [c1, c2].iter().enumerate() {
+            let after_equal = format!("{a:?}") == format!("{cand:?}");
+            match (before_equal, after_equal) {
+                (false, true) => tally[i].0 += 1,
+                (true, false) => tally[i].1.push(doc.label.clone()),
+                (false, false) => tally[i].2.push(doc.label.clone()),
+                (true, true) => {}
+            }
+        }
+    }
+    for (name, (fixed, broke, still)) in ["C1 (last line indented)", "C2 (Spanned, field ends at EOF)"].iter().zip(&tally) {
+        println!(
+            "  candidate {name}: fixes {fixed}; breaks {} previously-identical {:?}; leaves {} still differing {:?}",
+            broke.len(),
+            broke.iter().take(3).collect::<Vec<_>>(),
+            still.len(),
+            still.iter().take(3).collect::<Vec<_>>()
+        );
+    }
     for (label, _) in newline.iter().take(5) {
         println!("  e.g. {label}");
     }
@@ -1117,6 +1199,13 @@ fn main() {
     }
 
     frontmatter_causes(&docs);
+
+    println!("\n== null scalars into a String field (Config::judge_model) ==");
+    for text in ["judge_model:\n", "judge_model: ~\n", "judge_model: null\n", "judge_model: ''\n"] {
+        let a = serde_yaml::from_str::<Config>(text).map(|c| c.judge_model).map_err(|e| e.to_string());
+        let b = serde_saphyr::from_str::<Config>(text).map(|c| c.judge_model).map_err(|e| e.to_string());
+        println!("  {text:?}: serde_yaml {a:?} | serde-saphyr {}", clip(&format!("{b:?}"), 160));
+    }
 
     println!("\n== serde_yaml Value vs saphyr YamlOwned tree (schema-less, whole document) ==");
     let td = tree_diffs(&docs);
