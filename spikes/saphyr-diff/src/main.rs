@@ -87,8 +87,41 @@ fn presets() -> Vec<Engine> {
     o.strict_booleans = true;
     o.with_snippet = false;
     v.push(Engine::Saphyr("strict_booleans+with_snippet=false", o));
+    let mut o = Options::default();
+    o.reject_unsupported_tags = true;
+    v.push(Engine::Saphyr("reject_unsupported_tags", o));
     v.push(recommended());
+    v.push(recommended_tags());
     v
+}
+
+/// The recommended set plus `reject_unsupported_tags`, measured as one preset.
+fn recommended_tags() -> Engine {
+    let Engine::Saphyr(_, mut o) = recommended() else { unreachable!() };
+    o.reject_unsupported_tags = true;
+    Engine::Saphyr("RECOMMENDED+reject_unsupported_tags", o)
+}
+
+/// The candidate option sets judged over the whole corpus: on every check
+/// where serde-saphyr defaults already agree with serde_yaml, does the set
+/// keep that agreement (accept/reject and value, wording aside)?
+fn corpus_candidates() -> Vec<Engine> {
+    vec![recommended(), recommended_tags()]
+}
+
+fn alike(a: &Outcome, b: &Outcome) -> bool {
+    match (a, b) {
+        (Ok(x), Ok(y)) => x == y,
+        (Err(_), Err(_)) => true,
+        _ => false,
+    }
+}
+
+thread_local! {
+    /// (candidate, document, check, serde_yaml, candidate outcome) for each
+    /// check a candidate set breaks that defaults kept identical.
+    static REGRESSIONS: std::cell::RefCell<Vec<(&'static str, String, String, Outcome, Outcome)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// The option set the report recommends, measured as one preset.
@@ -331,6 +364,7 @@ fn probe_docs(dir: &Path) -> Vec<Doc> {
         (Probe, Case, "input: 017", case_with("input: 017")),
         (Probe, Case, "input: 2026-10-12", case_with("input: 2026-10-12")),
         (Probe, Case, "input: !!str 42", case_with("input: !!str 42")),
+        (Probe, Case, "input: !custom x", case_with("input: !custom x")),
         (Probe, Case, "expected: yes", "skill: ./x\ninput: hi\nevals:\n  - type: boolean\n    criterion: c\n    expected: yes\n".into()),
         (Probe, Case, "expected: True", "skill: ./x\ninput: hi\nevals:\n  - type: boolean\n    criterion: c\n    expected: True\n".into()),
         (Probe, Case, "expected: \"false\"", "skill: ./x\ninput: hi\nevals:\n  - type: boolean\n    criterion: c\n    expected: \"false\"\n".into()),
@@ -626,6 +660,8 @@ struct Diff {
     accepts_like: Vec<&'static str>,
     /// serde-saphyr's outcome with `with_snippet: false`, when it differs.
     no_snippet: Option<Outcome>,
+    /// Each corpus candidate set's outcome on this check.
+    candidate_outcomes: Vec<(&'static str, Outcome)>,
 }
 
 fn clip(s: &str, max: usize) -> String {
@@ -689,8 +725,27 @@ fn check(
     let before = f(&Engine::SerdeYaml);
     let after = f(&saphyr_default());
     if before == after {
+        for cand in corpus_candidates() {
+            let got = f(&cand);
+            if !alike(&got, &before) {
+                if let Engine::Saphyr(n, _) = cand {
+                    REGRESSIONS.with(|r| {
+                        r.borrow_mut()
+                            .push((n, doc.label.clone(), name.to_string(), before.clone(), got))
+                    });
+                }
+            }
+        }
         return true;
     }
+    let candidate_outcomes: Vec<(&'static str, Outcome)> = corpus_candidates()
+        .into_iter()
+        .map(|c| {
+            let got = f(&c);
+            let Engine::Saphyr(n, _) = c else { unreachable!() };
+            (n, got)
+        })
+        .collect();
     let mut o = Options::default();
     o.with_snippet = false;
     let no_snippet = Some(f(&Engine::Saphyr("with_snippet=false", o))).filter(|n| *n != after);
@@ -722,6 +777,7 @@ fn check(
         reproduced_by,
         accepts_like,
         no_snippet,
+        candidate_outcomes,
     });
     false
 }
@@ -1103,7 +1159,12 @@ const _: fn() = || {
 
 fn main() {
     let root = repo_root();
-    let scratch = std::env::temp_dir().join(format!("saphyr-diff-{}", std::process::id()));
+    // Probe files go under the dispatch's scratch directory when there is one,
+    // else under this checkout's gitignored `target/`: never a shared /tmp.
+    let scratch_root = std::env::var_os("ONEPIPELINE_NODE_SCRATCH_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| root.join("target"));
+    let scratch = scratch_root.join(format!("saphyr-diff-{}", std::process::id()));
     std::fs::create_dir_all(&scratch).unwrap();
 
     let mut docs = real_docs(&root);
@@ -1173,6 +1234,11 @@ fn main() {
                 if let Some(f) = focus(&d.before, &d.after) {
                     println!("  {f}");
                 }
+                for (n, o) in &d.candidate_outcomes {
+                    if *o != d.after {
+                        println!("  serde-saphyr {n} {}", show(o));
+                    }
+                }
                 if let Some(n) = &d.no_snippet {
                     println!("  serde-saphyr with_snippet=false {}", show(n));
                 }
@@ -1197,6 +1263,19 @@ fn main() {
             }
         }
     }
+
+    println!("\n== candidate option sets over the whole corpus: checks they break that defaults kept identical ==");
+    REGRESSIONS.with(|r| {
+        let r = r.borrow();
+        for cand in corpus_candidates() {
+            let Engine::Saphyr(n, _) = cand else { unreachable!() };
+            let hits: Vec<_> = r.iter().filter(|x| x.0 == n).collect();
+            println!("{n}: {} broken checks", hits.len());
+            for (_, doc, check, before, got) in hits {
+                println!("  [BROKEN] {doc} :: {check}\n    serde_yaml   {}\n    candidate    {}", show(before), show(got));
+            }
+        }
+    });
 
     frontmatter_causes(&docs);
 
