@@ -4,6 +4,14 @@
 [advisories]
 version = 2
 yanked = "deny"
+ignore = [
+    # Temporary, authorized by the user on 2026-10-12: `unsafe-libyaml` is
+    # unmaintained (informational, no fixed version), reached through
+    # `serde_yaml` / `serde_yaml_ng`. The planned move to `serde_norway`
+    # (plan authoring:serde-yaml-replacement) removes this entry.
+    "RUSTSEC-2024-0449",
+]
+
 
 [licenses]
 version = 2
