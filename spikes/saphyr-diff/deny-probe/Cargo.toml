@@ -1,0 +1,22 @@
+# The dependency set skilltest-core + skilltest-cli would ship after the move:
+# their runtime dependencies with serde_yaml swapped for serde-saphyr (default
+# features), plus saphyr, so `cargo deny` can judge it against the repo's
+# deny.toml. Run: spikes/saphyr-diff/deny-probe/check.sh
+[package]
+name = "deny-probe"
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "MIT"
+
+[workspace]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+schemars = "1"
+thiserror = "2"
+regex = "1"
+clap = { version = "4", features = ["derive"] }
+serde-saphyr = "=1.3.0"
+saphyr = "=0.2.1"
