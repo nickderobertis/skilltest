@@ -1,3 +1,7 @@
+// Usage: scheduling-description.mjs [BASE-REF] [OBSERVATION.json]. Prints the
+// change request's before/after Mac scheduling description: BASE-REF (default
+// origin/main) is the baseline read with git; the optional observation file
+// holds the draft's exact-head runs. Exit codes: 0 printed; 1 unreadable input.
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import YAML from "yaml";

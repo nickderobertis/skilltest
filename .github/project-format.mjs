@@ -1,3 +1,6 @@
+// Usage: project-format.mjs [--scripts] [--write]. Checks (or rewrites) an
+// annotated project.json with Biome's JSONC formatter.
+// Exit codes: 0 formatted; 1 the file's format differs; 2 invalid invocation.
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { parseArgs } from "node:util";

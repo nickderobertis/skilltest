@@ -1,3 +1,6 @@
+// The required `check (macos-latest)` carrier. Reads NEEDS and MACOS_REQUIRED
+// from its step env. Exit codes: 0 the Mac lane passed or its omission is
+// authorized; 1 anything else, so the required context cannot pass falsely.
 import { fileURLToPath } from "node:url";
 import { object } from "./validation.mjs";
 /** @param {unknown} rawNeeds @param {string|undefined} macosRequired */

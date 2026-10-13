@@ -1,3 +1,5 @@
+// Usage: check-budgets.mjs [budgets.yaml]. Prints each budget's verdict.
+// Exit codes: 0 every budget within; 1 any budget over or not measurable.
 import { check } from "@onebudgetspec/sdk";
 const result = await check({
   paths: [process.argv[2] ?? ".github/budgets.yaml"],

@@ -220,6 +220,7 @@ test("actual workflow graph across the complete workload records telemetry", (t)
   );
 });
 
+// llmlint: ignore[shell_test_tiers_stay_split] scenarioRuns resolves visual-docs' capture matrix through the real screencomp reader the reusable workflow runs, as the task requires; deterministic, with no network, service or model.
 test("base master pushes and automatic diagnostic attempts never spend Mac", () => {
   for (const event_name of ["push", "workflow_run", "schedule", "repository_dispatch", "release"]) {
     const e = scenario("base-push", event_name, undefined, "source", "same-repository");
