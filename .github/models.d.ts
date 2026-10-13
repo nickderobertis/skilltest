@@ -1,6 +1,6 @@
 export type Result = "success" | "failure" | "cancelled" | "skipped";
 export interface Outcome { result: Result; outputs: Record<string,string>; }
-export interface Step { run?: string; uses?: string; with?: Record<string,unknown>; if?: string|boolean; env?: Record<string,unknown>; }
+export interface Step { id?: string; run?: string; uses?: string; with?: Record<string,unknown>; if?: string|boolean; env?: Record<string,unknown>; }
 export interface Job { name?: string; if?: string|boolean; needs?: string|string[]; uses?: string; "runs-on"?: string|string[]; strategy?: {matrix?:Record<string,unknown>}; steps?: Step[]; with?:Record<string,unknown>; outputs?:Record<string,string>; }
 export interface Input {default?:unknown;}
 export interface Trigger {branches?:string[];tags?:string[];types?:string[];paths?:string[];workflows?:string[];inputs?:Record<string,Input>;}

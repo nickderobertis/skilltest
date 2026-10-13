@@ -330,6 +330,16 @@ test("routing resolver rejects unsupported calls, runners, needs and matrix inpu
       { os: "win", arch: "a" },
     ],
   );
+  // Exclusion applies to the base combinations only, so an include row that
+  // names an excluded value is a new combination, as GitHub expands it.
+  assert.deepEqual(
+    matrixRows({
+      os: ["linux", "mac"],
+      exclude: [{ os: "mac" }],
+      include: [{ os: "mac", extra: 1 }],
+    }),
+    [{ os: "linux" }, { os: "mac", extra: 1 }],
+  );
 });
 
 // llmlint: ignore[shell_test_tiers_stay_split] This task mandates real subprocess boundaries in the deterministic workflow-recording target; these are integrated contract proofs without external-service or model probes.
@@ -891,6 +901,50 @@ test("workflow decoder rejects unsupported step controls and policy output drift
       ),
     /policy output mapping/,
   );
+  // The output names step `classify`; the command under another id produces nothing.
+  const renamed = structuredClone(graph);
+  for (const step of renamed["ci.yml"].jobs.policy.steps)
+    if (step.id === "classify") step.id = "classifier";
+  assert.throws(
+    () =>
+      resolveRun(
+        renamed,
+        "ci.yml",
+        scenario("pr-synchronize", "pull_request", "synchronize", "source", "same-repository"),
+        { macosRequired: true },
+      ),
+    /policy output mapping/,
+  );
+  const reader = structuredClone(graph);
+  const reusable = Object.keys(reader).find((f) => f.startsWith("nickderobertis/screencomp/"));
+  for (const step of reader[reusable].jobs.arches.steps) if (step.id === "read") step.id = "other";
+  assert.throws(
+    () =>
+      resolveRun(
+        reader,
+        "visual-docs.yml",
+        scenario("pr-synchronize", "pull_request", "synchronize", "source", "same-repository"),
+        { macosRequired: true },
+      ),
+    /screencomp matrix producer/,
+  );
+});
+
+test("a caller's arches input drives the reusable capture matrix and its runners", () => {
+  const e = scenario("pr-synchronize", "pull_request", "synchronize", "source", "same-repository");
+  const overridden = structuredClone(graph);
+  overridden["visual-docs.yml"].jobs["visual-docs"].with.arches = '["aarch64","x86_64"]';
+  const captures = (g) =>
+    resolveRun(g, "visual-docs.yml", e, { macosRequired: true })
+      .rows.filter((row) => row.job === "capture")
+      .map((row) => `${row.name}@${row.runner}`)
+      .sort();
+  assert.deepEqual(captures(overridden), [
+    "capture (aarch64)@ubuntu-24.04-arm",
+    "capture (x86_64)@ubuntu-latest",
+  ]);
+  // Without the input the matrix is read from screencomp.toml through the real reader.
+  assert.deepEqual(captures(graph), ["capture (x86_64)@ubuntu-latest"]);
 });
 
 test("production screencomp reader matches the installer and locked reusable version", () => {

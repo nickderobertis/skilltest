@@ -178,6 +178,7 @@ export function workflow(value) {
               throw new Error("unresolved step outcome control");
             onlyFields(step, stepFields, `jobs.${id} step`);
             return {
+              id: optionalString(step.id, "step.id"),
               run: optionalString(step.run, "step.run"),
               uses: optionalString(step.uses, "step.uses"),
               if: condition(step.if, "step.if"),

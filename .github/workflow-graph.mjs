@@ -213,10 +213,17 @@ export function matrixRows(matrix = {}) {
     if (!Array.isArray(axis)) throw new Error(`unresolved matrix axis ${key}`);
     rows = rows.flatMap((row) => axis.map((v) => ({ ...row, [key]: v })));
   }
+  // GitHub removes `exclude` matches from the base combinations first, then
+  // applies `include`, so an include row can reintroduce an excluded value.
+  const excludes = array(matrix.exclude ?? [], "matrix.exclude").map((ex) =>
+    Object.entries(object(ex, "matrix.exclude row")),
+  );
   const original = Object.keys(matrix).some((k) => !["include", "exclude"].includes(k))
-    ? rows.map((r) => ({ ...r }))
+    ? rows
+        .filter((row) => !excludes.some((ex) => ex.every(([k, v]) => row[k] === v)))
+        .map((r) => ({ ...r }))
     : [];
-  rows = original.length ? rows : [];
+  rows = original.map((r) => ({ ...r }));
   for (const rawInc of array(matrix.include ?? [], "matrix.include")) {
     const inc = object(rawInc, "matrix.include row");
     let merged = false;
@@ -228,12 +235,6 @@ export function matrixRows(matrix = {}) {
     });
     if (!merged) rows.push({ ...inc });
   }
-  rows = rows.filter(
-    (row) =>
-      !array(matrix.exclude ?? [], "matrix.exclude").some((ex) =>
-        Object.entries(object(ex, "matrix.exclude row")).every(([k, v]) => row[k] === v),
-      ),
-  );
   return Object.keys(matrix).length ? rows : [{}];
 }
 /** @param {string|string[]|undefined} needs @returns {string[]} */
@@ -387,8 +388,10 @@ export function resolveRun(
     if (id === "policy" && result === "success") {
       if (
         job.outputs?.macosRequired !== "${{ steps.classify.outputs.macosRequired }}" ||
-        !(job.steps ?? []).some((step) =>
-          step.run?.startsWith("node .github/macos-policy.mjs classify --event "),
+        !(job.steps ?? []).some(
+          (step) =>
+            step.id === "classify" &&
+            step.run?.startsWith("node .github/macos-policy.mjs classify --event "),
         )
       )
         throw new Error("unresolved production policy output mapping");
@@ -397,7 +400,9 @@ export function resolveRun(
     if (file.startsWith("nickderobertis/screencomp/") && id === "arches" && result === "success") {
       if (
         job.outputs?.matrix !== "${{ steps.read.outputs.matrix }}" ||
-        !(job.steps ?? []).some((step) => step.run?.includes("screencomp arches --format json"))
+        !(job.steps ?? []).some(
+          (step) => step.id === "read" && step.run?.includes("screencomp arches --format json"),
+        )
       )
         throw new Error("unresolved screencomp matrix producer");
       const arches = JSON.parse(
