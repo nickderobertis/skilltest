@@ -292,7 +292,7 @@ printf 'tampered' >>"$work/products/aarch64-pc-windows-msvc/skilltest-aarch64-pc
   fail "could not tamper with the staged zip; check that $work is writable"
 expect_aggregate_red "a staged archive is corrupt" "checksum mismatch for skilltest-aarch64-pc-windows-msvc.zip" "$work/products" 1.2.3
 grep -Fq "staged aarch64-pc-windows-msvc archive failed verification" "$work/out" ||
-  fail "the aggregation did not name the target whose archive failed"
+  fail "the aggregation did not name the target whose archive failed; restore the target in scripts/verify-staged-archives.sh's verification-failure message"
 
 stage_products
 expect_aggregate_red "it was called without a version" "usage: verify-staged-archives.sh" "$work/products"
@@ -300,13 +300,13 @@ expect_aggregate_red "it was called without a version" "usage: verify-staged-arc
 # --list-assets names exactly each declared archive and its checksum, which
 # release.yml uploads; an undeclared asset staged beside them is refused.
 "$BASH" scripts/verify-staged-archives.sh "$work/products" 1.2.3 --list-assets >"$work/out" 2>"$work/err" ||
-  fail "the aggregation refused complete products when listing assets: $(cat "$work/err")"
+  fail "the aggregation refused complete products when listing assets ($(cat "$work/err")); fix the --list-assets branch of scripts/verify-staged-archives.sh"
 expected_assets="$(while read -r target bin; do
   case "$bin" in *.exe) asset="skilltest-$target.zip" ;; *) asset="skilltest-$target.tar.gz" ;; esac
   printf '%s\n%s\n' "$work/products/$target/$asset" "$work/products/$target/$asset.sha256"
 done <<<"$declared")"
 [ "$(sort "$work/out")" = "$(sort <<<"$expected_assets")" ] ||
-  fail "--list-assets did not print exactly the declared archives and checksums; release.yml would upload the wrong set"
+  fail "--list-assets did not print exactly the declared archives and checksums, so release.yml would upload the wrong set; compare $work/out with release-platforms.toml and fix the asset list built in scripts/verify-staged-archives.sh"
 
 cp "$work/products/aarch64-apple-darwin/skilltest-aarch64-apple-darwin.tar.gz" "$work/products/aarch64-apple-darwin/skilltest-x86_64-apple-darwin.tar.gz" ||
   fail "could not stage an undeclared archive; check that $work is writable"

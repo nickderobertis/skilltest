@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { report } from "@onebudgetspec/sdk";
 import { string, telemetry as validateTelemetry } from "./validation.mjs";
-import { sourceDigest } from "./workflow-graph.mjs";
+import { loadGraph, reconcileTelemetry, sourceDigest } from "./workflow-graph.mjs";
 process.chdir(fileURLToPath(new URL("../", import.meta.url)));
 try {
   const args = parseArgs({
@@ -18,6 +18,7 @@ try {
   );
   if (telemetry.schema_version !== 2 || telemetry.sourceDigest !== sourceDigest())
     throw new Error("missing or stale workflow telemetry; run github-workflows:test");
+  reconcileTelemetry(telemetry, loadGraph());
   if (
     !Array.isArray(telemetry.runs) ||
     !Array.isArray(telemetry.lifecycles) ||

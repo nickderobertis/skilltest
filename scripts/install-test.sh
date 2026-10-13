@@ -75,7 +75,7 @@ file="$work/release/\${1#https://github.com/nickderobertis/skilltest/releases/do
 [ -f "\$file" ] || exit 22
 if [ -n "\$dest" ]; then cp "\$file" "\$dest" || exit 23; else cat "\$file" || exit 23; fi
 EOF
-  chmod +x "$bin/uname" "$bin/sysctl" "$bin/curl" || fail "could not make the host doubles in $bin executable"
+  chmod +x "$bin/uname" "$bin/sysctl" "$bin/curl" || fail "could not make the host doubles in $bin executable; check that $work is on a filesystem that honors chmod, or run this test from a POSIX checkout"
 }
 
 # Runs the installer on the host host() last set up, into a fresh directory.

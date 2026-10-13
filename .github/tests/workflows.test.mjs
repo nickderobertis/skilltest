@@ -14,6 +14,7 @@ import {
   stepEnv,
   sourceDigest,
   triggered,
+  triggerOf,
 } from "../workflow-graph.mjs";
 import { classifyCLI, event, history } from "./history.mjs";
 
@@ -87,6 +88,7 @@ test("actual workflow graph across the complete workload records telemetry", (t)
         const resolved = scenarioRuns(graph, e, classified);
         scenarios.push({
           label: e.label,
+          trigger: triggerOf(e),
           workflows: Object.keys(graph).filter((file) => triggered(graph[file], e)),
           classification: classified,
         });
@@ -663,6 +665,27 @@ test("SDK budget analysis alone judges an induced matrix expansion", () => {
         );
       },
       /omits pr-opened\/version-only\/same-repository/,
+    ],
+    // Removing a record together with its declaration is caught against the
+    // committed workflows, not just against the telemetry itself.
+    [
+      (t) => {
+        const run = t.runs.find((r) => r.id === "release-tag/source/fork:publish.yml");
+        run.declaredJobs = run.declaredJobs.filter((j) => j !== "darwin");
+        run.jobs = run.jobs.filter((j) => j.job !== "darwin");
+      },
+      /release-tag\/source\/fork:publish.yml declares .* but publish.yml declares .*darwin/,
+    ],
+    [
+      (t) => {
+        const id = "release-tag/source/same-repository:publish.yml";
+        t.runs = t.runs.filter((r) => r.id !== id);
+        const scenario = t.scenarios.find((s) => s.label === "release-tag/source/same-repository");
+        scenario.workflows = scenario.workflows.filter((w) => w !== "publish.yml");
+        for (const lifecycle of t.lifecycles)
+          lifecycle.runs = lifecycle.runs.filter((ref) => ref !== id);
+      },
+      /release-tag\/source\/same-repository records \[.*\] but the committed workflows fire \[.*publish.yml/,
     ],
   ]) {
     const malformed = structuredClone(original);

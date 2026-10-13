@@ -250,8 +250,21 @@ export function telemetry(value) {
   const scenarios = array(doc.scenarios, "scenarios").map((raw) => {
     const scenario = object(raw, "scenario");
     const classification = object(scenario.classification, "scenario classification");
+    const trigger = object(scenario.trigger, "scenario trigger");
     return {
       label: string(scenario.label, "scenario.label"),
+      trigger: {
+        event_name: string(trigger.event_name, "trigger.event_name"),
+        ref: string(trigger.ref, "trigger.ref"),
+        action: optionalString(trigger.action, "trigger.action"),
+        changed: strings(trigger.changed, "trigger.changed"),
+        base_ref: optionalString(trigger.base_ref, "trigger.base_ref"),
+        workflow_run_name: optionalString(trigger.workflow_run_name, "trigger.workflow_run_name"),
+        workflow_run_head_branch: optionalString(
+          trigger.workflow_run_head_branch,
+          "trigger.workflow_run_head_branch",
+        ),
+      },
       workflows: strings(scenario.workflows, "scenario.workflows"),
       classification: {
         isReleaseOnly: boolean(classification.isReleaseOnly, "isReleaseOnly"),

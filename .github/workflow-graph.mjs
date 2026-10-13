@@ -430,3 +430,55 @@ export function scenarioRuns(graph, scenario, classification) {
       runs.push({ workflow: file, ...resolveRun(graph, file, scenario, classification) });
   return runs;
 }
+/**
+ * The fields of a scenario its triggers read, recorded in telemetry so a reporter
+ * can re-derive which workflows it fires without re-running the scenario.
+ * @param {import('./models.js').Scenario} scenario @returns {import('./models.js').ScenarioTrigger}
+ */
+export function triggerOf(scenario) {
+  return {
+    event_name: scenario.event_name,
+    ref: scenario.ref,
+    action: scenario.action,
+    changed: scenario.changed,
+    base_ref: scenario.pull_request?.base?.ref,
+    workflow_run_name: scenario.workflow_run?.name,
+    workflow_run_head_branch: scenario.workflow_run?.head_branch,
+  };
+}
+/**
+ * Holds recorded declarations to the committed workflows: each scenario's
+ * workflows are exactly those its trigger fires, and each run declares exactly
+ * its workflow's jobs, so a record cannot omit a run or a job together with its
+ * declaration.
+ * @param {import('./models.js').Telemetry} telemetry @param {import('./models.js').Graph} graph
+ */
+export function reconcileTelemetry(telemetry, graph) {
+  for (const scenario of telemetry.scenarios) {
+    const { trigger } = scenario;
+    const fires = Object.keys(graph).filter((file) =>
+      triggered(graph[file], {
+        event_name: trigger.event_name,
+        ref: trigger.ref,
+        action: trigger.action,
+        changed: trigger.changed,
+        pull_request: { base: { ref: trigger.base_ref } },
+        workflow_run: {
+          name: trigger.workflow_run_name,
+          head_branch: trigger.workflow_run_head_branch,
+        },
+      }),
+    );
+    if (fires.join(",") !== [...scenario.workflows].sort().join(","))
+      throw new Error(
+        `stale telemetry: ${scenario.label} records [${scenario.workflows.join(", ")}] but the committed workflows fire [${fires.join(", ")}]`,
+      );
+  }
+  for (const run of telemetry.runs) {
+    const declared = Object.keys(graph[run.workflow]?.jobs ?? {}).sort();
+    if (declared.join(",") !== [...run.declaredJobs].sort().join(","))
+      throw new Error(
+        `stale telemetry: ${run.id} declares [${run.declaredJobs.join(", ")}] but ${run.workflow} declares [${declared.join(", ")}]`,
+      );
+  }
+}

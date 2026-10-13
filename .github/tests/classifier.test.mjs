@@ -231,3 +231,50 @@ test("unparseable or unsupported release manifests require Mac coverage", (t) =>
     assert.match(result.reason, reason, path);
   }
 });
+
+// llmlint: ignore[shell_test_tiers_stay_split] Workspace membership is defined by cargo and the uv workspace manifests, so this reads them through cargo metadata and Python's TOML reader; no network, service or model is reached.
+test("the version normalizer's workspace members are the workspaces' actual members", () => {
+  const constants = JSON.parse(
+    execFileSync(
+      "python3",
+      [
+        "-c",
+        `import importlib.util,json,sys
+spec=importlib.util.spec_from_file_location("m",sys.argv[1]);m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+print(json.dumps({"core":m.CORE_PATH,"cargo":sorted(m.CARGO_MEMBERS),"uv":m.UV_MEMBERS}))`,
+        ".github/semantic-version-diff.py",
+      ],
+      { encoding: "utf8" },
+    ),
+  );
+  const metadata = JSON.parse(
+    execFileSync("cargo", ["metadata", "--no-deps", "--offline", "--format-version", "1"], {
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+    }),
+  );
+  const members = new Set(metadata.workspace_members);
+  assert.deepEqual(
+    constants.cargo,
+    metadata.packages
+      .filter((p) => members.has(p.id))
+      .map((p) => p.name)
+      .sort(),
+  );
+  const manifests = JSON.parse(
+    execFileSync(
+      "python3",
+      [
+        "-c",
+        `import json,tomllib
+root=tomllib.load(open("pyproject.toml","rb"))
+cargo=tomllib.load(open("Cargo.toml","rb"))
+uv={tomllib.load(open(d+"/pyproject.toml","rb"))["project"]["name"]:d for d in root["tool"]["uv"]["workspace"]["members"]}
+print(json.dumps({"core":cargo["workspace"]["dependencies"]["skilltest-core"]["path"],"uv":uv}))`,
+      ],
+      { encoding: "utf8" },
+    ),
+  );
+  assert.equal(constants.core, manifests.core);
+  assert.deepEqual(constants.uv, manifests.uv);
+});

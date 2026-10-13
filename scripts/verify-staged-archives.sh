@@ -21,7 +21,7 @@ err() {
 usage="usage: verify-staged-archives.sh <products-dir> <version> [--list-assets]; pass the downloaded release-products directory and the release version X.Y.Z"
 { [ "$#" -eq 2 ] || { [ "$#" -eq 3 ] && [ "$3" = --list-assets ]; }; } && [ -d "$1" ] || err "$usage"
 products="${1%/}" version="$2"
-here="$(dirname "$0")"
+here="$(dirname "$0")" || err "could not resolve this script's directory from $0; run it as bash scripts/verify-staged-archives.sh from the repository root"
 
 platforms="$(python3 -c '
 import sys, tomllib
@@ -31,7 +31,7 @@ with open(sys.argv[1], "rb") as f:
 ' "$here/../release-platforms.toml")" || err "could not read the declared platforms from release-platforms.toml; check that python3 (3.11+) is on PATH and the file is valid TOML"
 [ -n "$platforms" ] || err "release-platforms.toml declares no platform; restore its [[platform]] entries"
 
-assets=""
+assets="" count=0
 while read -r target bin; do
   [ -d "$products/$target" ] || err "$products has no $target directory; the build job for $target did not stage its products, so re-run publish.yml"
   bash "$here/verify-release-archive.sh" "$products/$target" "$target" "$bin" "$version" --contents-only >/dev/null ||
@@ -40,6 +40,7 @@ while read -r target bin; do
   assets="$assets$products/$target/$asset
 $products/$target/$asset.sha256
 "
+  count=$((count + 1))
 done <<<"$platforms"
 
 found="$(find "$products" -type f \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.sha256' \) | sort)" ||
@@ -53,5 +54,5 @@ done <<<"$found"
 if [ "${3:-}" = --list-assets ]; then
   printf '%s' "$assets"
 else
-  echo "verify-staged-archives: $(wc -l <<<"$platforms" | tr -d ' ') declared archives verified; binaries not executed"
+  echo "verify-staged-archives: $count declared archives verified; binaries not executed"
 fi
