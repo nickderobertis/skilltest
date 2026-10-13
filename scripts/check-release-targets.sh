@@ -247,8 +247,10 @@ while read -r dir; do
 done < <(printf '%s\n' "$pypi_job" | sed -n 's/.*pyproject_version \([^)]*\)).*/\1/p')
 
 npm_job="$(job_body npm)"
-printf '%s\n' "$npm_job" | grep -Fq "bash $stager" ||
-  fail "$workflow's npm job no longer stages platform packages through $stager, so the platform names below are derived from a script nothing runs; point this gate at whatever stages them now"
+grep -Fq 'npm publish "$packed" --access public' <<<"$npm_job" ||
+  fail "$workflow's npm job no longer publishes staged carriers; point this gate at its new publication path"
+grep -Fq "bash $stager" scripts/stage-release-product.sh ||
+  fail "the production packager no longer stages binaries through $stager; update the source of carrier names"
 targets="$(printf '%s\n' "$npm_job" | awk '
   /for target in / { inside = 1; sub(/.*for target in /, "") }
   inside { line = $0; done = sub(/; *do.*$/, "", line); gsub(/\\/, "", line); print line; if (done) exit }
@@ -497,13 +499,27 @@ matrix_rows() {
 
 declared_builds="$(extract "$platforms_file's builds" declared_cols 1-3)" || exit 1
 matrix_fix="write one '- { target: <triple>, os: <runner>, bin: <file> }' row per $platforms_file platform, with its runner and bin"
-for spec in "$workflow binaries" "$release_workflow upload"; do
-  file="${spec% *}"
-  job="${spec#* }"
-  rows="$(matrix_rows "$file" "$job")" || exit 1
-  [ -n "$rows" ] || fail "$file's $job job has no one-line '- { target: ..., os: ..., bin: ... }' matrix rows; restore that shape so this gate can read its platforms"
-  compare_platforms "$file's $job matrix" "$declared_builds" "$rows" "$matrix_fix"
-done
+rows="$(matrix_rows "$workflow" binaries)" || exit 1
+# Darwin builds in its own Apple Silicon job; its targets are read from that
+# job's real upload artifact names (github-workflows:test checks its build step).
+darwin_runner="$(job_body darwin | sed -n 's/^ *runs-on: *\([^ ]*\)$/\1/p')" || { echo 'check-release-targets: cannot extract Darwin runner; restore the literal runs-on field and verify sed is installed' >&2; exit 1; }
+[ -n "$darwin_runner" ] || fail "$workflow has no literal Darwin runner; name the declared runner in its consolidated job"
+darwin_targets="$(job_body darwin | sed -n 's/^ *name: skilltest-\([^ ]*apple-darwin\)$/\1/p')" || { echo 'check-release-targets: cannot extract Darwin artifacts; restore upload names and verify sed is installed' >&2; exit 1; }
+while read -r target; do
+  [ -n "$target" ] || continue
+  rows="${rows}
+${target}\t${darwin_runner}\tskilltest"
+done <<<"$darwin_targets"
+rows="$(printf '%b\n' "$rows")"
+compare_platforms "$workflow's binaries matrix" "$declared_builds" "$rows" "$matrix_fix"
+# publish.yml's products job and release.yml's upload verify the staged
+# archives with verify-staged-archives.sh, which reads release-platforms.toml
+# itself, so neither restates the platform list. The executable graph contract
+# checks exact-run downloads.
+grep -Eq '^ +bash scripts/verify-staged-archives\.sh products ' < <(job_body products) ||
+  fail "$workflow's products job does not run scripts/verify-staged-archives.sh over products; verify every declared archive there before publishing"
+grep -Fq 'assets="$(bash scripts/verify-staged-archives.sh products "${TAG#v}" --list-assets)"' "$release_workflow" ||
+  fail "$release_workflow does not run scripts/verify-staged-archives.sh over products; verify every declared archive before uploading and upload only the assets it lists"
 
 windows_only() { printf '%s\n' "$declared_builds" | awk -F'\t' '$1 ~ /-windows-/'; }
 windows_builds="$(extract "$platforms_file's Windows builds" windows_only)" || exit 1

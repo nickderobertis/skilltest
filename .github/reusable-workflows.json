@@ -1,0 +1,45 @@
+{
+  "nickderobertis/screencomp/.github/workflows/visual-docs-reusable.yml@v0.4.2": {
+    "path": ".github/tests/fixtures/screencomp-v0.4.2.yml",
+    "commit": "305783cdb630d559e246f90999b9a1989ed4be5e",
+    "sha256": "8a719d9ea54a946399e5839f4decc5893347249c6ce429850b0d16bd33a759b3",
+    "annotations": [
+      {
+        "before": "  # ---- Arches: resolve the capture arch matrix ------------------------------",
+        "reason": "Immutable upstream workflow comment; keep its bytes intact so the reusable-call digest proves the actual upstream contract."
+      },
+      {
+        "before": "      # Hand this arch's screenshots to the host-side `report` job.",
+        "reason": "Immutable upstream workflow comment; keep its bytes intact so the reusable-call digest proves the actual upstream contract."
+      },
+      {
+        "before": "      - uses: nickderobertis/screencomp@v0 # install the CLI on the host",
+        "reason": "Immutable upstream architecture reader installation comment; preserve source bytes while the reusable-call digest gates the exact upstream workflow."
+      },
+      {
+        "before": "      - uses: nickderobertis/screencomp@v0 # install the CLI on the host",
+        "reason": "Immutable upstream host report reader installation comment; preserve source bytes while the reusable-call digest gates the exact upstream workflow."
+      },
+      {
+        "before": "  # ---- Capture: the ONLY job that runs inside your container ----------------",
+        "reason": "Immutable upstream comment at source site 213; preserve its bytes while the digest gates the exact reusable workflow rather than rewriting third-party commentary."
+      },
+      {
+        "before": "      # Record the runner's CPU. ubuntu-latest hands out heterogeneous CPUs (Intel",
+        "reason": "Immutable upstream comment at source site 232; preserve its bytes while the digest gates the exact reusable workflow rather than rewriting third-party commentary."
+      },
+      {
+        "before": "  # ---- Report: runs on the HOST runner, where gh/git/screencomp live --------",
+        "reason": "Immutable upstream comment at source site 268; preserve its bytes while the digest gates the exact reusable workflow rather than rewriting third-party commentary."
+      },
+      {
+        "before": "  # ---- Cleanup: drop a closed PR's preview from gh-pages ---------------------",
+        "reason": "Immutable upstream comment at source site 318; preserve its bytes while the digest gates the exact reusable workflow rather than rewriting third-party commentary."
+      },
+      {
+        "before": "  # ---- Prune: bound gh-pages history so old galleries don't accrete ----------",
+        "reason": "Immutable upstream comment at source site 337; preserve its bytes while the digest gates the exact reusable workflow rather than rewriting third-party commentary."
+      }
+    ]
+  }
+}

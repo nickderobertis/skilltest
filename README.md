@@ -28,8 +28,10 @@ models.
 
 ## Install
 
-Prebuilt binaries ship for Linux, macOS and Windows, each on x86_64 and
-aarch64. On Linux/macOS, install one from the latest GitHub Release:
+Prebuilt binaries ship for Linux and Windows, each on x86_64 and aarch64, and
+for Apple Silicon (arm64) macOS. Intel macOS binaries are no longer published;
+build from source there (`cargo install skilltest-cli`). On Linux/macOS, install
+one from the latest GitHub Release:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/nickderobertis/skilltest/main/scripts/install.sh | sh
@@ -44,7 +46,7 @@ The SDKs bundle the CLI, so `pip install skilltest-sdk` or
 `pnpm add @skill-test/sdk` needs no separate binary on any of those platforms:
 PyPI serves a platform wheel per target (`manylinux`, `macosx`, `win_amd64`,
 `win_arm64`) and npm a `@skill-test/cli-<os>-<arch>` package per target
-(`linux`, `darwin`, `win32` × `x64`, `arm64`).
+(`linux` and `win32` × `x64`, `arm64`, plus `darwin-arm64`).
 
 ### Build from source
 

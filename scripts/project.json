@@ -1,0 +1,48 @@
+{
+  "name": "release-packaging",
+  "implicitDependencies": ["github-workflows"],
+  "tags": ["type:e2e", "lang:bash"],
+  "namedInputs": {
+    "default": [
+      "{projectRoot}/stage-release-product.sh",
+      "{projectRoot}/stage-and-verify-release-product.py",
+      "{projectRoot}/release-product-test.sh",
+      "{projectRoot}/check-release-identity.sh",
+      "{projectRoot}/smoke-*-bundle.sh",
+      "{projectRoot}/verify-release-archive*",
+      "{projectRoot}/verify-staged-archives.sh",
+      "{projectRoot}/install.sh",
+      "{projectRoot}/install-test.sh",
+      "{workspaceRoot}/release-platforms.toml",
+      "{workspaceRoot}/.github/tests/release-journey.mjs"
+    ]
+  },
+  "targets": {
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "uv run --no-sync shellcheck scripts/stage-release-product.sh scripts/release-product-test.sh scripts/check-release-identity.sh scripts/smoke-python-bundle.sh scripts/smoke-npm-bundle.sh scripts/verify-release-archive.sh scripts/verify-release-archive-test.sh scripts/verify-staged-archives.sh scripts/install-test.sh && uv run --no-sync ruff check scripts/stage-and-verify-release-product.py"
+      }
+    },
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "uv run --no-sync ty check scripts/stage-and-verify-release-product.py"
+      }
+    },
+    "format-check": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "uv run --no-sync ruff format --check scripts/stage-and-verify-release-product.py && node .github/project-format.mjs --scripts"
+      }
+    },
+    // llmlint: ignore[new_projects_keep_the_graph_uniform] The production builder journey belongs to the explicit release-product-test edge; selecting it with the ordinary test-e2e fan-out would add a slow unrelated rebuild to every workflow change.
+    "packaging": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "bash scripts/release-product-test.sh"
+      }
+    }
+  }
+}

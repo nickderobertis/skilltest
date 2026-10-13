@@ -149,9 +149,10 @@ PR and push to `main`, for each target on a native runner, it builds the CLI, in
 the publish-shape package with the binary bundled into a fresh consumer project, and
 runs a case through the **plugin** with `SKILLTEST_BIN` unset — so a pass can only come
 from the bundle (`scripts/smoke-{python,npm}-bundle.sh`). It drives the fake provider,
-so it stays deterministic. `x86_64-apple-darwin` is still built and published but not
-smoked here — the Intel macOS runner queues unreliably and would block every PR; the
-other three targets exercise the same paths.
+so it stays deterministic. It covers the two Linux targets; `ci.yml`'s single Mac
+lane runs the same smokes for `aarch64-apple-darwin` on ordinary PRs, and the release
+build repeats them before publishing. macOS ships Apple Silicon only: Intel macOS
+(`x86_64-apple-darwin`) artifacts are no longer built or published.
 
 The `--format json` output of `run` and `validate` is a stable contract the
 SDKs parse; the SDK models are generated from the Rust types, so changing the

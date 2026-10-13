@@ -89,7 +89,6 @@ manifest = "sdks/typescript/package.json"
 covers = [
   "npm:@skill-test/cli-linux-x64",
   "npm:@skill-test/cli-linux-arm64",
-  "npm:@skill-test/cli-darwin-x64",
   "npm:@skill-test/cli-darwin-arm64",
   "npm:@skill-test/cli-win32-x64",
   "npm:@skill-test/cli-win32-arm64",

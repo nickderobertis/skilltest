@@ -1,0 +1,57 @@
+{
+  "name": "github-workflows",
+  "tags": ["type:contract", "lang:typescript"],
+  "namedInputs": {
+    "default": [
+      "{projectRoot}/**/*",
+      "!{projectRoot}/.telemetry/**/*",
+      "{workspaceRoot}/release-platforms.toml",
+      "{workspaceRoot}/release-targets.toml",
+      "{workspaceRoot}/screencomp.toml",
+      "{workspaceRoot}/scripts/check-workflow-routing*",
+      "{workspaceRoot}/scripts/check-release-targets*",
+      "{workspaceRoot}/scripts/stage-release-product.sh",
+      "{workspaceRoot}/scripts/check-release-identity.sh",
+      "{workspaceRoot}/scripts/stage-and-verify-release-product.py",
+      "{workspaceRoot}/scripts/verify-release-archive*",
+      "{workspaceRoot}/scripts/verify-staged-archives.sh",
+      "{workspaceRoot}/scripts/smoke-*-bundle.sh"
+    ]
+  },
+  "targets": {
+    // llmlint: ignore[shell_test_tiers_stay_split] This recording target's contract requires real Git/classifier/carrier subprocesses within the same deterministic graph journeys; it performs no external-service or model probes.
+    "test": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "node --test .github/tests/*.test.mjs"
+      }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "uv run --frozen actionlint .github/workflows/visual-docs.yml .github/workflows/ci.yml .github/workflows/publish.yml .github/workflows/release.yml .github/workflows/bundle-smoke.yml && pnpm exec biome lint --config-path .github .github/*.mjs .github/tests/*.mjs"
+      }
+    },
+    "format-check": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm exec biome format --config-path .github .github/*.mjs .github/tests/*.mjs .github/package.json .github/reusable-workflows.json && node .github/project-format.mjs"
+      }
+    },
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm exec tsc -p .github/tsconfig.json"
+      }
+    },
+    "budgets": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "dependsOn": ["test"],
+      "options": {
+        "command": "node .github/check-budgets.mjs"
+      }
+    }
+  }
+}

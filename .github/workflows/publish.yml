@@ -1,34 +1,11 @@
-# Publish the skilltest packages to their registries on a version tag.
-#
-# This is the registry counterpart to release.yml (which uploads the CLI
-# binaries to the GitHub Release for scripts/install.sh). Push a tag like
-# `v0.2.0` and this publishes every package that is not yet on its registry, in
-# dependency order:
-#
-#   crates.io : skilltest-core  -> skilltest-cli
-#   PyPI      : skilltest-sdk   -> skilltest-pytest
-#   npm       : @skill-test/cli-<os>-<arch> (x6) -> @skill-test/sdk -> @skill-test/vitest
-#
-# The SDKs bundle the CLI so `pip install skilltest-sdk` / `pnpm add @skill-test/sdk`
-# need no separate binary install: the `binaries` job builds the CLI for each
-# target on a native runner, then the npm job packs each into its per-platform
-# package (@skill-test/cli-<os>-<arch>, an `optionalDependencies` of the SDK that
-# the package manager installs only on a matching host) and the PyPI job bundles
-# each into a platform wheel (with a pure wheel + sdist as the fallback). The SDK
-# resolves the bundled binary at runtime, falling back to $SKILLTEST_BIN/PATH.
-#
-# The package MANIFESTS are the source of truth for versions, not the tag — each
-# package publishes the version in its own manifest, and any version already on
-# the registry is skipped. So the three languages can carry independent versions
-# (they do today), partial/re-run releases are idempotent, and bumping a single
-# package's version + tagging republishes only that package. The tag is just the
-# "release now" signal.
-#
-# Tokens come from the gh-secrets manifest (gh-secrets.json): CARGO_REGISTRY_TOKEN,
-# PYPI_API_TOKEN, NPM_TOKEN. The jobs run only on the canonical repo. Each job
-# uses the `release` GitHub Environment, so you can add required reviewers in the
-# repo settings (Settings -> Environments -> release) for a manual approval gate
-# before anything is published; with no protection rules it is a no-op.
+# Build one binary per released platform, stage archive/wheel/npm from that
+# binary, and prove installation before publishing. macOS ships Apple Silicon
+# only (Intel macOS was discontinued): one native arm64 job builds and installs it.
+# Linux/Windows keep native build/archive-run lanes. Linux aggregates staged
+# products and publishes crates, Python SDK/pytest, and npm carriers/SDK/vitest.
+# Release archive transport consumes this run's artifacts separately on Linux.
+# Versions remain synchronized by semantic-release; already-live registry
+# versions are skipped. Manual diagnostics default off and never publish.
 
 name: publish
 
@@ -40,13 +17,14 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      macos_diagnostic:
+        description: Build and install the Apple Silicon Darwin packages without publishing
+        type: boolean
+        default: false
 
 jobs:
-  # Build the CLI for each target on a native runner (x86_64-apple-darwin cross-
-  # compiles on the arm runner) and hand the binaries to the npm/PyPI jobs to
-  # bundle as workflow artifacts. This
-  # mirrors release.yml's matrix; release.yml ships the GitHub-Release tarballs,
-  # this feeds the registry packages.
+  # Native Linux/Windows compilation and installation; Darwin has its own job below.
   binaries:
     name: build ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
@@ -55,15 +33,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # release-platforms.toml's platforms, one per line; the release-target
-          # gate holds this list to it. Both macOS targets build on the arm
-          # runner; x86_64 cross-compiles via `--target`. The Intel runner
-          # (macos-13) queued unreliably and blocked the PyPI/npm publish (these
-          # jobs `needs: binaries`). Each Windows target builds natively.
+          # Non-Darwin platforms from release-platforms.toml.
           - { target: x86_64-unknown-linux-gnu, os: ubuntu-latest, bin: skilltest }
           - { target: aarch64-unknown-linux-gnu, os: ubuntu-24.04-arm, bin: skilltest }
-          - { target: x86_64-apple-darwin, os: macos-14, bin: skilltest }
-          - { target: aarch64-apple-darwin, os: macos-14, bin: skilltest }
           - { target: x86_64-pc-windows-msvc, os: windows-latest, bin: skilltest.exe }
           - { target: aarch64-pc-windows-msvc, os: windows-11-arm, bin: skilltest.exe }
     steps:
@@ -78,8 +50,33 @@ jobs:
           cache: false
           rustflags: ""
 
+      - name: Require tag/version identity
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
+          bash scripts/check-release-identity.sh "$GITHUB_REF_NAME" "$version" "$GITHUB_SHA" "$(git rev-parse HEAD)"
       - name: Build the CLI
         run: cargo build --release -p skilltest-cli --bin skilltest --target ${{ matrix.target }}
+
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Stage and run the native archive
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          BIN: ${{ matrix.bin }}
+        run: |
+          bash scripts/stage-release-product.sh "$TARGET" "target/$TARGET/release/$BIN" "products/$TARGET"
+          version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
+          bash scripts/verify-release-archive.sh "products/$TARGET" "$TARGET" "$BIN" "$version"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: products-${{ matrix.target }}
+          path: products
+          if-no-files-found: error
 
       - name: Upload the binary
         uses: actions/upload-artifact@v4
@@ -88,10 +85,82 @@ jobs:
           path: target/${{ matrix.target }}/release/${{ matrix.bin }}
           if-no-files-found: error
 
+  darwin:
+    name: build aarch64-apple-darwin
+    runs-on: macos-14
+    if: (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.macos_diagnostic == true)) && github.repository == 'nickderobertis/skilltest' && github.ref_name != 'v0.0.0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
+          # llmlint: ignore[diagnostics_error_or_absent] warnings fail the gate through each Rust project's `cargo clippy ... -- -D warnings` in `just check`; the action's injected RUSTFLAGS="-D warnings" would make CI compile with different flags than local builds and every other workflow (all clear it the same way).
+          rustflags: ""
+      - uses: astral-sh/setup-uv@v5
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: extractions/setup-just@v2
+      - run: just bootstrap-node
+      - name: Require tag/version identity
+        if: github.event_name == 'push'
+        run: |
+          version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
+          bash scripts/check-release-identity.sh "$GITHUB_REF_NAME" "$version" "$GITHUB_SHA" "$(git rev-parse HEAD)"
+      - name: Build, stage and install the Apple Silicon Darwin products natively
+        run: |
+          set -euo pipefail
+          target=aarch64-apple-darwin
+          cargo build --release --locked -p skilltest-cli --bin skilltest --target "$target"
+          cargo build --release --locked -p skilltest-cli --bin skilltest-fake-provider --features fake-provider --target "$target"
+          binary="target/$target/release/skilltest"
+          bash scripts/stage-release-product.sh "$target" "$binary" "products/$target"
+          bash scripts/verify-release-archive.sh "products/$target" "$target" skilltest "$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
+          bash scripts/smoke-python-bundle.sh "$target" "$binary" "target/$target/release/skilltest-fake-provider" "products/$target"
+          bash scripts/smoke-npm-bundle.sh "$target" "$binary" "target/$target/release/skilltest-fake-provider" "products/$target"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: skilltest-aarch64-apple-darwin
+          path: target/aarch64-apple-darwin/release/skilltest
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: products-darwin
+          path: products
+          if-no-files-found: error
+
+  products:
+    runs-on: ubuntu-latest
+    needs: [binaries, darwin]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: products-*
+          merge-multiple: true
+          path: products
+      - name: Verify every staged archive without executing foreign binaries
+        run: |
+          version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
+          bash scripts/verify-staged-archives.sh products "$version"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-products
+          path: products
+          if-no-files-found: error
+
   crates:
     name: crates.io
+    needs: products
     runs-on: ubuntu-latest
-    if: github.repository == 'nickderobertis/skilltest' && github.ref_name != 'v0.0.0'
+    if: github.event_name == 'push' && github.repository == 'nickderobertis/skilltest' && github.ref_name != 'v0.0.0'
     environment: release
     steps:
       - uses: actions/checkout@v4
@@ -141,8 +210,8 @@ jobs:
   pypi:
     name: PyPI
     runs-on: ubuntu-latest
-    needs: binaries
-    if: github.repository == 'nickderobertis/skilltest' && github.ref_name != 'v0.0.0'
+    needs: products
+    if: github.event_name == 'push' && github.repository == 'nickderobertis/skilltest' && github.ref_name != 'v0.0.0'
     environment: release
     steps:
       - uses: actions/checkout@v4
@@ -153,8 +222,8 @@ jobs:
       - name: Download the per-target binaries
         uses: actions/download-artifact@v4
         with:
-          pattern: skilltest-*
-          path: artifacts
+          name: release-products
+          path: products
 
       - name: Build & publish skilltest-sdk then skilltest-pytest (skip versions already live)
         env:
@@ -168,15 +237,17 @@ jobs:
           }
           on_pypi() { curl -fsS "https://pypi.org/pypi/$1/$2/json" >/dev/null 2>&1; }
 
-          # skilltest-sdk: a platform wheel per target (binary bundled) plus a
-          # pure wheel + sdist fallback. build-python-dist.sh reads the binaries
-          # from artifacts/skilltest-<target>/skilltest (skilltest.exe on Windows).
+          # Publish the exact staged wheels plus a pure wheel/sdist fallback.
           sdk_version=$(pyproject_version sdks/python)
           if on_pypi skilltest-sdk "$sdk_version"; then
             echo "skip: skilltest-sdk $sdk_version already on PyPI"
           else
             echo "publishing: skilltest-sdk $sdk_version (platform wheels + sdist)"
-            bash scripts/build-python-dist.sh artifacts sdks/python/dist
+            python3 scripts/stage-and-verify-release-product.py --check-wheels products
+            mkdir -p sdks/python/dist
+            cp products/*/*.whl sdks/python/dist/
+            rm -rf sdks/python/skilltest_sdk/_bin
+            (cd sdks/python && uv build --out-dir dist)
             uv publish sdks/python/dist/*
           fi
 
@@ -192,8 +263,8 @@ jobs:
   npm:
     name: npm
     runs-on: ubuntu-latest
-    needs: binaries
-    if: github.repository == 'nickderobertis/skilltest' && github.ref_name != 'v0.0.0'
+    needs: products
+    if: github.event_name == 'push' && github.repository == 'nickderobertis/skilltest' && github.ref_name != 'v0.0.0'
     environment: release
     steps:
       - uses: actions/checkout@v4
@@ -214,8 +285,8 @@ jobs:
       - name: Download the per-target binaries
         uses: actions/download-artifact@v4
         with:
-          pattern: skilltest-*
-          path: artifacts
+          name: release-products
+          path: products
 
       - name: Build the SDK then the framework package
         run: |
@@ -231,23 +302,21 @@ jobs:
 
           published_npm() { npm view "$1@$2" version >/dev/null 2>&1; }
 
+          # Every carrier's identity, members and binary must match its declared
+          # target and the staged archive before any package reaches the registry.
+          python3 scripts/stage-and-verify-release-product.py --check-carriers products
+
           # The per-platform binary packages must publish BEFORE the SDK: its
           # optionalDependencies pin these exact versions (pnpm rewrites the
           # `workspace:*` specifiers on publish).
           for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu \
-                        x86_64-apple-darwin aarch64-apple-darwin \
+                        aarch64-apple-darwin \
                         x86_64-pc-windows-msvc aarch64-pc-windows-msvc; do
-            case "$target" in
-              *-windows-*) binary="artifacts/skilltest-$target/skilltest.exe" ;;
-              *) binary="artifacts/skilltest-$target/skilltest" ;;
-            esac
-            if [ ! -f "$binary" ]; then
-              echo "notice: no binary for $target — skipping its package"
-              continue
-            fi
-            dir=$(bash scripts/stage-npm-binary.sh "$target" "$PWD/$binary")
-            name=$(node -p "require('./$dir/package.json').name")
-            version=$(node -p "require('./$dir/package.json').version")
+            carriers=("products/$target"/skill-test-cli-*.tgz)
+            [ "${#carriers[@]}" -eq 1 ] && [ -f "${carriers[0]}" ] || { echo "error: missing or ambiguous npm carrier for $target; restage release products" >&2; exit 1; }
+            packed="${carriers[0]}"
+            name=$(python3 -c 'import sys,tomllib;print(next(p["npm_package"] for p in tomllib.load(open("release-platforms.toml","rb"))["platform"] if p["target"]==sys.argv[1]))' "$target")
+            version=$(node -p "require('./sdks/typescript/package.json').version")
             if published_npm "$name" "$version"; then
               echo "skip: $name@$version already on npm"
               continue
@@ -255,7 +324,7 @@ jobs:
             echo "publishing: $name@$version"
             # npm (not pnpm) so the binary keeps its executable bit; these
             # packages have no workspace:* deps for pnpm to rewrite.
-            ( cd "$dir" && npm publish --access public )
+            npm publish "$packed" --access public
           done
 
           publish_pkg() {
@@ -285,7 +354,7 @@ jobs:
     name: verify ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
     needs: [pypi, npm]
-    if: github.repository == 'nickderobertis/skilltest' && github.ref_name != 'v0.0.0'
+    if: github.event_name == 'push' && github.repository == 'nickderobertis/skilltest' && github.ref_name != 'v0.0.0'
     defaults:
       run:
         shell: bash

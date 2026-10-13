@@ -5,6 +5,8 @@
       "Bash(just check)",
       "Bash(just check-all)",
       "Bash(just build)",
+      "Bash(just release-product-test)",
+      "Bash(node --test .github/tests/*.test.mjs)",
       "Bash(just graph)",
       "Bash(just test)",
       "Bash(just test-e2e)",

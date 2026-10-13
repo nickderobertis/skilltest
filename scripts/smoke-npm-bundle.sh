@@ -27,7 +27,6 @@ cli="$(abspath "$cli_arg")"
 provider="$(abspath "$provider_arg")"
 
 cd "$(dirname "$0")/.."
-repo="$PWD"
 
 if [ ! -f "$cli" ] || [ ! -f "$provider" ]; then
   echo "error: cli or provider not found: $cli / $provider" >&2
@@ -48,7 +47,17 @@ trap 'rm -rf "$work"' EXIT
 pkgdir="$(bash scripts/stage-npm-binary.sh "$target" "$cli")"
 pnpm --filter @skill-test/sdk build >/dev/null
 pnpm --filter @skill-test/vitest build >/dev/null
-( cd "$pkgdir" && npm pack --pack-destination "$work" >/dev/null )
+if [ -n "${4:-}" ]; then
+  cp "$4"/skill-test-cli-*.tgz "$work/" || {
+    echo 'npm bundle smoke: cannot copy staged carrier; check that staging produced a readable tarball and scratch space is writable' >&2
+    exit 1
+  }
+else
+  ( cd "$pkgdir" && npm pack --pack-destination "$work" >/dev/null ) || {
+    echo "error: carrier packing failed; run npm pack in $pkgdir to reproduce" >&2
+    exit 1
+  }
+fi
 ( cd sdks/typescript && pnpm pack --pack-destination "$work" >/dev/null )
 ( cd plugins/vitest && pnpm pack --pack-destination "$work" >/dev/null )
 
@@ -75,5 +84,12 @@ TS
 # 3. Run the case through the plugin. SKILLTEST_BIN unset + the deterministic fake.
 ( cd "$proj" && env -u SKILLTEST_BIN SKILLTEST_PROVIDER="$provider" \
   ./node_modules/.bin/vitest run smoke.test.ts )
+
+if ( cd "$proj" && env -u SKILLTEST_BIN SKILLTEST_PROVIDER="$work/missing-provider" \
+  ./node_modules/.bin/vitest run smoke.test.ts ) >"$work/failure.log" 2>&1; then
+  echo 'error: bundled npm plugin accepted a missing provider; inspect SDK error propagation' >&2
+  exit 1
+fi
+grep -Ei 'provider|ENOENT|not found' "$work/failure.log" >/dev/null || { cat "$work/failure.log" >&2 || echo "(unreadable: $work/failure.log; rerun the plugin case by hand to see its output)" >&2; echo 'npm bundle smoke: missing-provider failure had an unexpected diagnostic; reproduce the plugin case and inspect SDK error propagation' >&2; exit 1; }
 
 echo "npm bundle smoke ($target): ok"

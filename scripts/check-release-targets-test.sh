@@ -41,7 +41,6 @@ staged=(
   plugins/vitest/package.json
   sdks/typescript/platforms/cli-linux-x64/package.json
   sdks/typescript/platforms/cli-linux-arm64/package.json
-  sdks/typescript/platforms/cli-darwin-x64/package.json
   sdks/typescript/platforms/cli-darwin-arm64/package.json
   sdks/typescript/platforms/cli-win32-x64/package.json
   sdks/typescript/platforms/cli-win32-arm64/package.json
@@ -51,6 +50,7 @@ staged=(
   .github/workflows/bundle-smoke.yml
   scripts/build-python-dist.sh
   scripts/build-python-wheel.sh
+  scripts/stage-release-product.sh
   scripts/set-version.sh
   .releaserc.json
 )
@@ -123,9 +123,9 @@ expect_red "the Python SDK's manifest was renamed" \
   "declares 'pypi:skilltest-sdk', which .github/workflows/publish.yml does not publish"
 
 stage
-edit release-targets.toml '/"npm:@skill-test\/cli-darwin-x64",/d'
+edit release-targets.toml '/"npm:@skill-test\/cli-darwin-arm64",/d'
 expect_red "a published platform package lost its covers entry" \
-  "publishes per-platform package 'npm:@skill-test/cli-darwin-x64'"
+  "publishes per-platform package 'npm:@skill-test/cli-darwin-arm64'"
 
 stage
 edit release-targets.toml 's/^  "npm:@skill-test\/cli-darwin-arm64",$/&\
@@ -134,9 +134,9 @@ expect_red "a covers entry names a package nothing publishes" \
   "cover 'npm:@skill-test/cli-freebsd-x64', which .github/workflows/publish.yml does not publish"
 
 stage
-edit .github/workflows/publish.yml 's/ x86_64-apple-darwin aarch64-apple-darwin \\$/ aarch64-apple-darwin \\/'
+edit .github/workflows/publish.yml 's/^\( *\)aarch64-apple-darwin \\$/\1\\/'
 expect_red "the npm job stopped staging a committed platform package" \
-  "sdks/typescript/platforms/cli-darwin-x64/package.json is committed but"
+  "sdks/typescript/platforms/cli-darwin-arm64/package.json is committed but"
 
 stage
 jq 'del(.optionalDependencies["@skill-test/cli-linux-arm64"])' "$work/repo/sdks/typescript/package.json" \
@@ -206,9 +206,14 @@ expect_red "publish.yml's binaries matrix lost a Windows target" \
   "publish.yml's binaries matrix lacks 'aarch64-pc-windows-msvc	windows-11-arm	skilltest.exe'"
 
 stage
-edit .github/workflows/release.yml 's/{ target: x86_64-pc-windows-msvc, os: windows-latest, bin: skilltest.exe }/{ target: x86_64-pc-windows-msvc, os: windows-latest, bin: skilltest }/'
-expect_red "release.yml's archive matrix named the Windows binary without .exe" \
-  "release.yml's upload matrix has 'x86_64-pc-windows-msvc	windows-latest	skilltest'"
+edit .github/workflows/release.yml '/bash scripts\/verify-staged-archives.sh products/d'
+expect_red "release.yml stopped verifying the staged archives before upload" \
+  "release.yml does not run scripts/verify-staged-archives.sh over products"
+
+stage
+edit .github/workflows/publish.yml '/bash scripts\/verify-staged-archives.sh products/d'
+expect_red "publish.yml's products job stopped verifying the staged archives" \
+  "publish.yml's products job does not run scripts/verify-staged-archives.sh over products"
 
 stage
 edit scripts/build-python-dist.sh 's/ x86_64-pc-windows-msvc aarch64-pc-windows-msvc"$/"/'
@@ -246,15 +251,15 @@ expect_red "a shipped Windows target was dropped from the platform declaration" 
   "publish.yml's binaries matrix has 'aarch64-pc-windows-msvc	windows-11-arm	skilltest.exe', which release-platforms.toml does not declare"
 
 stage
-edit .github/workflows/bundle-smoke.yml 's/^\( *\)- { target: aarch64-apple-darwin, os: macos-14 }$/&\
+edit .github/workflows/bundle-smoke.yml 's/^\( *\)- { target: aarch64-unknown-linux-gnu, os: ubuntu-24.04-arm }$/&\
 \1- { target: x86_64-unknown-freebsd, os: ubuntu-latest }/'
 expect_red "bundle-smoke smoked an undeclared platform" \
   "bundle-smoke.yml smokes 'x86_64-unknown-freebsd', which release-platforms.toml does not declare"
 
 stage
-edit .github/workflows/bundle-smoke.yml 's/{ target: aarch64-apple-darwin, os: macos-14 }/{ target: aarch64-apple-darwin, os: macos-13 }/'
+edit .github/workflows/bundle-smoke.yml 's/{ target: aarch64-unknown-linux-gnu, os: ubuntu-24.04-arm }/{ target: aarch64-unknown-linux-gnu, os: ubuntu-latest }/'
 expect_red "bundle-smoke smoked a declared platform on another runner" \
-  "smokes 'aarch64-apple-darwin' on 'macos-13' but release-platforms.toml builds it on 'macos-14'"
+  "smokes 'aarch64-unknown-linux-gnu' on 'ubuntu-latest' but release-platforms.toml builds it on 'ubuntu-24.04-arm'"
 
 stage
 edit .github/workflows/publish.yml 's/^\( *\)x86_64-pc-windows-msvc aarch64-pc-windows-msvc; do$/\1x86_64-pc-windows-msvc; do/'
@@ -301,7 +306,7 @@ expect_red "set-version.sh stopped versioning every platform package" \
 
 stage
 edit release-platforms.toml '/^wheel_tag = "win_amd64"$/d'
-expect_red "a declared platform lost a field" "[[platform]] 5 lacks one of"
+expect_red "a declared platform lost a field" "[[platform]] 4 lacks one of"
 
 stage
 edit release-targets.toml 's/^schema_version = 3$/schema_version = 2/'
@@ -322,7 +327,7 @@ expect_red "the platform list was written as a string" "release-platforms.toml d
 
 stage
 edit release-platforms.toml 's/^bin = "skilltest.exe"$/bin = 3/'
-expect_red "a platform field was not a string" "[[platform]] 5 lacks one of"
+expect_red "a platform field was not a string" "[[platform]] 4 lacks one of"
 
 stage
 edit release-platforms.toml 's/^target = "aarch64-unknown-linux-gnu"$/target = "x86_64-unknown-linux-gnu"/'

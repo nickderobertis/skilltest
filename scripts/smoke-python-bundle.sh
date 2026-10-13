@@ -45,9 +45,20 @@ fi
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-bash scripts/build-python-wheel.sh "$target" "$cli" "$work/dist" >/dev/null
-wheel="$(ls "$work"/dist/skilltest_sdk-*.whl 2>/dev/null | head -1 || true)"
-if [ -z "$wheel" ]; then
+if [ -n "${4:-}" ]; then
+  { mkdir -p "$work/dist" && cp "$4"/*.whl "$work/dist/"; } || {
+    echo 'python bundle smoke: cannot copy staged wheel; check that staging produced a readable wheel and scratch space is writable' >&2
+    exit 1
+  }
+else
+  bash scripts/build-python-wheel.sh "$target" "$cli" "$work/dist" >/dev/null || {
+    echo "error: wheel build failed; run scripts/build-python-wheel.sh $target $cli to reproduce" >&2
+    exit 1
+  }
+fi
+wheels=("$work"/dist/skilltest_sdk-*.whl)
+wheel="${wheels[0]}"
+if [ ! -f "$wheel" ]; then
   echo "error: no wheel produced for $target" >&2
   echo "hint: run \`scripts/build-python-wheel.sh $target $cli\` to see the build failure." >&2
   exit 1
@@ -63,14 +74,18 @@ if ! build_output="$( cd "$repo/plugins/pytest" && uv build --wheel --out-dir "$
   echo "hint: run \`uv build --wheel\` in plugins/pytest to reproduce it." >&2
   exit 1
 fi
-plugin_wheel="$(ls "$work"/dist/skilltest_pytest-*.whl 2>/dev/null | head -1 || true)"
-if [ -z "$plugin_wheel" ]; then
+plugin_wheels=("$work"/dist/skilltest_pytest-*.whl)
+plugin_wheel="${plugin_wheels[0]}"
+if [ ! -f "$plugin_wheel" ]; then
   echo "error: no skilltest-pytest wheel produced" >&2
   echo "hint: run \`uv build --wheel\` in plugins/pytest to see the build failure." >&2
   exit 1
 fi
 
-uv venv --python 3.12 "$work/venv" >/dev/null
+uv venv --python "${SMOKE_PYTHON:-3.12}" "$work/venv" >/dev/null || {
+  echo "python bundle smoke: cannot create consumer environment; install ${SMOKE_PYTHON:-3.12} with uv python install and check scratch permissions" >&2
+  exit 1
+}
 uv pip install --python "$work/venv" "$wheel" pytest >/dev/null
 
 if ! pin="$("$work/venv/bin/python" - "$plugin_wheel" <<'PYEOF'
@@ -100,5 +115,12 @@ uv pip install --python "$work/venv" --no-deps "$plugin_wheel" >/dev/null
 cp -r tests/fixtures/smoke "$work/cases"
 env -u SKILLTEST_BIN SKILLTEST_PROVIDER="$provider" \
   "$work/venv/bin/python" -m pytest "$work/cases" -p skilltest_pytest -o addopts="" -q
+
+if env -u SKILLTEST_BIN SKILLTEST_PROVIDER="$work/missing-provider" \
+  "$work/venv/bin/python" -m pytest "$work/cases" -p skilltest_pytest -o addopts="" -q >"$work/failure.log" 2>&1; then
+  echo 'error: bundled Python plugin accepted a missing provider; inspect SDK error propagation' >&2
+  exit 1
+fi
+grep -Ei 'provider|No such file|not found' "$work/failure.log" >/dev/null || { cat "$work/failure.log" >&2 || echo "(unreadable: $work/failure.log; rerun the plugin case by hand to see its output)" >&2; echo 'python bundle smoke: missing-provider failure had an unexpected diagnostic; reproduce the plugin case and inspect SDK error propagation' >&2; exit 1; }
 
 echo "python bundle smoke ($target): ok (plugin pins $pin)"

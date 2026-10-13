@@ -62,9 +62,9 @@ CASES = (
     ),
     Case(
         "the toolchain missing a release target",
-        lambda _wf, tc: _replace(tc, '  "x86_64-apple-darwin",\n', ""),
+        lambda _wf, tc: _replace(tc, '  "aarch64-apple-darwin",\n', ""),
         1,
-        "x86_64-apple-darwin is built by",
+        "aarch64-apple-darwin is built by",
     ),
     Case(
         "a workflow whose jobs are a list",
@@ -114,7 +114,7 @@ CASES = (
     Case(
         "a matrix the model does not expand",
         lambda wf, _tc: _replace(
-            wf / "ci.yml", "os: [ubuntu-latest, macos-latest]", "os: [ubuntu-latest]\n        rust: [a, b]"
+            wf / "publish.yml", "      matrix:\n", "      matrix:\n        rust: [a, b]\n        os: [ubuntu-latest]\n"
         ),
         2,
         "must be one axis or only `include` rows",
@@ -156,15 +156,15 @@ CASES = (
         "a job that tolerates its own failure",
         lambda wf, _tc: _replace(
             wf / "ci.yml",
-            "    runs-on: ${{ matrix.os }}\n",
-            "    runs-on: ${{ matrix.os }}\n    continue-on-error: true\n",
+            "    runs-on: ubuntu-latest\n",
+            "    runs-on: ubuntu-latest\n    continue-on-error: true\n",
         ),
         2,
-        "jobs.check.continue-on-error is not simulated",
+        "jobs.policy.continue-on-error is not simulated",
     ),
     Case(
         "a matrix target that is not a string",
-        lambda wf, _tc: _replace(wf / "release.yml", "{ target: x86_64-unknown-linux-gnu,", "{ target: 42,"),
+        lambda wf, _tc: _replace(wf / "publish.yml", "{ target: x86_64-unknown-linux-gnu,", "{ target: 42,"),
         2,
         "names a non-string matrix target 42",
     ),

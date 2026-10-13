@@ -36,7 +36,6 @@ fi
 case "$target" in
 x86_64-unknown-linux-gnu) plat="manylinux_2_17_x86_64" ;;
 aarch64-unknown-linux-gnu) plat="manylinux_2_17_aarch64" ;;
-x86_64-apple-darwin) plat="macosx_10_12_x86_64" ;;
 aarch64-apple-darwin) plat="macosx_11_0_arm64" ;;
 x86_64-pc-windows-msvc) plat="win_amd64" ;;
 aarch64-pc-windows-msvc) plat="win_arm64" ;;

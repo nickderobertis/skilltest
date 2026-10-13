@@ -46,6 +46,7 @@ bootstrap:
     pnpm install
     cargo fetch
     uv sync
+    bash .github/setup-screencomp.sh
 
 # Install nx and the TS workspace exactly as locked — the slice of `bootstrap` a
 # CI job needs to run an nx recipe (the live suites) without the Python stack.
@@ -74,7 +75,7 @@ check tier="affected":
     @just workflows-lint
     @just workflows-check
     @just base-check
-    {{ if tier == "all" { "pnpm exec nx run-many" } else { affected } }} -t format-check lint typecheck test test-e2e --exclude={{live}}
+    {{ if tier == "all" { "pnpm exec nx run-many" } else { affected } }} -t format-check lint typecheck test test-e2e budgets --exclude={{live}}
     {{nx}} run-many -t lint format-check --projects={{live}}
     @just coverage
     @echo "check ({{tier}}): all gates passed"
@@ -98,13 +99,15 @@ contract-check:
 # Release-target gate (part of `just check`; workspace-level, not per-project,
 # so it runs even when only release-targets.toml or a workflow changed): the
 # declaration against what publish.yml publishes, that gate's own drift tests,
-# the release probe's offline outcome tests (curl doubled; no network), and the
-# release-archive verifier's tests on stand-in archives.
+# the release probe's offline outcome tests (curl doubled; no network), the
+# release-archive verifier's tests on stand-in archives, and install.sh's
+# install/refusal journeys (host identity and download transport doubled).
 release-targets-check:
     @bash scripts/check-release-targets.sh >/dev/null
     @bash scripts/check-release-targets-test.sh >/dev/null
     @bash scripts/check-release-probe.sh >/dev/null
     @bash scripts/verify-release-archive-test.sh >/dev/null
+    @bash scripts/install-test.sh >/dev/null
 
 # Workflow lint (part of `just check`; workspace-level, since no nx project owns
 # .github/workflows/): actionlint over every workflow, handing each `run:` script
@@ -308,3 +311,7 @@ test-lint-llm-config:
 # llmlint scoped to changed files since the merge-base with main.
 lint-llm-diff base="origin/main" *args:
     llmlint --diff --diff-base "{{base}}" {{args}}
+
+# Slow, focused production packaging proof; run through the existing release edge.
+release-product-test:
+    @{{nx}} run release-packaging:packaging --output-style=stream-without-prefixes
