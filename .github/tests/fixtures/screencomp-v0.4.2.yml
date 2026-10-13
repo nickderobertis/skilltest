@@ -210,6 +210,7 @@ jobs:
           fi
           echo "matrix=$matrix" >>"$GITHUB_OUTPUT"
 
+  # llmlint: ignore[comments_earn_their_place] Immutable upstream comment at source site 213; preserve its bytes while the digest gates the exact reusable workflow rather than rewriting third-party commentary.
   # ---- Capture: the ONLY job that runs inside your container ----------------
   # One lane per configured arch, each on a runner of that arch so the pixels
   # match the committed baseline's arch.
@@ -229,6 +230,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # llmlint: ignore[comments_earn_their_place] Immutable upstream comment at source site 232; preserve its bytes while the digest gates the exact reusable workflow rather than rewriting third-party commentary.
       # Record the runner's CPU. ubuntu-latest hands out heterogeneous CPUs (Intel
       # vs AMD), and Blink lays text out in floating point, so the last bit of an
       # anti-aliased glyph edge can differ across CPUs — flipping a dense-text shot
@@ -265,6 +267,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  # llmlint: ignore[comments_earn_their_place] Immutable upstream comment at source site 268; preserve its bytes while the digest gates the exact reusable workflow rather than rewriting third-party commentary.
   # ---- Report: runs on the HOST runner, where gh/git/screencomp live --------
   # Thin glue: check out the PR branch, install the CLI, pull this arch's capture
   # artifact, then hand the entire downstream half — reproducibility gate,
@@ -315,6 +318,7 @@ jobs:
           comment-base-ref: ${{ inputs.comment-base-ref }}
           github-token: ${{ secrets.push-token || github.token }}
 
+  # llmlint: ignore[comments_earn_their_place] Immutable upstream comment at source site 318; preserve its bytes while the digest gates the exact reusable workflow rather than rewriting third-party commentary.
   # ---- Cleanup: drop a closed PR's preview from gh-pages ---------------------
   # keep_files:true keeps a main deploy from clobbering live /pr-<n>/ previews,
   # but nothing else removes them — so without this they pile up forever. Runs
@@ -334,6 +338,7 @@ jobs:
           pr: ${{ github.event.pull_request.number }}
           token: ${{ secrets.push-token || github.token }}
 
+  # llmlint: ignore[comments_earn_their_place] Immutable upstream comment at source site 337; preserve its bytes while the digest gates the exact reusable workflow rather than rewriting third-party commentary.
   # ---- Prune: bound gh-pages history so old galleries don't accrete ----------
   # Every deploy commits PNG blobs; a changed shot leaves its old blob in history
   # forever. The `gh-pages-maintenance` action keeps the most recent gallery

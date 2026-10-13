@@ -19,6 +19,26 @@
       {
         "before": "      - uses: nickderobertis/screencomp@v0 # install the CLI on the host",
         "reason": "Immutable upstream host report reader installation comment; preserve source bytes while the reusable-call digest gates the exact upstream workflow."
+      },
+      {
+        "before": "  # ---- Capture: the ONLY job that runs inside your container ----------------",
+        "reason": "Immutable upstream comment at source site 213; preserve its bytes while the digest gates the exact reusable workflow rather than rewriting third-party commentary."
+      },
+      {
+        "before": "      # Record the runner's CPU. ubuntu-latest hands out heterogeneous CPUs (Intel",
+        "reason": "Immutable upstream comment at source site 232; preserve its bytes while the digest gates the exact reusable workflow rather than rewriting third-party commentary."
+      },
+      {
+        "before": "  # ---- Report: runs on the HOST runner, where gh/git/screencomp live --------",
+        "reason": "Immutable upstream comment at source site 268; preserve its bytes while the digest gates the exact reusable workflow rather than rewriting third-party commentary."
+      },
+      {
+        "before": "  # ---- Cleanup: drop a closed PR's preview from gh-pages ---------------------",
+        "reason": "Immutable upstream comment at source site 318; preserve its bytes while the digest gates the exact reusable workflow rather than rewriting third-party commentary."
+      },
+      {
+        "before": "  # ---- Prune: bound gh-pages history so old galleries don't accrete ----------",
+        "reason": "Immutable upstream comment at source site 337; preserve its bytes while the digest gates the exact reusable workflow rather than rewriting third-party commentary."
       }
     ]
   }

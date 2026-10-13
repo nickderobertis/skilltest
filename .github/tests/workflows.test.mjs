@@ -3,6 +3,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import test from "node:test";
 import YAML from "yaml";
+import { workflow as validateWorkflow } from "../validation.mjs";
 import {
   loadGraph,
   matrixRows,
@@ -57,6 +58,7 @@ function scenario(label, name, action, diff, ownership) {
   if (ownership === "fork") e.pull_request.head.repo.full_name = "fork/skilltest";
   return e;
 }
+// llmlint: ignore[shell_test_tiers_stay_split] The task requires these deterministic real subprocess boundaries in the integrated workflow-recording test target; no external-service or model probe runs here.
 test("actual workflow graph across the complete workload records telemetry", (t) => {
   const h = history(t);
   const runs = [];
@@ -511,6 +513,28 @@ test("SDK budget analysis alone judges an induced matrix expansion", () => {
   );
   assert.equal(result.status, 1, result.stderr);
   assert.match(result.stdout, /jobs-per-run: over/);
+  const downstream = structuredClone(graph);
+  downstream["release.yml"].jobs.upload["runs-on"] = "macos-14";
+  const extra = resolveRun(
+    downstream,
+    "release.yml",
+    scenario("downstream", "workflow_run", undefined, "source", "same-repository"),
+    { macosRequired: false },
+  );
+  const lifecycle = structuredClone(original);
+  lifecycle.runs.find((r) => r.id === "downstream/source/same-repository:release.yml").jobs =
+    extra.rows;
+  writeFileSync(".github/.telemetry/induced-lifecycle.json", JSON.stringify(lifecycle));
+  for (const budget of registered.budgets)
+    budget.command[5] = ".github/.telemetry/induced-lifecycle.json";
+  writeFileSync(".github/.telemetry/induced-budgets.yaml", YAML.stringify(registered));
+  const overLifecycle = spawnSync(
+    process.execPath,
+    [".github/check-budgets.mjs", ".github/.telemetry/induced-budgets.yaml"],
+    { encoding: "utf8" },
+  );
+  assert.equal(overLifecycle.status, 1, overLifecycle.stderr);
+  assert.match(overLifecycle.stdout, /runs-per-change: over/);
   const within = spawnSync(process.execPath, [".github/check-budgets.mjs"], { encoding: "utf8" });
   assert.equal(within.status, 0, within.stderr);
   assert.match(within.stdout, /within/);
@@ -530,4 +554,25 @@ test("SDK budget analysis alone judges an induced matrix expansion", () => {
   );
   assert.notEqual(invalid.status, 0);
   assert.match(invalid.stderr, /unresolved lifecycle run/);
+});
+
+test("workflow decoder rejects unsupported step controls and policy output drift", () => {
+  for (const control of ["continue-on-error", "timeout-minutes"]) {
+    const broken = structuredClone(graph);
+    broken["ci.yml"].jobs["mac-check"].steps[0][control] = true;
+    // Drive the actual YAML decoder, not an already-decoded object.
+    assert.throws(() => validateWorkflow(broken["ci.yml"]), /step outcome control/);
+  }
+  const broken = structuredClone(graph);
+  broken["ci.yml"].jobs.policy.outputs.macosRequired = "${{ steps.other.outputs.macosRequired }}";
+  assert.throws(
+    () =>
+      resolveRun(
+        broken,
+        "ci.yml",
+        scenario("pr-synchronize", "pull_request", "synchronize", "source", "same-repository"),
+        { macosRequired: true },
+      ),
+    /policy output mapping/,
+  );
 });

@@ -367,8 +367,16 @@ export function resolveRun(
     }
     /** @type {Record<string,string>} */
     let outputs = {};
-    if (id === "policy" && result === "success")
+    if (id === "policy" && result === "success") {
+      if (
+        job.outputs?.macosRequired !== "${{ steps.classify.outputs.macosRequired }}" ||
+        !(job.steps ?? []).some((step) =>
+          step.run?.startsWith("node .github/macos-policy.mjs classify --event "),
+        )
+      )
+        throw new Error("unresolved production policy output mapping");
       outputs = { macosRequired: String(classification.macosRequired) };
+    }
     if (file.startsWith("nickderobertis/screencomp/") && id === "arches" && result === "success") {
       if (
         job.outputs?.matrix !== "${{ steps.read.outputs.matrix }}" ||

@@ -113,6 +113,8 @@ export function workflow(value) {
         ? undefined
         : array(job.steps, "steps").map((rawStep) => {
             const step = object(rawStep, "step");
+            if ("continue-on-error" in step || "timeout-minutes" in step)
+              throw new Error("unresolved step outcome control");
             return {
               run: optionalString(step.run, "step.run"),
               uses: optionalString(step.uses, "step.uses"),

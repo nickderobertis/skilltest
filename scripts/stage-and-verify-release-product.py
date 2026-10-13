@@ -161,6 +161,9 @@ def main() -> None:
         (metadata,) = [n for n in z.namelist() if n.endswith(".dist-info/METADATA")]
         headers = Parser().parsestr(z.read(metadata).decode())
         require(headers.get_all("Version", []) == [version], "wrong wheel version")
+        require(
+            headers.get_all("Name", []) == ["skilltest-sdk"], "wrong wheel identity"
+        )
 
     (packed,) = out.glob("skill-test-cli-*.tgz")
     with tarfile.open(packed) as t:

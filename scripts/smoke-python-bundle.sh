@@ -79,7 +79,10 @@ if [ ! -f "$plugin_wheel" ]; then
   exit 1
 fi
 
-uv venv --python "${SMOKE_PYTHON:-3.12}" "$work/venv" >/dev/null
+uv venv --python "${SMOKE_PYTHON:-3.12}" "$work/venv" >/dev/null || {
+  echo "python bundle smoke: cannot create consumer environment; install ${SMOKE_PYTHON:-3.12} with uv python install and check scratch permissions" >&2
+  exit 1
+}
 uv pip install --python "$work/venv" "$wheel" pytest >/dev/null
 
 if ! pin="$("$work/venv/bin/python" - "$plugin_wheel" <<'PYEOF'

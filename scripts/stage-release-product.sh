@@ -17,11 +17,11 @@ if ! build_output="$(bash scripts/build-python-wheel.sh "$target" "$binary" "$ou
 ' "$target" "$build_output" >&2
   exit 1
 fi
-pkg="$(bash scripts/stage-npm-binary.sh "$target" "$binary")"
+pkg="$(bash scripts/stage-npm-binary.sh "$target" "$binary")" || { echo 'stage-release-product: npm staging failed; rerun stage-npm-binary.sh for the declared target and binary' >&2; exit 1; }
 if ! pack_output="$(cd "$pkg" && npm pack --silent --pack-destination "$out" 2>&1)"; then
-  printf 'stage-release-product: npm pack failed for %s; inspect the staged carrier
+  printf 'stage-release-product: npm pack failed for %s; rerun npm pack --pack-destination in the staged carrier directory
 %s
-' "$target" "$pack_output" >&2
+' "$target ($pkg)" "$pack_output" >&2
   exit 1
 fi
 python3 scripts/stage-and-verify-release-product.py "$target" "$binary" "$out" "$pkg"

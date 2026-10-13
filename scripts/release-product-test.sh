@@ -15,7 +15,7 @@ finish() {
   exit "$journey_status"
 }
 trap finish EXIT
-exec >"$work/journey.log" 2>&1
+exec >"$work/journey.log" 2>&1 || { echo 'release-product-test: cannot create journey log; check scratch permissions and free space' >&4; exit 1; }
 cargo build --release --locked -p skilltest-cli --bin skilltest --target "$target"
 cargo build --release --locked -p skilltest-cli --bin skilltest-fake-provider --features fake-provider --target "$target"
 binary="target/$target/release/skilltest"
@@ -25,7 +25,7 @@ version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
 bash scripts/verify-release-archive.sh "$work/products" "$target" skilltest "$version"
 bash scripts/smoke-python-bundle.sh "$target" "$binary" "$provider" "$work/products"
 bash scripts/smoke-npm-bundle.sh "$target" "$binary" "$provider" "$work/products"
-cp -r "$work/products" "$work/native-products"
+cp -r "$work/products" "$work/native-products" || { echo 'release-product-test: cannot retain native products; check scratch permissions and free space' >&2; exit 1; }
 # Tamper with a payload after packing: the same production verifier must refuse it.
 python3 - "$work/products" <<'PY'
 from pathlib import Path
@@ -88,6 +88,8 @@ for platform in tomllib.load(open('release-platforms.toml', 'rb'))['platform']:
     def rewrite_wheel(kind):
         with zipfile.ZipFile(wheel, 'w') as z:
             for name, content in wheel_entries.items():
+                if kind == 'name' and name.endswith('.dist-info/METADATA'):
+                    content = content.replace(b'Name: skilltest-sdk', b'Name: forged-sdk')
                 if kind == 'metadata' and name.endswith('.dist-info/METADATA'):
                     content = content.replace(b'Version: ', b'Incorrect-Version: ')
                 z.writestr(name, content)
@@ -97,6 +99,8 @@ for platform in tomllib.load(open('release-platforms.toml', 'rb'))['platform']:
     reject('wheel contains fake provider')
     rewrite_wheel('metadata')
     reject('wrong wheel version')
+    rewrite_wheel('name')
+    reject('wrong wheel identity')
     wheel.write_bytes(wheel_bytes)
     original = binary.read_bytes()
     binary.write_bytes(bytes(len(original)))

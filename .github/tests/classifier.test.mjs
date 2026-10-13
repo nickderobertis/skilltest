@@ -4,6 +4,7 @@ import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { classifyCLI, event, history } from "./history.mjs";
+// llmlint: ignore[shell_test_tiers_stay_split] The task requires these deterministic real subprocess boundaries in the integrated workflow-recording test target; no external-service or model probe runs here.
 test("real CLI verifies version-only histories and fails closed for forged/mixed/unreadable PRs", (t) => {
   const h = history(t);
   assert.deepEqual(classifyCLI(h, event()).isReleaseOnly, true);

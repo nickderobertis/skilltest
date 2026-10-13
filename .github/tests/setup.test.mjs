@@ -14,6 +14,7 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 import { event, history } from "./history.mjs";
 
+// llmlint: ignore[shell_test_tiers_stay_split] The task requires these deterministic real subprocess boundaries in the integrated workflow-recording test target; no external-service or model probe runs here.
 test("screencomp provisioning exercises real filesystem/extraction with only forge transport doubled", (t) => {
   const root = mkdtempSync(
     join(process.env.ONEPIPELINE_NODE_SCRATCH_DIR ?? "/tmp", "screencomp-install-"),
@@ -84,8 +85,102 @@ test("screencomp provisioning exercises real filesystem/extraction with only for
   result = invoke();
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /wrong binary version/);
+  const restore = () => {
+    rmSync(join(fixture, ".github/.tools"), { recursive: true, force: true });
+    writeFileSync(join(src, "screencomp"), '#!/bin/sh\necho "screencomp 0.4.2"\n');
+    chmodSync(join(src, "screencomp"), 0o755);
+    execFileSync("tar", ["-czf", archive, "-C", src, "screencomp"]);
+    writeFileSync(
+      lock,
+      JSON.stringify({
+        "x86_64-unknown-linux-gnu": createHash("sha256")
+          .update(readFileSync(archive))
+          .digest("hex"),
+      }),
+    );
+    writeFileSync(join(tools, "curl"), '#!/bin/sh\nexec "$REAL_COPY" "$FORGE_ARCHIVE" "$4"\n');
+    chmodSync(join(tools, "curl"), 0o755);
+  };
+  restore();
+  writeFileSync(join(tools, "uname"), "#!/bin/sh\necho UnsupportedHost\n");
+  result = invoke();
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /unsupported host/);
+  writeFileSync(
+    join(tools, "uname"),
+    '#!/bin/sh\ncase "$1" in -s) echo Linux ;; -m) echo x86_64 ;; esac\n',
+  );
+  restore();
+  writeFileSync(join(fixture, ".github/.tools"), "blocking file");
+  result = invoke();
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /cannot create/);
+  restore();
+  writeFileSync(lock, "{");
+  result = invoke();
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /cannot read checksum lock/);
+  restore();
+  writeFileSync(lock, JSON.stringify({ "x86_64-unknown-linux-gnu": "invalid" }));
+  result = invoke();
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /missing checksum/);
+  restore();
+  writeFileSync(join(tools, "curl"), "#!/bin/sh\nexit 22\n");
+  result = invoke();
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /download failed/);
+  restore();
+  writeFileSync(archive, "corrupt gzip");
+  writeFileSync(
+    lock,
+    JSON.stringify({
+      "x86_64-unknown-linux-gnu": createHash("sha256").update(readFileSync(archive)).digest("hex"),
+    }),
+  );
+  result = invoke();
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /cannot extract/);
+  restore();
+  // Use real permission failures rather than replacing hashing or cleanup logic.
+  if (process.getuid?.() !== 0) {
+    const chmod = execFileSync("bash", ["-c", "command -v chmod"], { encoding: "utf8" }).trim();
+    writeFileSync(
+      join(tools, "curl"),
+      `#!/bin/sh\n"$REAL_COPY" "$FORGE_ARCHIVE" "$4"\n${chmod} 000 "$4"\n`,
+    );
+    result = invoke();
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /cannot hash download/);
+    chmodSync(
+      join(fixture, ".github/.tools", "screencomp-v0.4.2-x86_64-unknown-linux-gnu.tar.gz"),
+      0o644,
+    );
+    restore();
+    execFileSync("python3", [
+      "-c",
+      `import io,sys,tarfile
+with tarfile.open(sys.argv[1],'w:gz') as t:
+ root=tarfile.TarInfo('.');root.type=tarfile.DIRTYPE;root.mode=0o555;t.addfile(root)
+ data=b'#!/bin/sh\\necho "screencomp 0.4.2"\\n';bin=tarfile.TarInfo('screencomp');bin.mode=0o755;bin.size=len(data);t.addfile(bin,io.BytesIO(data))`,
+      archive,
+    ]);
+    writeFileSync(
+      lock,
+      JSON.stringify({
+        "x86_64-unknown-linux-gnu": createHash("sha256")
+          .update(readFileSync(archive))
+          .digest("hex"),
+      }),
+    );
+    result = invoke();
+    chmodSync(join(fixture, ".github/.tools"), 0o755);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /cannot remove download/);
+  }
 });
 
+// llmlint: ignore[shell_test_tiers_stay_split] The task requires these deterministic real subprocess boundaries in the integrated workflow-recording test target; no external-service or model probe runs here.
 test("classifier emits the actual GitHub outputs and rejects unsupported event/flag inputs", (t) => {
   const h = history(t);
   const output = join(h.dir, ".git", "outputs");
@@ -111,12 +206,22 @@ test("classifier emits the actual GitHub outputs and rejects unsupported event/f
   writeFileSync(file, JSON.stringify(event({ event_name: "unknown-event" })));
   result = spawnSync(process.execPath, args, { cwd: h.dir, encoding: "utf8" });
   assert.equal(JSON.parse(result.stdout).macosRequired, true);
+  const actualPayload = event();
+  actualPayload.event_name = undefined;
+  writeFileSync(file, JSON.stringify(actualPayload));
+  result = spawnSync(process.execPath, args, {
+    cwd: h.dir,
+    encoding: "utf8",
+    env: { ...process.env, GITHUB_EVENT_NAME: "pull_request" },
+  });
+  assert.equal(JSON.parse(result.stdout).isReleaseOnly, true);
   for (const suffix of [["--head", h.release], ["--unexpected", "value"], ["--head"]]) {
     result = spawnSync(process.execPath, [...args, ...suffix], { cwd: h.dir, encoding: "utf8" });
     assert.notEqual(result.status, 0);
   }
 });
 
+// llmlint: ignore[shell_test_tiers_stay_split] The task requires these deterministic real subprocess boundaries in the integrated workflow-recording test target; no external-service or model probe runs here.
 test("description reads the actual baseline graph and renders typed hosted observations", (t) => {
   const h = history(t);
   const observed = join(h.dir, ".git", "observed.json");
