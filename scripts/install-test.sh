@@ -51,12 +51,12 @@ host() {
   mkdir -p "$bin" || fail "could not create $bin; check that $work is writable"
   cat >"$bin/uname" <<EOF || fail "could not write the uname double into $bin; check that $work is writable"
 #!/bin/sh
-case "\$1" in -s) echo $1 ;; -m) echo $2 ;; esac
+case "\$1" in -s) echo '$1' ;; -m) echo '$2' ;; esac
 EOF
   if [ -n "$3" ]; then
     cat >"$bin/sysctl" <<EOF || fail "could not write the sysctl double into $bin; check that $work is writable"
 #!/bin/sh
-[ "\$2" = sysctl.proc_translated ] && echo $3
+[ "\$2" = sysctl.proc_translated ] && echo '$3'
 EOF
   else
     printf '#!/bin/sh\nexit 1\n' >"$bin/sysctl" || fail "could not write the sysctl double into $bin; check that $work is writable"

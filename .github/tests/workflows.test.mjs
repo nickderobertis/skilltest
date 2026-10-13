@@ -303,6 +303,7 @@ test("required carrier command propagates third-party results and distinguishes 
   );
 });
 
+// llmlint: ignore[shell_test_tiers_stay_split] resolveRun drives the required carrier as its real result-handling subprocess, the boundary the task requires; deterministic, with no network, service or model.
 test("routing resolver rejects unsupported calls, runners, needs and matrix inputs", () => {
   const e = scenario("pr-opened", "pull_request", "opened", "source", "same-repository");
   for (const mutation of [
@@ -893,6 +894,7 @@ test("locked reusable workflow bytes, digest and annotations refuse corruption",
   }
 });
 
+// llmlint: ignore[shell_test_tiers_stay_split] resolveRun drives the carrier and the screencomp reader as their real subprocesses, the boundaries the task requires; deterministic, with no network, service or model.
 test("workflow decoder rejects unsupported step controls and policy output drift", () => {
   for (const control of ["continue-on-error", "timeout-minutes"]) {
     const broken = structuredClone(graph);

@@ -301,6 +301,24 @@ assert.notEqual(result.status, 0);
 assert.match(result.stderr, /missing staged platform wheel/);
 assert.equal(readFileSync(wheelLog, "utf8"), "");
 writeFileSync(wheelFile, wheelBytes);
+// A declared field that would escape its staged directory is refused before
+// any path is built from it.
+const declaration = join(fixture, "release-platforms.toml");
+const declarationText = readFileSync(declaration, "utf8");
+const escaping = declarationText.replace(
+  `npm_dir = "${platforms[0].npm_dir}"`,
+  'npm_dir = "../escape"',
+);
+assert.notEqual(escaping, declarationText);
+writeFileSync(declaration, escaping);
+result = spawnSync(
+  "python3",
+  ["scripts/stage-and-verify-release-product.py", "--check-carriers", "products"],
+  { cwd: fixture, encoding: "utf8" },
+);
+assert.notEqual(result.status, 0);
+assert.match(result.stderr, /invalid platform npm_dir: '\.\.\/escape'/);
+writeFileSync(declaration, declarationText);
 for (const [mutation, message] of [
   ["malformed", /File is not a zip file/],
   ["duplicate", /duplicate wheel member/],

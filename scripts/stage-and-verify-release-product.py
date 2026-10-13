@@ -45,6 +45,16 @@ def string_array(value: object, where: str) -> tuple[str, ...]:
     return tuple(text(item, where) for item in value)
 
 
+PLATFORM_GRAMMAR = {
+    "target": re.compile(r"[A-Za-z0-9_]+(?:-[A-Za-z0-9_]+)+"),
+    "runner": re.compile(r"[a-z0-9][a-z0-9.-]*"),
+    "bin": re.compile(r"skilltest(?:\.exe)?"),
+    "wheel_tag": re.compile(r"[a-z0-9_]+"),
+    "npm_package": re.compile(r"@skill-test/cli-[a-z0-9]+-[a-z0-9]+"),
+    "npm_dir": re.compile(r"cli-[a-z0-9]+-[a-z0-9]+"),
+}
+
+
 @dataclass(frozen=True)
 class Platform:
     target: Target
@@ -65,6 +75,13 @@ class Platform:
             all(isinstance(v, str) and v for v in values), "missing platform fields"
         )
         require(set(raw) == set(names), "unexpected platform fields")
+        # Target, bin, wheel tag and npm directory name staged paths, so each is
+        # held to its identifier grammar before any path is joined from it.
+        for key, grammar in PLATFORM_GRAMMAR.items():
+            require(
+                bool(grammar.fullmatch(text(raw.get(key), key))),
+                f"invalid platform {key}: {raw.get(key)!r}",
+            )
         return cls(
             Target(text(raw.get("target"), "target")),
             *(text(raw.get(key), key) for key in names[1:]),
