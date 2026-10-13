@@ -80,6 +80,9 @@ console.log(
   "Consolidate Mac proofs into ordinary PR CI and one pre-publication Darwin build. Linux result carriers preserve required names and distinguish tested success from authorized omission. All registry publication and exact-build archive transport run on Linux.\n",
 );
 console.log(
+  "**Intel macOS artifacts are discontinued from the next release.** macOS releases ship Apple Silicon (arm64) only: no Intel macOS archive, Python wheel or npm carrier is built or published, and scripts/install.sh refuses Intel macOS with a message saying it is no longer supported (an Apple Silicon Mac in a Rosetta shell still gets the arm64 binary). Every other released platform and artifact is unchanged. Installers for third-party developer tools (scripts/install-oneharness.sh, .github/setup-screencomp.sh, the SDK's oneharness carrier map) keep their Intel macOS entries, since those projects still publish Intel builds; the manager approved leaving them.\n",
+);
+console.log(
   `Workflow counts below are contract-level evaluations of baseline ${base} and this tree, including matrices and reusable calls. They are not observed release executions.\n`,
 );
 console.log(
@@ -121,7 +124,7 @@ for (const p of platforms)
     `| ${p.target} | skilltest-${p.target}.${p.bin.endsWith(".exe") ? "zip" : "tar.gz"} + sha256 | ${p.wheel_tag} | ${p.npm_package} |`,
   );
 console.log(
-  "\nRetained: skilltest-core and skilltest-cli crates; skilltest-sdk platform/pure wheels and sdist; skilltest-pytest; @skill-test/sdk and @skill-test/vitest. Semantic-release and set-version retain lockstep synchronization. Each target has one compiled input for archive/wheel/npm, with payload hashes verified before publication. Darwin installs run natively and under Rosetta with matching Node/Python architectures.\n",
+  "\nRetained: skilltest-core and skilltest-cli crates; skilltest-sdk platform/pure wheels and sdist; skilltest-pytest; @skill-test/sdk and @skill-test/vitest. Semantic-release and set-version retain lockstep synchronization. Each target has one compiled input for archive/wheel/npm, with payload hashes verified before publication. The one Apple Silicon Mac job builds, stages and installs the arm64 products natively, with no Rosetta or x86_64 cross-compilation.\n",
 );
 console.log(
   "Local proof: github-workflows:test emits ignored digest-bound telemetry for 12 event classes × 3 diff classes × 2 ownership classes and all optional-publication combinations. Numeric verdicts are produced only by onebudgetspec. The native production packaging journey builds, packs, installs and runs host-native products and exercises missing-provider/corrupt-wheel failure paths; foreign platform headers are packaging-contract evidence only.\n",

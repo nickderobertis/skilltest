@@ -363,8 +363,7 @@ export function resolveRun(
           job: id,
           name,
           runner,
-          target:
-            matrix.target ?? (id === "darwin" ? "x86_64-apple-darwin,aarch64-apple-darwin" : null),
+          target: matrix.target ?? (id === "darwin" ? "aarch64-apple-darwin" : null),
           requested: runs,
           result: outcome,
         });

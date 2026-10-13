@@ -1,6 +1,6 @@
 # Build one binary per released platform, stage archive/wheel/npm from that
-# binary, and prove installation before publishing. Both Darwin architectures
-# share one Apple Silicon job; Intel installs use Rosetta and x64 Node/Python.
+# binary, and prove installation before publishing. macOS ships Apple Silicon
+# only (Intel macOS was discontinued): one native arm64 job builds and installs it.
 # Linux/Windows keep native build/archive-run lanes. Linux aggregates staged
 # products and publishes crates, Python SDK/pytest, and npm carriers/SDK/vitest.
 # Release archive transport consumes this run's artifacts separately on Linux.
@@ -19,12 +19,12 @@ on:
   workflow_dispatch:
     inputs:
       macos_diagnostic:
-        description: Build and install both Darwin packages without publishing
+        description: Build and install the Apple Silicon Darwin packages without publishing
         type: boolean
         default: false
 
 jobs:
-  # Native Linux/Windows compilation and installation; Darwin is sequential below.
+  # Native Linux/Windows compilation and installation; Darwin has its own job below.
   binaries:
     name: build ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
@@ -86,7 +86,7 @@ jobs:
           if-no-files-found: error
 
   darwin:
-    name: build both Darwin architectures
+    name: build aarch64-apple-darwin
     runs-on: macos-14
     if: (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.macos_diagnostic == true)) && github.repository == 'nickderobertis/skilltest' && github.ref_name != 'v0.0.0'
     steps:
@@ -109,38 +109,17 @@ jobs:
         run: |
           version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
           bash scripts/check-release-identity.sh "$GITHUB_REF_NAME" "$version" "$GITHUB_SHA" "$(git rev-parse HEAD)"
-      - name: Build, stage and install both Darwin products sequentially
+      - name: Build, stage and install the Apple Silicon Darwin products natively
         run: |
           set -euo pipefail
-          rustup target add x86_64-apple-darwin aarch64-apple-darwin
-          softwareupdate --install-rosetta --agree-to-license
-          for target in x86_64-apple-darwin aarch64-apple-darwin; do
-            cargo build --release --locked -p skilltest-cli --bin skilltest --target "$target"
-            cargo build --release --locked -p skilltest-cli --bin skilltest-fake-provider --features fake-provider --target "$target"
-            binary="target/$target/release/skilltest"
-            bash scripts/stage-release-product.sh "$target" "$binary" "products/$target"
-            bash scripts/verify-release-archive.sh "products/$target" "$target" skilltest "$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
-          done
           target=aarch64-apple-darwin
-          bash scripts/smoke-python-bundle.sh "$target" "target/$target/release/skilltest" "target/$target/release/skilltest-fake-provider" "products/$target"
-          bash scripts/smoke-npm-bundle.sh "$target" "target/$target/release/skilltest" "target/$target/release/skilltest-fake-provider" "products/$target"
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          architecture: x64
-      - name: Install and run Intel Darwin staged bundles under Rosetta
-        env:
-          SMOKE_PYTHON: cpython-3.12-macos-x86_64-none
-        run: |
-          uv python install "$SMOKE_PYTHON"
-          target=x86_64-apple-darwin
-          arch -x86_64 bash scripts/smoke-python-bundle.sh "$target" "target/$target/release/skilltest" "target/$target/release/skilltest-fake-provider" "products/$target"
-          arch -x86_64 bash scripts/smoke-npm-bundle.sh "$target" "target/$target/release/skilltest" "target/$target/release/skilltest-fake-provider" "products/$target"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: skilltest-x86_64-apple-darwin
-          path: target/x86_64-apple-darwin/release/skilltest
-          if-no-files-found: error
+          cargo build --release --locked -p skilltest-cli --bin skilltest --target "$target"
+          cargo build --release --locked -p skilltest-cli --bin skilltest-fake-provider --features fake-provider --target "$target"
+          binary="target/$target/release/skilltest"
+          bash scripts/stage-release-product.sh "$target" "$binary" "products/$target"
+          bash scripts/verify-release-archive.sh "products/$target" "$target" skilltest "$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
+          bash scripts/smoke-python-bundle.sh "$target" "$binary" "target/$target/release/skilltest-fake-provider" "products/$target"
+          bash scripts/smoke-npm-bundle.sh "$target" "$binary" "target/$target/release/skilltest-fake-provider" "products/$target"
       - uses: actions/upload-artifact@v4
         with:
           name: skilltest-aarch64-apple-darwin
@@ -168,7 +147,7 @@ jobs:
           path: products
       - name: Verify every staged archive without executing foreign binaries
         run: |
-          for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-apple-darwin aarch64-apple-darwin x86_64-pc-windows-msvc aarch64-pc-windows-msvc; do
+          for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu aarch64-apple-darwin x86_64-pc-windows-msvc aarch64-pc-windows-msvc; do
             case "$target" in *-windows-*) bin=skilltest.exe ;; *) bin=skilltest ;; esac
             version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
             bash scripts/verify-release-archive.sh "products/$target" "$target" "$bin" "$version" --contents-only
@@ -333,7 +312,7 @@ jobs:
           # optionalDependencies pin these exact versions (pnpm rewrites the
           # `workspace:*` specifiers on publish).
           for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu \
-                        x86_64-apple-darwin aarch64-apple-darwin \
+                        aarch64-apple-darwin \
                         x86_64-pc-windows-msvc aarch64-pc-windows-msvc; do
             carriers=("products/$target"/skill-test-cli-*.tgz)
             [ "${#carriers[@]}" -eq 1 ] && [ -f "${carriers[0]}" ] || { echo "error: missing or ambiguous npm carrier for $target; restage release products" >&2; exit 1; }

@@ -9,7 +9,8 @@ permits omission; unreadable PR data requires the Mac lane.
 CI spends Mac only on ordinary PRs. Its Linux `check (macos-latest)` carrier
 reports the actual prerequisite results, including authorized omission. Preserve
 all four protected display names. The tag build spends one Apple Silicon job on
-both Darwin targets and their installation proofs; publishing and archive transport
+the only Darwin target (arm64; Intel macOS is discontinued) and its native
+installation proofs; publishing and archive transport
 use Linux. The explicit diagnostic input defaults off and never publishes.
 
 External reusable workflow fixtures are immutable upstream bytes, hash-locked in
@@ -20,5 +21,4 @@ budget reporters consume existing digest-bound telemetry and never rerun scenari
 
 The native packaging journey belongs to release-packaging's explicit packaging
 edge. Foreign architecture evidence is a content contract; only native runners
-and Rosetta can prove execution. Preserve matching Python/Node architectures in
-the Intel Darwin installation steps.
+can prove execution.

@@ -2,7 +2,7 @@
 #
 # Every list that builds, bundles, publishes or smokes a per-platform artifact
 # restates part of this set, because a GitHub Actions matrix or a shell `case`
-# cannot read a file: publish.yml's native matrix and sequential Darwin job, release.yml's archive
+# cannot read a file: publish.yml's native matrix and Apple Silicon Darwin job, release.yml's archive
 # transport loop, scripts/build-python-dist.sh's targets, scripts/build-python-wheel.sh's
 # wheel-tag map, the npm job's `for target in` loop, scripts/stage-npm-binary.sh,
 # the `@skill-test/cli-*` platform packages, release-targets.toml's `covers`, the
@@ -14,8 +14,8 @@
 #
 # Fields, all required:
 #   target       the Rust target triple `cargo build --target` takes
-#   runner       the GitHub Actions runner that builds it (both macOS targets
-#                build on the arm runner; x86_64 cross-compiles)
+#   runner       the GitHub Actions runner that builds it natively. macOS
+#                ships Apple Silicon only; Intel macOS was discontinued.
 #   bin          the executable's file name, as built and as bundled
 #   wheel_tag    the `skilltest-sdk` platform wheel's tag
 #   npm_package  the npm package that carries the binary; a cross-repository
@@ -37,14 +37,6 @@ bin = "skilltest"
 wheel_tag = "manylinux_2_17_aarch64"
 npm_package = "@skill-test/cli-linux-arm64"
 npm_dir = "cli-linux-arm64"
-
-[[platform]]
-target = "x86_64-apple-darwin"
-runner = "macos-14"
-bin = "skilltest"
-wheel_tag = "macosx_10_12_x86_64"
-npm_package = "@skill-test/cli-darwin-x64"
-npm_dir = "cli-darwin-x64"
 
 [[platform]]
 target = "aarch64-apple-darwin"

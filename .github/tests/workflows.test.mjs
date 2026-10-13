@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import test from "node:test";
 import YAML from "yaml";
 import { join, resolve } from "node:path";
@@ -362,9 +362,23 @@ test("release artifact authority retains every platform and enforces pre-publica
     "smoke-npm-bundle.sh",
   ])
     assert.ok(darwin.includes(script));
-  assert.match(darwin, /arch -x86_64 bash scripts\/smoke-python-bundle/);
-  assert.match(darwin, /arch -x86_64 bash scripts\/smoke-npm-bundle/);
-  assert.ok(publish.darwin.steps.some((s) => s.with?.architecture === "x64"));
+  // macOS ships Apple Silicon only: the one Mac job builds and proves arm64
+  // natively, and no workflow or declaration names an Intel macOS target.
+  assert.deepEqual(
+    platforms.filter((p) => p.target.includes("apple")).map((p) => p.target),
+    ["aarch64-apple-darwin"],
+  );
+  assert.doesNotMatch(darwin, /x86_64|rosetta|arch -/i);
+  assert.ok(!publish.darwin.steps.some((s) => s.with?.architecture));
+  for (const file of [
+    ...readdirSync(".github/workflows").map((f) => `.github/workflows/${f}`),
+    "release-platforms.toml",
+    "release-targets.toml",
+    "rust-toolchain.toml",
+    ".releaserc.json",
+    "sdks/typescript/package.json",
+  ])
+    assert.doesNotMatch(readFileSync(file, "utf8"), /x86_64-apple-darwin|darwin-x64/, file);
   assert.deepEqual(publish.products.needs, ["binaries", "darwin"]);
   for (const job of ["crates", "pypi", "npm"]) {
     assert.equal(publish[job].needs, "products");

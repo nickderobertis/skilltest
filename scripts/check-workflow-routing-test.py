@@ -62,9 +62,9 @@ CASES = (
     ),
     Case(
         "the toolchain missing a release target",
-        lambda _wf, tc: _replace(tc, '  "x86_64-apple-darwin",\n', ""),
+        lambda _wf, tc: _replace(tc, '  "aarch64-apple-darwin",\n', ""),
         1,
-        "x86_64-apple-darwin is built by",
+        "aarch64-apple-darwin is built by",
     ),
     Case(
         "a workflow whose jobs are a list",

@@ -41,7 +41,6 @@ staged=(
   plugins/vitest/package.json
   sdks/typescript/platforms/cli-linux-x64/package.json
   sdks/typescript/platforms/cli-linux-arm64/package.json
-  sdks/typescript/platforms/cli-darwin-x64/package.json
   sdks/typescript/platforms/cli-darwin-arm64/package.json
   sdks/typescript/platforms/cli-win32-x64/package.json
   sdks/typescript/platforms/cli-win32-arm64/package.json
@@ -124,9 +123,9 @@ expect_red "the Python SDK's manifest was renamed" \
   "declares 'pypi:skilltest-sdk', which .github/workflows/publish.yml does not publish"
 
 stage
-edit release-targets.toml '/"npm:@skill-test\/cli-darwin-x64",/d'
+edit release-targets.toml '/"npm:@skill-test\/cli-darwin-arm64",/d'
 expect_red "a published platform package lost its covers entry" \
-  "publishes per-platform package 'npm:@skill-test/cli-darwin-x64'"
+  "publishes per-platform package 'npm:@skill-test/cli-darwin-arm64'"
 
 stage
 edit release-targets.toml 's/^  "npm:@skill-test\/cli-darwin-arm64",$/&\
@@ -135,9 +134,9 @@ expect_red "a covers entry names a package nothing publishes" \
   "cover 'npm:@skill-test/cli-freebsd-x64', which .github/workflows/publish.yml does not publish"
 
 stage
-edit .github/workflows/publish.yml 's/ x86_64-apple-darwin aarch64-apple-darwin \\$/ aarch64-apple-darwin \\/'
+edit .github/workflows/publish.yml 's/^\( *\)aarch64-apple-darwin \\$/\1\\/'
 expect_red "the npm job stopped staging a committed platform package" \
-  "sdks/typescript/platforms/cli-darwin-x64/package.json is committed but"
+  "sdks/typescript/platforms/cli-darwin-arm64/package.json is committed but"
 
 stage
 jq 'del(.optionalDependencies["@skill-test/cli-linux-arm64"])' "$work/repo/sdks/typescript/package.json" \
@@ -302,7 +301,7 @@ expect_red "set-version.sh stopped versioning every platform package" \
 
 stage
 edit release-platforms.toml '/^wheel_tag = "win_amd64"$/d'
-expect_red "a declared platform lost a field" "[[platform]] 5 lacks one of"
+expect_red "a declared platform lost a field" "[[platform]] 4 lacks one of"
 
 stage
 edit release-targets.toml 's/^schema_version = 3$/schema_version = 2/'
@@ -323,7 +322,7 @@ expect_red "the platform list was written as a string" "release-platforms.toml d
 
 stage
 edit release-platforms.toml 's/^bin = "skilltest.exe"$/bin = 3/'
-expect_red "a platform field was not a string" "[[platform]] 5 lacks one of"
+expect_red "a platform field was not a string" "[[platform]] 4 lacks one of"
 
 stage
 edit release-platforms.toml 's/^target = "aarch64-unknown-linux-gnu"$/target = "x86_64-unknown-linux-gnu"/'

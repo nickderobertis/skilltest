@@ -29,7 +29,6 @@ fi
 case "$target" in
 x86_64-unknown-linux-gnu) pkg="cli-linux-x64" ;;
 aarch64-unknown-linux-gnu) pkg="cli-linux-arm64" ;;
-x86_64-apple-darwin) pkg="cli-darwin-x64" ;;
 aarch64-apple-darwin) pkg="cli-darwin-arm64" ;;
 x86_64-pc-windows-msvc) pkg="cli-win32-x64" ;;
 aarch64-pc-windows-msvc) pkg="cli-win32-arm64" ;;

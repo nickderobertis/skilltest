@@ -214,8 +214,8 @@ projects reach a real harness.
   `just gen-contract`, and commit the regenerated artifacts — then land it behind a
   `feat!:`/`BREAKING CHANGE` commit so the lockstep version moves on the next release
   (versions are never hand-bumped; see "Commits, releases, and merging").
-- Keep the artifact portable across the supported platform matrix (Linux, macOS,
-  Windows — x86_64 and arm64 each; `release-platforms.toml`). The shipped crates
+- Keep the artifact portable across the supported platform matrix (Linux and
+  Windows on x86_64 and arm64, macOS on arm64 only; `release-platforms.toml`). The shipped crates
   must type-check for both Windows targets (`cargo check --target
   x86_64-pc-windows-msvc` / `aarch64-pc-windows-msvc`); unix-only code stays
   behind `cfg(unix)`.
@@ -275,8 +275,8 @@ from exactly that commit.
   `visual-docs.yml` skips it (job-level guards, not `[skip ci]`, which would also
   muzzle the tag workflows). The `vX.Y.Z` tag fires `publish.yml` (native binaries → staged products → registries). Its
   completion triggers Linux-only `release.yml`, which uploads archives from that
-  exact run and head, even when a registry fails. Both Darwin architectures and
-  their bundle installation proofs share one Mac build job. No sweep is repeated.
+  exact run and head, even when a registry fails. The one Darwin target (Apple
+  Silicon) and its bundle installation proofs run in one Mac build job. No sweep is repeated.
 - `scripts/check-workflow-routing.py` (`just workflows-check`, in every gate)
   simulates these events over the committed workflows and fails if the routing
   drifts.
@@ -302,7 +302,8 @@ binary release, or vice versa.
   rename, addition or removal is a deliberate cross-repository change, never a
   side effect.
 - **Which platforms a release ships** is declared once, in
-  `release-platforms.toml` (Linux, macOS and Windows; x86_64 and arm64 each).
+  `release-platforms.toml` (Linux and Windows on x86_64 and arm64; macOS on
+  Apple Silicon only, Intel macOS having been discontinued).
   To add or drop one, edit that file and let `just release-targets-check` name
   every matrix, script and npm-side list that must follow. Its npm package
   names are `node-sdk` covers, so they are part of the cross-repository contract

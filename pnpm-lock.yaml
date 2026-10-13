@@ -95,9 +95,6 @@ importers:
       '@skill-test/cli-darwin-arm64':
         specifier: workspace:*
         version: link:platforms/cli-darwin-arm64
-      '@skill-test/cli-darwin-x64':
-        specifier: workspace:*
-        version: link:platforms/cli-darwin-x64
       '@skill-test/cli-linux-arm64':
         specifier: workspace:*
         version: link:platforms/cli-linux-arm64
@@ -112,8 +109,6 @@ importers:
         version: link:platforms/cli-win32-x64
 
   sdks/typescript/platforms/cli-darwin-arm64: {}
-
-  sdks/typescript/platforms/cli-darwin-x64: {}
 
   sdks/typescript/platforms/cli-linux-arm64: {}
 

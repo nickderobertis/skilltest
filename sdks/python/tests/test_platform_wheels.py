@@ -51,7 +51,6 @@ class Host(NamedTuple):
 PLATFORMS = (
     Platform("x86_64-unknown-linux-gnu", "manylinux_2_17_x86_64", "skilltest"),
     Platform("aarch64-unknown-linux-gnu", "manylinux_2_17_aarch64", "skilltest"),
-    Platform("x86_64-apple-darwin", "macosx_10_12_x86_64", "skilltest"),
     Platform("aarch64-apple-darwin", "macosx_11_0_arm64", "skilltest"),
     Platform("x86_64-pc-windows-msvc", "win_amd64", "skilltest.exe"),
     Platform("aarch64-pc-windows-msvc", "win_arm64", "skilltest.exe"),
@@ -60,8 +59,7 @@ PLATFORMS = (
 HOST_PLATFORMS = {
     Host("Linux", "x86_64"): PLATFORMS[0],
     Host("Linux", "aarch64"): PLATFORMS[1],
-    Host("Darwin", "x86_64"): PLATFORMS[2],
-    Host("Darwin", "arm64"): PLATFORMS[3],
+    Host("Darwin", "arm64"): PLATFORMS[2],
 }
 
 
@@ -119,7 +117,7 @@ def test_dist_builds_a_tagged_wheel_per_platform_plus_pure_wheel_and_sdist(
 
     built = run(["bash", "scripts/build-python-dist.sh", "artifacts", str(out)], tmp_path)
     assert built.returncode == 0, built.stderr
-    assert "6 platform wheel(s)" in built.stdout, built.stdout
+    assert "5 platform wheel(s)" in built.stdout, built.stdout
 
     wheels = sorted(out.glob("*.whl"))
     by_tag = {w.name.rsplit("-", 1)[1].removesuffix(".whl"): w for w in wheels}

@@ -9,7 +9,8 @@
 #   SKILLTEST_DRY_RUN      if set, print the resolved target/URL and exit
 #
 # Detects your OS/arch, downloads the matching archive, verifies its sha256
-# checksum, and installs the binary. Supports Linux and macOS on x86_64/aarch64.
+# checksum, and installs the binary. Supports Linux on x86_64/aarch64 and
+# Apple Silicon macOS; Intel macOS is no longer supported and is refused.
 
 set -eu
 
@@ -49,6 +50,17 @@ detect_target() {
 	Linux) os_part="unknown-linux-gnu" ;;
 	Darwin) os_part="apple-darwin" ;;
 	*) err "unsupported OS: $os (supported: Linux, macOS)" ;;
+	esac
+	# A shell under Rosetta reports x86_64 on an Apple Silicon Mac, which can
+	# run the arm64 binary natively.
+	if [ "$os" = Darwin ] && [ "$arch" = x86_64 ] &&
+		[ "$(sysctl -n sysctl.proc_translated 2>/dev/null || true)" = 1 ]; then
+		arch=arm64
+	fi
+	case "$os/$arch" in
+	Darwin/x86_64 | Darwin/amd64)
+		err "Intel macOS (x86_64) is no longer supported: releases ship Apple Silicon (arm64) macOS binaries only; build from source with \`cargo install skilltest-cli\` instead"
+		;;
 	esac
 	case "$arch" in
 	x86_64 | amd64) arch_part="x86_64" ;;

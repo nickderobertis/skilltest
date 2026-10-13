@@ -28,7 +28,7 @@ fi
 
 # release-platforms.toml's targets; scripts/check-release-targets.sh holds this
 # list to it.
-targets="x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-apple-darwin aarch64-apple-darwin x86_64-pc-windows-msvc aarch64-pc-windows-msvc"
+targets="x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu aarch64-apple-darwin x86_64-pc-windows-msvc aarch64-pc-windows-msvc"
 
 rm -rf "$outdir"
 mkdir -p "$outdir"
