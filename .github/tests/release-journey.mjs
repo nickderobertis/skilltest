@@ -52,9 +52,6 @@ for (const path of [
   "plugins/pytest",
   "sdks/typescript",
   "plugins/vitest",
-  ".github/npm-identity.mjs",
-  ".github/validation.mjs",
-  ".github/package.json",
   "scripts/verify-release-archive.sh",
   "scripts/stage-and-verify-release-product.py",
   "scripts/check-release-identity.sh",
@@ -276,7 +273,7 @@ assert.match(result.stderr, /missing staged platform wheel/);
 assert.equal(readFileSync(wheelLog, "utf8"), "");
 writeFileSync(wheelFile, wheelBytes);
 for (const [mutation, message] of [
-  ["malformed", /BadZipFile/],
+  ["malformed", /File is not a zip file/],
   ["duplicate", /duplicate wheel member/],
   ["metadata", /invalid wheel metadata/],
   ["identity", /invalid staged wheel identity/],
@@ -323,6 +320,46 @@ else:
   assert.equal(readFileSync(wheelLog, "utf8"), "");
   writeFileSync(wheelFile, wheelBytes);
 }
+// The wheel check reads each wheel's binary from its staged archive, so a
+// missing, re-checksummed or widened archive must refuse publication.
+const wheelArchive = join(
+  wheelDir,
+  `skilltest-${platforms[0].target}.${platforms[0].bin.endsWith(".exe") ? "zip" : "tar.gz"}`,
+);
+const wheelArchiveBytes = readFileSync(wheelArchive);
+const wheelChecksum = `${wheelArchive}.sha256`;
+const wheelChecksumText = readFileSync(wheelChecksum, "utf8");
+for (const [mutation, message] of [
+  ["missing", /missing staged archive/],
+  ["checksum", /staged archive checksum differs/],
+  ["widened", /unexpected archive contents/],
+]) {
+  if (mutation === "missing") rmSync(wheelArchive);
+  if (mutation === "checksum") writeFileSync(wheelChecksum, `${"0".repeat(64)}  x\n`);
+  if (mutation === "widened")
+    execFileSync("python3", [
+      "-c",
+      `import hashlib,io,os,sys,tarfile,zipfile
+path,checksum=sys.argv[1:]
+if path.endswith('.zip'):
+ with zipfile.ZipFile(path,'a') as z: z.writestr('extra','x')
+else:
+ with tarfile.open(path) as t: entries=[(m,t.extractfile(m).read()) for m in t.getmembers()]
+ with tarfile.open(path,'w:gz') as t:
+  for m,data in entries: t.addfile(m,io.BytesIO(data))
+  extra=tarfile.TarInfo('extra');extra.size=1;t.addfile(extra,io.BytesIO(b'x'))
+open(checksum,'w').write(hashlib.sha256(open(path,'rb').read()).hexdigest()+'  '+os.path.basename(path)+'\\n')`,
+      wheelArchive,
+      wheelChecksum,
+    ]);
+  writeFileSync(wheelLog, "");
+  result = run(commands.pypi, 0, wheelLog);
+  assert.notEqual(result.status, 0, mutation);
+  assert.match(result.stderr, message);
+  assert.equal(readFileSync(wheelLog, "utf8"), "");
+  writeFileSync(wheelArchive, wheelArchiveBytes);
+  writeFileSync(wheelChecksum, wheelChecksumText);
+}
 const extraWheel = join(wheelDir, "unexpected.whl");
 writeFileSync(extraWheel, wheelBytes);
 writeFileSync(wheelLog, "");
@@ -352,10 +389,53 @@ with tarfile.open(path,'w:gz') as t:
   m.size=len(data);t.addfile(m,io.BytesIO(data))`,
   carrier,
 ]);
-result = run(commands.npm, 0, uploadLog);
+const carrierLog = join(work, "corrupt-carrier.jsonl");
+writeFileSync(carrierLog, "");
+result = run(commands.npm, 0, carrierLog);
 assert.notEqual(result.status, 0);
 assert.match(result.stderr, /carrier identity differs/);
+assert.equal(readFileSync(carrierLog, "utf8"), "");
 writeFileSync(carrier, savedCarrier);
+// Payload and member corruption must also refuse before any npm publish.
+for (const [mutation, message] of [
+  ["payload", /npm binary differs/],
+  ["member", /unexpected npm contents/],
+  ["duplicate", /unexpected npm contents/],
+  ["link", /unexpected npm contents/],
+]) {
+  execFileSync("python3", [
+    "-c",
+    `import io,sys,tarfile
+path,mutation=sys.argv[1:]
+with tarfile.open(path) as t: entries=[(m,t.extractfile(m).read()) for m in t.getmembers()]
+with tarfile.open(path,'w:gz') as t:
+ for m,data in entries:
+  if m.name.startswith('package/bin/'):
+   if mutation=='payload': data=b'not the archived binary'
+   if mutation=='link':
+    m.type=tarfile.SYMTYPE;m.linkname='/bin/sh';m.size=0;t.addfile(m);continue
+  if mutation=='duplicate' and m.name=='package/package.json': t.addfile(m,io.BytesIO(data))
+  m.size=len(data);t.addfile(m,io.BytesIO(data))
+ if mutation=='member':
+  extra=tarfile.TarInfo('package/postinstall.js');extra.size=1;t.addfile(extra,io.BytesIO(b'x'))`,
+    carrier,
+    mutation,
+  ]);
+  writeFileSync(carrierLog, "");
+  result = run(commands.npm, 0, carrierLog);
+  assert.notEqual(result.status, 0, mutation);
+  assert.match(result.stderr, message, mutation);
+  assert.equal(readFileSync(carrierLog, "utf8"), "", mutation);
+  writeFileSync(carrier, savedCarrier);
+}
+const extraCarrier = join(fixture, "products", "skill-test-cli-extra.tgz");
+writeFileSync(extraCarrier, savedCarrier);
+writeFileSync(carrierLog, "");
+result = run(commands.npm, 0, carrierLog);
+assert.notEqual(result.status, 0);
+assert.match(result.stderr, /unexpected staged npm carrier/);
+assert.equal(readFileSync(carrierLog, "utf8"), "");
+rmSync(extraCarrier);
 const archiveName = `skilltest-${carrierPlatform.target}.${carrierPlatform.bin.endsWith(".exe") ? "zip" : "tar.gz"}`;
 const archivePath = join(fixture, "products", carrierPlatform.target, archiveName);
 const savedArchive = readFileSync(archivePath);

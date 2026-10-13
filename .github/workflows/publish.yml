@@ -325,6 +325,10 @@ jobs:
 
           published_npm() { npm view "$1@$2" version >/dev/null 2>&1; }
 
+          # Every carrier's identity, members and binary must match its declared
+          # target and the staged archive before any package reaches the registry.
+          python3 scripts/stage-and-verify-release-product.py --check-carriers products
+
           # The per-platform binary packages must publish BEFORE the SDK: its
           # optionalDependencies pin these exact versions (pnpm rewrites the
           # `workspace:*` specifiers on publish).
@@ -336,7 +340,6 @@ jobs:
             packed="${carriers[0]}"
             name=$(python3 -c 'import sys,tomllib;print(next(p["npm_package"] for p in tomllib.load(open("release-platforms.toml","rb"))["platform"] if p["target"]==sys.argv[1]))' "$target")
             version=$(node -p "require('./sdks/typescript/package.json').version")
-            tar -xOf "$packed" package/package.json | node .github/npm-identity.mjs "$name" "$version"
             if published_npm "$name" "$version"; then
               echo "skip: $name@$version already on npm"
               continue

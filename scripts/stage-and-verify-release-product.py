@@ -101,11 +101,101 @@ def release_version() -> str:
     return version
 
 
+def asset_name(platform: Platform) -> str:
+    return f"skilltest-{platform.target}" + (
+        ".zip" if "windows" in platform.target else ".tar.gz"
+    )
+
+
+def npm_platform(target: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """The (cpu, os) an npm carrier for a declared target must state."""
+    cpu = ("x64" if target.startswith("x86_64") else "arm64",)
+    match target.split("-"):
+        case [_, "apple", "darwin"]:
+            return cpu, ("darwin",)
+        case [_, "pc", "windows", "msvc"]:
+            return cpu, ("win32",)
+        case [_, "unknown", "linux", "gnu"]:
+            return cpu, ("linux",)
+        case _:
+            raise ValueError("unsupported npm target")
+
+
+def staged_binary(platform: Platform, directory: Path) -> bytes:
+    """The binary a staged archive carries, after its checksum and contents agree."""
+    asset = asset_name(platform)
+    released = directory / asset
+    require(released.is_file(), f"missing staged archive: {released}")
+    checksum = (directory / (asset + ".sha256")).read_text()
+    require(
+        checksum == f"{digest(released.read_bytes())}  {asset}\n",
+        "staged archive checksum differs",
+    )
+    if asset.endswith(".zip"):
+        with zipfile.ZipFile(released) as packed:
+            require(packed.namelist() == [platform.bin], "unexpected archive contents")
+            return packed.read(platform.bin)
+    with tarfile.open(released) as packed:
+        members = packed.getmembers()
+        require(
+            len(members) == 1
+            and members[0].name == platform.bin
+            and members[0].isfile(),
+            "unexpected archive contents",
+        )
+        payload = packed.extractfile(members[0])
+        if payload is None:
+            raise ValueError("archive binary missing")
+        return payload.read()
+
+
+def check_carriers(platforms: list[Platform], products: Path) -> None:
+    """Hold every staged npm carrier to its declared identity and archive binary."""
+    version = release_version()
+    expected_carriers = set()
+    for platform in platforms:
+        directory = products / platform.target
+        carriers = list(directory.glob("skill-test-cli-*.tgz"))
+        require(
+            len(carriers) == 1,
+            f"missing or ambiguous npm carrier for {platform.target}; restage release products",
+        )
+        expected_carriers.add(carriers[0])
+        binary_data = staged_binary(platform, directory)
+        with tarfile.open(carriers[0]) as packed:
+            members = packed.getmembers()
+            names = [member.name for member in members]
+            require(
+                len(names) == len(set(names))
+                and set(names)
+                == {"package/package.json", f"package/bin/{platform.bin}"}
+                and all(member.isfile() for member in members),
+                "unexpected npm contents",
+            )
+            manifest_stream = packed.extractfile("package/package.json")
+            payload = packed.extractfile(f"package/bin/{platform.bin}")
+            if manifest_stream is None or payload is None:
+                raise ValueError("npm carrier member missing")
+            manifest = NpmIdentity.parse(json.load(manifest_stream))
+            require(
+                (manifest.name, manifest.version, (manifest.cpu, manifest.os))
+                == (platform.npm_package, version, npm_platform(platform.target)),
+                f"packed carrier identity differs from declared target/version: {carriers[0]}",
+            )
+            require(payload.read() == binary_data, "npm binary differs")
+    require(
+        set(products.rglob("*.tgz")) == expected_carriers,
+        "unexpected staged npm carrier",
+    )
+
+
 def main() -> None:
     check_wheels = len(sys.argv) == 3 and sys.argv[1] == "--check-wheels"
+    carriers = len(sys.argv) == 3 and sys.argv[1] == "--check-carriers"
     require(
-        check_wheels or len(sys.argv) == 5,
-        "usage: <target> <binary> <output-dir> <npm-package-dir> or --check-wheels <products-dir>",
+        check_wheels or carriers or len(sys.argv) == 5,
+        "usage: <target> <binary> <output-dir> <npm-package-dir>, "
+        "--check-wheels <products-dir> or --check-carriers <products-dir>",
     )
     records = tomllib.loads(Path("release-platforms.toml").read_text()).get("platform")
     if not isinstance(records, list):
@@ -115,6 +205,9 @@ def main() -> None:
         len({p.target for p in platforms}) == len(platforms),
         "duplicate platform target",
     )
+    if carriers:
+        check_carriers(platforms, Path(sys.argv[2]))
+        return
     if check_wheels:
         version = release_version()
         expected_wheels = set()
@@ -126,37 +219,7 @@ def main() -> None:
             )
             expected_wheels.add(expected)
             require(expected.is_file(), f"missing staged platform wheel: {expected}")
-            asset = f"skilltest-{platform.target}" + (
-                ".zip" if "windows" in platform.target else ".tar.gz"
-            )
-            released = expected.parent / asset
-            require(released.is_file(), f"missing staged archive: {released}")
-            checksum = (expected.parent / (asset + ".sha256")).read_text()
-            require(
-                checksum == f"{digest(released.read_bytes())}  {asset}\n",
-                "staged archive checksum differs",
-            )
-            if asset.endswith(".zip"):
-                with zipfile.ZipFile(released) as packed:
-                    require(
-                        packed.namelist() == [platform.bin],
-                        "unexpected archive contents",
-                    )
-                    binary_data = packed.read(platform.bin)
-            else:
-                with tarfile.open(released) as packed:
-                    members = packed.getmembers()
-                    require(
-                        len(members) == 1
-                        and members[0].name == platform.bin
-                        and members[0].isfile(),
-                        "unexpected archive contents",
-                    )
-                    payload = packed.extractfile(members[0])
-                    require(payload is not None, "archive binary missing")
-                    if payload is None:
-                        raise ValueError("archive binary missing")
-                    binary_data = payload.read()
+            binary_data = staged_binary(platform, expected.parent)
             with zipfile.ZipFile(expected) as archive:
                 names = archive.namelist()
                 require(len(names) == len(set(names)), "duplicate wheel member")
@@ -261,26 +324,15 @@ def main() -> None:
             manifest.name == platform.npm_package and manifest.version == version,
             "wrong npm identity/version",
         )
-        require(
-            manifest.cpu == ("x64" if target.startswith("x86_64") else "arm64",),
-            "wrong npm architecture",
-        )
-        match target.split("-"):
-            case [_, "apple", "darwin"]:
-                expected_os = "darwin"
-            case [_, "pc", "windows", "msvc"]:
-                expected_os = "win32"
-            case [_, "unknown", "linux", "gnu"]:
-                expected_os = "linux"
-            case _:
-                raise ValueError("unsupported npm target")
-        require(manifest.os == (expected_os,), "wrong npm OS")
+        expected_cpu, expected_os = npm_platform(target)
+        require(manifest.cpu == expected_cpu, "wrong npm architecture")
+        require(manifest.os == expected_os, "wrong npm OS")
         require(
             set(t.getnames())
             == {"package/package.json", f"package/bin/{platform.bin}"},
             "unexpected npm contents",
         )
-    asset = f"skilltest-{target}" + (".zip" if "windows" in target else ".tar.gz")
+    asset = asset_name(platform)
     archive = out / asset
     if asset.endswith(".zip"):
         with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as z:
