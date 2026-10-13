@@ -26,6 +26,15 @@ impl Drop for Scratch {
 }
 
 fn journey(result: Value, numeric: bool, exit: i32) -> (Scratch, std::process::Output) {
+    journey_with_environment(result, numeric, exit, &[])
+}
+
+fn journey_with_environment(
+    result: Value,
+    numeric: bool,
+    exit: i32,
+    environment: &[(&str, &str)],
+) -> (Scratch, std::process::Output) {
     let scratch = Scratch::new();
     std::fs::write(
         scratch.0.join("judge.json"),
@@ -66,6 +75,7 @@ printf '%s\n' '{"results":[{"status":"ok","text":"Hello Dr. Smith, appointment c
         .args(["--format", "json"])
         .env("JOURNEY_DIR", &scratch.0)
         .env("JUDGE_EXIT", exit.to_string())
+        .envs(environment.iter().copied())
         .output()
         .unwrap();
     (scratch, output)
@@ -573,5 +583,24 @@ exec "$CONFIG_FAKE_PROVIDER"
         Some(0),
         "{}",
         String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn unavailable_schema_directory_is_a_provider_error() {
+    let scratch = Scratch::new();
+    let missing = scratch.0.join("missing-temp-directory");
+    let (_, output) = journey_with_environment(
+        json!({"status":"ok","schema_valid":true,"structured":{"value":true,"reason":"unused"}}),
+        false,
+        0,
+        &[("TMPDIR", missing.to_str().unwrap())],
+    );
+    assert_eq!(output.status.code(), Some(3));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("schema"), "{stderr}");
+    assert!(
+        stderr.contains("could not create verdict schema"),
+        "{stderr}"
     );
 }

@@ -264,6 +264,7 @@ fn parse_value(
     let nodes = known
         .get(path)
         .ok_or_else(|| Error::Invalid(format!("unknown config setting `{path}`")))?;
+    // llmlint: ignore-block[changed_behavior_has_e2e] every_schema_leaf_is_applied_by_file_assignments_and_environment feeds bare enum text through the env resolver subprocess; dropping the judge.vendor env mapping makes its env judge.vendor assertion fail.
     let string = nodes.iter().any(|node| {
         node.get("type") == Some(&json!("string"))
             || node
@@ -280,6 +281,7 @@ fn parse_value(
             ))
         })?
     };
+    // llmlint: ignore-end[changed_behavior_has_e2e]
     if !nodes
         .iter()
         .any(|node| valid_patch(&value, node, root, true))

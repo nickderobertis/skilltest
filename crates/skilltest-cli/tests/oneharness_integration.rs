@@ -845,13 +845,15 @@ fn role_configs_deliver_native_and_prompt_schemas_and_retry_settings() {
     )
     .unwrap();
     std::fs::write(&user, "harnesses = [\"goose\"]\nmodel = \"user-model\"\nmode = \"bypass\"\ntimeout = 23\n[env]\nROLE_MARKER = \"user\"\nGOOSE_MODEL = \"user-model\"\n").unwrap();
-    let config = scratch.0.join("skilltest.json");
-    let settings = serde_json::json!({"provider":{"kind":"oneharness","bin":oneharness_bin(),"history":false,"judge":{"config":judge,"args":["--schema-max-retries=1","--no-stream"]},"simulated_user":{"config":user,"args":["--","tail with spaces","--model=literal tail"]}},"models":["responder-model"]});
+    std::fs::create_dir(scratch.0.join("config")).unwrap();
+    let config = scratch.0.join("config/skilltest.json");
+    let settings = serde_json::json!({"provider":{"kind":"oneharness","bin":oneharness_bin(),"history":false,"judge":{"config":"judge.toml","args":["--schema-max-retries=1","--no-stream"]},"simulated_user":{"config":"user.toml","args":["--","tail with spaces","--model=literal tail"]}},"models":["responder-model"]});
     std::fs::write(&config, settings.to_string()).unwrap();
     let case = scratch.0.join("case.json");
     std::fs::write(&case, serde_json::json!({"skill":fixtures().join("../skills/greeter"),"input":"hi","user":{"persona":"continue","max_turns":2},"evals":[{"type":"boolean","criterion":"greet"},{"type":"numeric","criterion":"greet","min":0,"max":10,"threshold":7}]}).to_string()).unwrap();
     let invoke = |extra: &[&str]| {
         Command::new(skilltest())
+            .current_dir(&scratch.0)
             .arg("--config")
             .arg(&config)
             .args(["run", "--case-json"])
@@ -917,24 +919,38 @@ fn role_configs_deliver_native_and_prompt_schemas_and_retry_settings() {
         .all(|row| row["schema"] == "" && row["model"] == "responder-model"));
     // Switch only the judge to a non-Claude prompt-schema harness, with a failed
     // first fallback candidate. The simulated user keeps its separate config.
-    std::fs::write(&log, "").unwrap();
-    let output = invoke(&["--set", "provider.judge={\"args\":[\"--harness\",\"copilot,goose\",\"--model\",\"prompt-judge\",\"--schema-max-retries\",\"0\",\"--env\",\"ROLE_MARKER=prompt-judge\"]}"]);
-    let scored = report(&output);
-    assert_eq!(scored["passed"], true, "{scored}");
-    let observations: Vec<Value> = std::fs::read_to_string(&log)
-        .unwrap()
-        .lines()
-        .map(|line| serde_json::from_str(line).unwrap())
-        .collect();
-    let judges: Vec<_> = observations
-        .iter()
-        .filter(|row| row["role"] == "prompt-judge")
-        .collect();
-    assert_eq!(judges.len(), 2);
-    assert!(judges.iter().all(|row| row["prompt"]
-        .as_str()
-        .unwrap()
-        .contains("additionalProperties")));
+    for mode in [vec!["--run-mode", "fallback"], vec!["--run-mode=fallback"]] {
+        std::fs::write(&log, "").unwrap();
+        let mut role_args = vec![
+            "--harness",
+            "copilot,goose",
+            "--model",
+            "prompt-judge",
+            "--schema-max-retries",
+            "0",
+            "--env",
+            "ROLE_MARKER=prompt-judge",
+        ];
+        role_args.extend(mode);
+        let assignment = format!("provider.judge={}", serde_json::json!({"args":role_args}));
+        let output = invoke(&["--set", &assignment]);
+        let scored = report(&output);
+        assert_eq!(scored["passed"], true, "{scored}");
+        let observations: Vec<Value> = std::fs::read_to_string(&log)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        let judges: Vec<_> = observations
+            .iter()
+            .filter(|row| row["role"] == "prompt-judge")
+            .collect();
+        assert_eq!(judges.len(), 2);
+        assert!(judges.iter().all(|row| row["prompt"]
+            .as_str()
+            .unwrap()
+            .contains("additionalProperties")));
+    }
 }
 
 #[test]
