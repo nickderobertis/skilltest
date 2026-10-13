@@ -34,6 +34,46 @@ test("real CLI verifies version-only histories and fails closed for forged/mixed
     "release",
   ])
     assert.equal(classifyCLI(h, event({ event_name: name }), h.source).macosRequired, false);
+  // An event name the policy does not know is the one non-PR case that requests Mac.
+  for (const head of [h.release, h.source]) {
+    const unknown = classifyCLI(h, event({ event_name: "merge_group" }), head);
+    assert.equal(unknown.macosRequired, true);
+    assert.equal(unknown.isReleaseOnly, false);
+    assert.match(unknown.reason, /unrecognised event "merge_group"/);
+  }
+});
+
+// llmlint: ignore[shell_test_tiers_stay_split] The task requires these real Git/classifier journeys inside the integrated deterministic recording target, without external-service or model probes.
+test("a registry dependency sharing a workspace package's name is dependency content", (t) => {
+  const h = history(t);
+  const git = (...args) => execFileSync("git", args, { cwd: h.dir, encoding: "utf8" }).trim();
+  const commit = (files, message) => {
+    for (const [path, src] of Object.entries(files)) {
+      mkdirSync(join(h.dir, path, ".."), { recursive: true });
+      writeFileSync(join(h.dir, path), src);
+    }
+    git("add", ".");
+    git("commit", "--quiet", "-m", message);
+    return git("rev-parse", "HEAD");
+  };
+  const cases = {
+    "Cargo.toml": (v) =>
+      `[workspace.package]\nversion="0.1.0"\n[workspace.dependencies]\nskilltest-core={version="${v}"}\n`,
+    "Cargo.lock": (v) =>
+      `version=4\n[[package]]\nname="skilltest-cli"\nversion="0.1.0"\n[[package]]\nname="skilltest-core"\nversion="${v}"\nsource="registry+https://github.com/rust-lang/crates.io-index"\n`,
+    "plugins/pytest/pyproject.toml": (v) =>
+      `[project]\nname="skilltest-pytest"\nversion="0.1.0"\ndependencies=["skilltest-sdk==${v}"]\n`,
+    "uv.lock": (v) =>
+      `version=1\n[[package]]\nname="skilltest-pytest"\nversion="0.1.0"\nsource={editable="plugins/pytest"}\n[package.metadata]\nrequires-dist=[{name="skilltest-sdk",specifier="==${v}"}]\n[[package]]\nname="skilltest-sdk"\nversion="${v}"\nsource={registry="https://pypi.org/simple"}\n`,
+  };
+  for (const [path, render] of Object.entries(cases)) {
+    git("checkout", "--quiet", h.release);
+    h.base = commit({ [path]: render("0.1.0") }, `registry ${path}`);
+    const bumped = commit({ [path]: render("0.2.0") }, `bump registry ${path}`);
+    const result = classifyCLI(h, event(), bumped);
+    assert.equal(result.macosRequired, true, path);
+    assert.equal(result.isReleaseOnly, false, path);
+  }
 });
 
 // llmlint: ignore[shell_test_tiers_stay_split] The task requires these real Git/classifier journeys inside the integrated deterministic recording target, without external-service or model probes.
@@ -49,7 +89,7 @@ test("parsed TOML and workspace lockfiles admit only internal version fields", (
     "sdks/python/pyproject.toml":
       '[project]\nname="skilltest-sdk"\nversion="0.1.0"\ndependencies=["pydantic>=2.7"]\n',
     "plugins/pytest/pyproject.toml":
-      '[project]\nname="skilltest-pytest"\nversion="0.1.0"\ndependencies=["skilltest-sdk==0.1.0", "pytest>=8"]\n',
+      '[project]\nname="skilltest-pytest"\nversion="0.1.0"\ndependencies=["skilltest-sdk==0.1.0", "pytest>=8"]\n[tool.uv.sources]\nskilltest-sdk={workspace=true}\n',
     "uv.lock":
       'version=1\n[[package]]\nname="skilltest-sdk"\nversion="0.1.0"\nsource={editable="sdks/python"}\n[[package]]\nname="skilltest-pytest"\nversion="0.1.0"\nsource={editable="plugins/pytest"}\n[package.metadata]\nrequires-dist=[{name="skilltest-sdk",specifier="==0.1.0"},{name="pydantic",specifier=">=2.7"}]\n[[package]]\nname="pydantic"\nversion="1.0.0"\nsource={registry="https://example.invalid"}\n',
     "pnpm-lock.yaml": "lockfileVersion: '9.0'\nimporters: {}\npackages: {}\n",

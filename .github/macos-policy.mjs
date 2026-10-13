@@ -72,6 +72,8 @@ export function classify(event, base, head, cwd = process.cwd()) {
   /** @param {string} reason */
   const required = (reason) => ({ isReleaseOnly: false, macosRequired: true, reason });
   try {
+    if (typeof name === "string" && name !== "pull_request")
+      return required(`unrecognised event ${JSON.stringify(name)}; Mac coverage required`);
     if (name !== "pull_request") return required("unknown event metadata; PR coverage required");
     const pr = object(eventDoc.pull_request, "pull_request");
     const repository = object(eventDoc.repository, "repository");
