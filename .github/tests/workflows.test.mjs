@@ -9,6 +9,7 @@ import {
   matrixRows,
   resolveRun,
   scenarioRuns,
+  stepEnv,
   sourceDigest,
 } from "../workflow-graph.mjs";
 import { classifyCLI, event, history } from "./history.mjs";
@@ -218,15 +219,23 @@ test("required carrier command propagates third-party results and distinguishes 
   assert.equal(carrier.name, "check (macos-latest)");
   assert.match(carrier.if, /always\(\)/);
   assert.deepEqual(carrier.needs, ["policy", "mac-check"]);
-  const command = carrier.steps.find((s) => s.run)?.run;
+  const step = carrier.steps.find((s) => s.run);
+  const command = step.run;
   assert.equal(command, "node .github/required-result.mjs");
   for (const policy of ["success", "failure", "cancelled", "skipped", undefined])
     for (const mac of ["success", "failure", "cancelled", "skipped", undefined])
       for (const required of ["true", "false", "", undefined]) {
-        const needs = { policy: { result: policy }, "mac-check": { result: mac } };
+        const needs = {
+          policy: {
+            result: policy,
+            outputs: required === undefined ? {} : { macosRequired: required },
+          },
+          "mac-check": { result: mac, outputs: {} },
+        };
+        // The carrier's env is evaluated from ci.yml, so a miswired variable fails here.
         const result = spawnSync("bash", ["-c", command], {
           encoding: "utf8",
-          env: { ...process.env, NEEDS: JSON.stringify(needs), MACOS_REQUIRED: required ?? "" },
+          env: { ...process.env, ...stepEnv(step, { needs, github: {} }) },
         });
         const allowed =
           policy === "success" &&

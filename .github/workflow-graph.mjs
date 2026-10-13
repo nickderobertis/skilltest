@@ -63,6 +63,15 @@ function interpolate(src, ctx) {
     return typeof evaluated === "boolean" ? String(evaluated) : evaluated.coerceString();
   });
 }
+/** Evaluate a step's declared env exactly as the runner would hand it to `run`. @param {{env?: Record<string, unknown>}} step @param {Record<string, unknown>} ctx @returns {Record<string, string>} */
+export function stepEnv(step, ctx) {
+  return Object.fromEntries(
+    Object.entries(step.env ?? {}).map(([key, raw]) => [
+      key,
+      typeof raw === "string" ? interpolate(raw, ctx) : String(raw),
+    ]),
+  );
+}
 export function loadGraph(directory = ".github/workflows") {
   /** @type {import('./models.js').Graph} */
   const graph = {};
@@ -281,15 +290,12 @@ export function resolveRun(
     /** @type {import('./models.js').Result} */
     let result = runs ? "success" : "skipped";
     if (runs && file === "ci.yml" && id === "mac-result") {
-      const command = (job.steps ?? []).find((step) => step.run)?.run;
-      if (command !== "node .github/required-result.mjs")
+      const step = (job.steps ?? []).find((candidate) => candidate.run);
+      if (step?.run !== "node .github/required-result.mjs")
         throw new Error("unresolved required result command");
-      const outcome = spawnSync("bash", ["-c", command], {
-        env: {
-          ...process.env,
-          NEEDS: JSON.stringify(needs),
-          MACOS_REQUIRED: needs.policy?.outputs?.macosRequired ?? "",
-        },
+      // The carrier reads only what its workflow step wires into env.
+      const outcome = spawnSync("bash", ["-c", step.run], {
+        env: { ...process.env, ...stepEnv(step, ctx) },
         encoding: "utf8",
       });
       result = outcome.status === 0 ? "success" : "failure";
