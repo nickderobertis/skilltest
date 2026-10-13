@@ -908,3 +908,80 @@ fn role_configs_deliver_native_and_prompt_schemas_and_retry_settings() {
         .unwrap()
         .contains("additionalProperties")));
 }
+
+#[test]
+#[ignore = "needs real oneharness; run via just test-oneharness"]
+fn role_inheritance_empty_defaults_named_overrides_and_deadlines() {
+    let scratch = Scratch::new("role-precedence");
+    let log = scratch.0.join("calls.jsonl");
+    std::fs::write(scratch.0.join("oneharness.toml"), "harnesses = [\"claude-code\"]\nmodel = \"ambient-default\"\n[env]\nROLE_MARKER = \"ambient\"\n").unwrap();
+    let config = scratch.0.join("config.json");
+    let case = scratch.0.join("case.json");
+    std::fs::write(&case, serde_json::json!({"skill":fixtures().join("../skills/greeter"),"input":"hello","user":{"persona":"continue","max_turns":2},"evals":[{"type":"boolean","criterion":"greet"}]}).to_string()).unwrap();
+    let mut settings = serde_json::json!({"provider":{"kind":"oneharness","bin":oneharness_bin(),"history":false,"judge":{"args":["--harness=claude-code","--model=role-model","--timeout=19","--env","ROLE_MARKER=role"]}},"models":["responder"]});
+    let invoke = |settings: &Value, flags: &[&str]| {
+        std::fs::write(&config, settings.to_string()).unwrap();
+        std::fs::write(&log, "").unwrap();
+        Command::new(skilltest())
+            .current_dir(&scratch.0)
+            .arg("--config")
+            .arg(&config)
+            .args(["run", "--case-json"])
+            .arg(&case)
+            .args(["--format", "json"])
+            .args(flags)
+            .env("ONEHARNESS_BIN_CLAUDE_CODE", shim())
+            .env("SKILLTEST_BOUNDARY_LOG", &log)
+            .output()
+            .unwrap()
+    };
+    let calls = || {
+        std::fs::read_to_string(&log)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(report(&invoke(&settings, &[]))["passed"], true);
+    assert!(calls()
+        .iter()
+        .any(|call| call["system"] == "" && call["schema"] == "" && call["model"] == "role-model"));
+    settings["provider"]["simulated_user"] = serde_json::json!({});
+    assert_eq!(report(&invoke(&settings, &[]))["passed"], true);
+    assert!(calls().iter().any(|call| call["system"] == ""
+        && call["schema"] == ""
+        && call["model"] == "ambient-default"));
+    settings["provider"]["simulated_user"] = settings["provider"]["judge"].clone();
+    assert_eq!(
+        report(&invoke(
+            &settings,
+            &[
+                "--judge-harness",
+                "claude-code",
+                "--judge-model",
+                "named",
+                "--timeout",
+                "21"
+            ]
+        ))["passed"],
+        true
+    );
+    assert!(calls()
+        .iter()
+        .filter(|call| call["system"] == "")
+        .all(|call| call["model"] == "named"));
+    // A role config timeout must govern the actual harness, rather than being
+    // replaced by skilltest's legacy 120-second deadline.
+    let role = scratch.0.join("deadline.toml");
+    std::fs::write(
+        &role,
+        "harnesses = [\"claude-code\"]\ntimeout = 1\n[env]\nROLE_SLEEP = \"3\"\n",
+    )
+    .unwrap();
+    settings["provider"]["judge"] = serde_json::json!({"config":role});
+    settings["provider"]["simulated_user"] = serde_json::json!({});
+    let output = invoke(&settings, &[]);
+    assert_eq!(output.status.code(), Some(3));
+    let error: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(error["kind"], "timeout", "{error}");
+}

@@ -128,3 +128,100 @@ def test_buffered_and_streaming_overrides_keep_explicit_values(cases: Path) -> N
     asyncio.run(collect())
     with pytest.raises(SkilltestUsageError, match="max_turns"):
         run_skill(cases / "greet_pass.yaml", config_overrides={"max_turns": 0})
+
+
+def test_documented_config_and_scaffold_agree_with_generated_contract(
+    fixtures: Path, tmp_path: Path
+) -> None:
+    import re
+
+    root = fixtures.parents[1]
+    documented = (root / "docs/schema.md").read_text().split("## Test case")[0]
+    for block in re.findall(r"```yaml\n(.*?)```", documented, re.DOTALL):
+        # The CLI's YAML loader remains the authority; a provider-boundary error
+        # from missing example role files comes only after configuration loads.
+        config = tmp_path / "example.yaml"
+        config.write_text(block)
+        result = subprocess.run(
+            [os.environ["SKILLTEST_BIN"], "--config", str(config), "run"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert "no test" in result.stderr or "no cases" in result.stderr, result.stderr
+
+
+def test_api_judge_overrides_reach_http_for_buffered_and_streaming(
+    cases: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    requests: list[dict] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            assert self.path == "/judge"
+            assert self.headers["Authorization"] == "Bearer fixture-key"
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            requests.append(body)
+            reply = json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": (
+                                    '{"value":false} reconsidering '
+                                    '{"value":true,"reason":"revised API verdict"}'
+                                )
+                            }
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 11, "completion_tokens": 2},
+                }
+            ).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(reply)))
+            self.end_headers()
+            self.wfile.write(reply)
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    monkeypatch.setenv("CONFIG_TEST_API_KEY", "fixture-key")
+    overrides: ConfigOverrides = {
+        "judge": {
+            "kind": "api",
+            "vendor": "openai",
+            "api_key_env": "CONFIG_TEST_API_KEY",
+            "base_url": f"http://127.0.0.1:{server.server_port}/judge",
+            "timeout_secs": 10,
+            "curl_bin": "curl",
+            "strict_json": False,
+        },
+        "judge_model": "config-api-model",
+    }
+    try:
+        report = run_skill(cases / "greet_pass.yaml", config_overrides=overrides)
+        assert report.passed and report.runs[0].usage
+        assert report.runs[0].usage.input_tokens == 22
+
+        async def collect() -> None:
+            stream = stream_skill(cases / "greet_pass.yaml", config_overrides=overrides)
+            async for _ in stream:
+                pass
+            assert stream.report and stream.report.passed
+
+        asyncio.run(collect())
+        assert len(requests) == 4
+        assert all(
+            request["model"] == "config-api-model" and "response_format" not in request
+            for request in requests
+        )
+    finally:
+        server.shutdown()
+        thread.join()
+        server.server_close()

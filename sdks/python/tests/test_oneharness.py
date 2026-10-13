@@ -79,3 +79,44 @@ def test_sdk_spy_only_observes_through_real_oneharness(oneharness_env: Path) -> 
     assert shell.call_count == 3
     assert all(not c.mocked for c in shell.calls), "a spy never intercepts"
     shell.where(command=contains("rm -rf")).assert_called_once()
+
+
+def test_config_overrides_control_history_and_role_models(
+    oneharness_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+
+    log = tmp_path / "calls.jsonl"
+    history = tmp_path / "history"
+    monkeypatch.setenv("SKILLTEST_BOUNDARY_LOG", str(log))
+    report = run_skill(
+        FIXTURES / "cases/greet_pass.yaml",
+        config=oneharness_env,
+        config_overrides={
+            "provider": {
+                "history": True,
+                "history_dir": str(history),
+                "judge": {
+                    "args": [
+                        "--harness",
+                        "claude-code",
+                        "--model",
+                        "override-judge",
+                        "--schema-max-retries",
+                        "0",
+                    ]
+                },
+            }
+        },
+    )
+    assert report.passed
+    assert report.runs[0].history_command and str(history) in report.runs[0].history_command
+    assert list(history.rglob("*.jsonl"))
+    calls = [json.loads(line) for line in log.read_text().splitlines()]
+    assert [call["model"] for call in calls] == ["fake-model", "override-judge", "override-judge"]
+    report = run_skill(
+        CASE,
+        config=oneharness_env,
+        config_overrides={"provider": {"history": False, "history_dir": str(history)}},
+    )
+    assert report.passed and report.runs[0].history_command is None

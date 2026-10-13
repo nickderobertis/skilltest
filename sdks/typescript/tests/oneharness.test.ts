@@ -10,7 +10,7 @@
  * {@link bundledOneharness}). Still skipped (not failed) when it is not
  * resolvable, e.g. a checkout without `pnpm install`.
  */
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
@@ -87,5 +87,52 @@ describe.skipIf(!ONEHARNESS_BIN)("mocks through real oneharness", () => {
     expect(shell.callCount).toBe(3);
     expect(shell.calls.every((c) => !c.mocked)).toBe(true);
     expect(shell.where({ command: contains("rm -rf") }).callCount).toBe(1);
+  });
+  test("typed overrides control history and judge models", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "skilltest-config-history-"));
+    const history = join(dir, "history");
+    const log = join(dir, "calls.jsonl");
+    process.env.SKILLTEST_BOUNDARY_LOG = log;
+    try {
+      const report = await runSkill(join(OH_FIXTURES, "../cases/greet_pass.yaml"), {
+        config,
+        configOverrides: {
+          provider: {
+            history: true,
+            history_dir: history,
+            judge: {
+              args: [
+                "--harness",
+                "claude-code",
+                "--model",
+                "ts-override-judge",
+                "--schema-max-retries",
+                "0",
+              ],
+            },
+          },
+        },
+      });
+      expect(report.passed).toBe(true);
+      expect(report.runs[0]?.history_command).toContain(history);
+      const calls: { model: string }[] = readFileSync(log, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      expect(calls.map((call) => call.model)).toEqual([
+        "fake-model",
+        "ts-override-judge",
+        "ts-override-judge",
+      ]);
+      const unrecorded = await runSkill(CASE, {
+        config,
+        configOverrides: { provider: { history: false, history_dir: history } },
+      });
+      expect(unrecorded.passed).toBe(true);
+      expect(unrecorded.runs[0]?.history_command).toBeUndefined();
+    } finally {
+      Reflect.deleteProperty(process.env, "SKILLTEST_BOUNDARY_LOG");
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

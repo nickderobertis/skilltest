@@ -248,7 +248,7 @@ export function buildRunArgs(
   if (provider !== undefined) args.push("--provider", provider);
   for (const platform of options.platforms ?? []) args.push("--platform", platform);
   for (const model of options.models ?? []) args.push("--model", model);
-  if (options.judgeModel) args.push("--judge-model", options.judgeModel);
+  if (options.judgeModel !== undefined) args.push("--judge-model", options.judgeModel);
   if (options.maxTurns !== undefined) args.push("--max-turns", String(options.maxTurns));
   args.push(...mockArgs);
   return args;

@@ -29,7 +29,7 @@ fn journey(result: Value, numeric: bool, exit: i32) -> (Scratch, std::process::O
     let scratch = Scratch::new();
     std::fs::write(
         scratch.0.join("judge.json"),
-        json!({"results":[result]}).to_string(),
+        json!({"results": if result.is_array() {result} else {json!([result])}}).to_string(),
     )
     .unwrap();
     let boundary = scratch.0.join("oneharness");
@@ -268,6 +268,32 @@ printf '%s\n' '{"results":[{"status":"ok","text":"Hello confirmed","schema_valid
     assert!(std::fs::read_to_string(&log)
         .unwrap()
         .contains("later-model"));
+    for (raw, expected) in [("123", "123"), ("null", "null"), ("\"null\"", "null")] {
+        // A non-nullable shorthand rejects null; quoted null remains literal.
+        let output = Command::new(common::built_bin("skilltest"))
+            .arg("--config")
+            .arg(&config)
+            .arg("run")
+            .arg(fixtures.join("cases/greet_pass.yaml"))
+            .env("CONFIG_ARGV_LOG", &log)
+            .env("SKILLTEST_JUDGE_MODEL", raw)
+            .output()
+            .unwrap();
+        if raw == "null" {
+            assert_eq!(output.status.code(), Some(2));
+        } else {
+            assert_eq!(
+                output.status.code(),
+                Some(0),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(std::fs::read_to_string(&log)
+                .unwrap()
+                .lines()
+                .any(|line| line == expected));
+        }
+    }
     for setting in [
         "provider.judge.args.0=\"x\"",
         "spy=null",
@@ -293,5 +319,42 @@ printf '%s\n' '{"results":[{"status":"ok","text":"Hello confirmed","schema_valid
             String::from_utf8_lossy(&output.stderr)
         );
         assert!(!output.stderr.is_empty());
+    }
+}
+
+#[test]
+fn fallback_reports_choose_settled_success_and_reject_multiple_verdicts() {
+    let (_, output) = journey(
+        json!([
+            {"status":"error","failure_kind":"model_not_found","error":"candidate unavailable"},
+            {"status":"ok","schema_valid":true,"structured":{"value":true,"reason":"settled"}}
+        ]),
+        false,
+        0,
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let (_, output) = journey(
+        json!([
+            {"status":"ok","schema_valid":true,"structured":{"value":true,"reason":"first"}},
+            {"status":"ok","schema_valid":true,"structured":{"value":false,"reason":"second"}}
+        ]),
+        false,
+        0,
+    );
+    assert_eq!(output.status.code(), Some(3));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("multiple successful results"));
+    // Existing but unvalidated structured data cannot overrule the text backstop.
+    for valid in [Value::Null, json!(false)] {
+        let (_, output) = journey(
+            json!({"status":"ok","schema_valid":valid,"structured":{"value":false,"reason":"unvalidated"},"text":"{\"value\":true,\"reason\":\"text verdict\"}"}),
+            false,
+            0,
+        );
+        assert_eq!(output.status.code(), Some(0));
     }
 }

@@ -36,3 +36,7 @@ from the contract. No framework code — vitest support lives in `plugins/vitest
   `oneharness` on `PATH` — `node_modules/.bin` need not be on `PATH`.
 - The pnpm workspace is rooted at the repo (`pnpm-workspace.yaml`, one
   `pnpm-lock.yaml`), never a lockfile per package.
+
+`Config` and `ConfigOverrides` are generated from the full Rust config schema.
+Both run APIs serialize overrides through CLI `--set`; resolution stays in core.
+See `docs/schema.md` for the shared precedence and value grammar.

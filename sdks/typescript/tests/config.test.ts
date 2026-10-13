@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import ts from "typescript";
@@ -112,4 +113,69 @@ it("shares overrides across buffered and streaming calls and retains zero", asyn
   await expect(
     runSkill(caseFile("greet_pass.yaml"), { configOverrides: { max_turns: 0 } }),
   ).rejects.toBeInstanceOf(SkilltestUsageError);
+});
+
+it("routes API judge overrides through HTTP in both run modes", async () => {
+  const requests: { model: string; response_format?: unknown }[] = [];
+  const server = createServer((request, response) => {
+    let body = "";
+    request.on("data", (chunk) => {
+      body += chunk;
+    });
+    request.on("end", () => {
+      expect(request.url).toBe("/judge");
+      expect(request.headers.authorization).toBe("Bearer fixture-key");
+      requests.push(JSON.parse(body));
+      response.setHeader("Content-Type", "application/json");
+      response.end(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: '{"value":false} reconsider {"value":true,"reason":"revised API verdict"}',
+              },
+            },
+          ],
+          usage: { prompt_tokens: 11, completion_tokens: 2 },
+        }),
+      );
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("HTTP boundary has no port");
+  process.env.CONFIG_TEST_API_KEY = "fixture-key";
+  const configOverrides: ConfigOverrides = {
+    judge: {
+      kind: "api",
+      vendor: "openai",
+      api_key_env: "CONFIG_TEST_API_KEY",
+      base_url: `http://127.0.0.1:${address.port}/judge`,
+      timeout_secs: 10,
+      curl_bin: "curl",
+      strict_json: false,
+    },
+    judge_model: "ts-api-model",
+  };
+  try {
+    const report = await runSkill(caseFile("greet_pass.yaml"), { configOverrides });
+    expect(report.passed).toBe(true);
+    expect(report.runs[0]?.usage?.input_tokens).toBe(22);
+    const stream = streamSkill(caseFile("greet_pass.yaml"), { configOverrides });
+    for await (const _event of stream) {
+      /* consume through CLI */
+    }
+    expect(stream.report?.passed).toBe(true);
+    expect(requests).toHaveLength(4);
+    expect(
+      requests.every(
+        (request) => request.model === "ts-api-model" && request.response_format === undefined,
+      ),
+    ).toBe(true);
+  } finally {
+    Reflect.deleteProperty(process.env, "CONFIG_TEST_API_KEY");
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
 });

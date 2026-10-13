@@ -976,15 +976,16 @@ impl OneharnessProvider {
         //
         // No `--mode`: oneharness applies its own default approval mode; users
         // tune it (e.g. `bypass`) via oneharness config, not from here.
-        cmd.args([
-            "run",
-            "--compact",
-            "--events",
-            "--no-stream",
-            "--prompt-file",
-            "-",
-        ]);
+        cmd.args(["run", "--compact", "--events", "--prompt-file", "-"]);
         let mut tail = &[][..];
+        if !args.role.is_some_and(|role| {
+            role.args
+                .iter()
+                .take_while(|token| token.as_str() != "--")
+                .any(|token| token == "--no-stream")
+        }) {
+            cmd.arg("--no-stream");
+        }
         if let Some(role) = args.role {
             if let Some(config) = &role.config {
                 cmd.args(["--config", config]);
@@ -2400,7 +2401,11 @@ fn build_judge_prompt(query: &JudgeQuery<'_>, messages: &[Message]) -> String {
 /// Enumerate complete objects, accounting for quoted braces and escapes. Starting
 /// at each opening brace also recovers a verdict after an unrelated malformed fragment.
 fn json_objects(text: &str) -> impl Iterator<Item = &str> {
-    text.match_indices('{').filter_map(|(start, _)| {
+    let mut consumed = 0;
+    text.match_indices('{').filter_map(move |(start, _)| {
+        if start < consumed {
+            return None;
+        }
         let mut depth = 0;
         let mut quoted = false;
         let mut escaped = false;
@@ -2420,7 +2425,11 @@ fn json_objects(text: &str) -> impl Iterator<Item = &str> {
                     '}' => {
                         depth -= 1;
                         if depth == 0 {
-                            return Some(&text[start..start + offset + 1]);
+                            let object = &text[start..start + offset + 1];
+                            if serde_json::from_str::<serde_json::Value>(object).is_ok() {
+                                consumed = start + offset + 1;
+                            }
+                            return Some(object);
                         }
                     }
                     _ => {}

@@ -74,11 +74,19 @@ oneharness run --harness <H> --model <M> --compact --events \
   [--history --history-dir <dir> --history-name <name>]
 ```
 
-with a constructed prompt on stdin, then reads `results[0]`: it requires
-`status == "ok"` and uses `text`, `session_id`, `usage`, `events`, and
-`history_file`. A non-`ok` status becomes a provider error, classified by
+with a constructed prompt on stdin, then selects the settled successful result
+of a fallback chain. Multiple successful results are a provider error. It
+requires `status == "ok"` and consumes `text`, `structured`, `schema_valid`,
+`session_id`, `usage`, `events`, and `history_file`. A non-`ok` status becomes a provider error, classified by
 `failure_kind` when set and otherwise from the `status` (`timeout` →
 `ProviderErrorKind::Timeout`); see [structured errors](schema.md#structured-errors).
+
+Evaluator role settings and all configuration/precedence rules are documented
+in [the configuration contract](schema.md#config-file-skilltestyaml). Judges
+receive `--schema` via oneharness native or prompt delivery, retained throughout
+oneharness retries and cleaned up afterward. Only `schema_valid: true` with a
+usable verdict authorizes structured data; the text backstop selects the last
+complete verdict object of the requested kind.
 
 **Approval mode.** skilltest passes no `--mode`, so oneharness applies its own
 default approval mode (v0.3.0+ normalized `--mode` across harnesses — a breaking

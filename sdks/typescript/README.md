@@ -113,3 +113,8 @@ the SDK parses (`generated/report.ts`) and the case types the builders
 construct (`generated/case.ts`). They are types only: the runner trusts the
 shape after `JSON.parse`, because the gate (not runtime re-validation) is what
 guarantees it.
+
+Full run settings are available through YAML, derived environment variables,
+CLI `--set`, and generated SDK config overrides. See the
+[configuration contract](../../docs/schema.md#config-file-skilltestyaml) for precedence,
+evaluator role inheritance, value grammar and path resolution.

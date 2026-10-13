@@ -344,3 +344,8 @@ test framework means one new package under `plugins/`.
 ## License
 
 MIT — see [`LICENSE`](LICENSE).
+
+Full run settings are available through YAML, derived environment variables,
+CLI `--set`, and generated SDK config overrides. See the
+[configuration contract](docs/schema.md#config-file-skilltestyaml) for precedence,
+evaluator role inheritance, value grammar and path resolution.

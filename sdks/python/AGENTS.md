@@ -46,3 +46,7 @@ contract into Pydantic models. No framework code — pytest support lives in
   root `pyproject.toml` declares (`[tool.uv.workspace]`, a virtual root that
   publishes nothing); both resolve into the one root `uv.lock`, never a lock per
   package. `scripts/set-version.sh` refreshes that lock on each release.
+
+`Config` and `ConfigOverrides` are generated from the full Rust config schema.
+Both run APIs serialize overrides through CLI `--set`; resolution stays in core.
+See `docs/schema.md` for the shared precedence and value grammar.

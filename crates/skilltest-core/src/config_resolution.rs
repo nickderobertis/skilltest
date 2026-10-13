@@ -93,9 +93,6 @@ fn parse_value(
     let nodes = known
         .get(path)
         .ok_or_else(|| Error::Invalid(format!("unknown config setting `{path}`")))?;
-    if let Ok(value) = serde_json::from_str(raw) {
-        return Ok(value);
-    }
     let string = nodes.iter().any(|node| {
         node.get("type") == Some(&json!("string"))
             || node
@@ -103,12 +100,38 @@ fn parse_value(
                 .and_then(Value::as_array)
                 .is_some_and(|types| types.contains(&json!("string")))
     });
-    if environment && string && !raw.starts_with('"') {
-        return Ok(Value::String(raw.into()));
+    let value = if environment && string && raw != "null" && !raw.starts_with('"') {
+        Value::String(raw.into())
+    } else {
+        serde_json::from_str(raw).map_err(|_| {
+            Error::Invalid(format!(
+                "config setting `{path}` needs a valid JSON value; got `{raw}`"
+            ))
+        })?
+    };
+    let matches_type = |kind: &str| match kind {
+        "null" => value.is_null(),
+        "string" => value.is_string(),
+        "boolean" => value.is_boolean(),
+        "object" => value.is_object(),
+        "array" => value.is_array(),
+        "integer" => value.is_i64() || value.is_u64(),
+        "number" => value.is_number(),
+        _ => false,
+    };
+    if !nodes.iter().any(|node| {
+        let type_matches = match node.get("type") {
+            Some(Value::String(kind)) => matches_type(kind),
+            Some(Value::Array(kinds)) => kinds.iter().filter_map(Value::as_str).any(matches_type),
+            _ => false,
+        };
+        type_matches && node.get("const").is_none_or(|constant| constant == &value)
+    }) {
+        return Err(Error::Invalid(format!(
+            "config setting `{path}` has the wrong type or enum value: {value}"
+        )));
     }
-    Err(Error::Invalid(format!(
-        "config setting `{path}` needs a valid JSON value; got `{raw}`"
-    )))
+    Ok(value)
 }
 
 pub fn resolve(
@@ -266,6 +289,7 @@ pub fn validate_role_args(role: &str, args: &[String]) -> Result<()> {
                 | "--schema"
                 | "--batch-strategy"
                 | "--batch-concurrency"
+                | "--print-command"
         );
         if incompatible {
             return Err(Error::Invalid(format!("provider.{role}.args setting `{flag}` is incompatible with a single buffered skilltest verdict")));

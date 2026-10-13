@@ -82,6 +82,8 @@ if [ -n "${SKILLTEST_BOUNDARY_LOG:-}" ]; then
         --args '{schema:$schema,model:$model,mode:$mode,role:$role,system:$system,prompt:$prompt,argv:$ARGS.positional}' -- "${args[@]}" >> "$SKILLTEST_BOUNDARY_LOG"
 fi
 
+if [ -n "${ROLE_SLEEP:-}" ]; then sleep "$ROLE_SLEEP"; fi
+
 # A judge/user-simulation run (no skill => no --append-system-prompt): reply
 # with a passing verdict so judge-backed evals resolve deterministically.
 if [ -z "$system" ]; then
