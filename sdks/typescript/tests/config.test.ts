@@ -142,6 +142,26 @@ process.exit(result.status ?? 3);
   }
 });
 
+it("omits undefined overrides and preserves file settings in both run modes", async () => {
+  const scratch = mkdtempSync(join(tmpdir(), "skilltest-undefined-ts-"));
+  try {
+    const config = join(scratch, "config.json");
+    writeFileSync(config, JSON.stringify({ models: ["file-model"] }));
+    const options = { config, configOverrides: { models: undefined } };
+    const report = await runSkill(caseFile("greet_pass.yaml"), options);
+    expect(report.passed).toBe(true);
+    expect(report.runs.map((run) => run.model)).toEqual(["file-model"]);
+    const stream = streamSkill(caseFile("greet_pass.yaml"), options);
+    for await (const _event of stream) {
+      /* Drain to the terminal report. */
+    }
+    expect(stream.report?.passed).toBe(true);
+    expect(stream.report?.runs.map((run) => run.model)).toEqual(["file-model"]);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
 it("shares overrides across buffered and streaming calls and retains zero", async () => {
   const configOverrides: ConfigOverrides = { spy: false, mocks: [], judge: null, max_turns: 2 };
   expect((await runSkill(caseFile("greet_pass.yaml"), { configOverrides })).passed).toBe(true);
