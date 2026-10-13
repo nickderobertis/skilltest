@@ -80,12 +80,13 @@ def test_schema_leaves_reach_yaml_set_environment_and_typed_overrides(
             provider["command"] = [command]
         else:
             provider["bin"] = str(boundary)
-        if path == "provider.bin":
-            value = str(boundary)
-        if path == "provider.command":
-            value = [command]
-        if path in ("platforms", "models"):
-            value = ["surface"]
+        match path:
+            case "provider.bin":
+                value = str(boundary)
+            case "provider.command":
+                value = [command]
+            case "platforms" | "models":
+                value = ["surface"]
         cursor = payload
         parts = path.split(".")
         for part in parts[:-1]:
