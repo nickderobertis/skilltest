@@ -27,6 +27,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
+from ._config_overrides import ConfigOverrides
 from ._error import ReportError
 from ._report import ToolEvent
 from .case import TestCase
@@ -137,6 +138,7 @@ def stream_skill(
     judge_model: str | None = None,
     max_turns: int | None = None,
     config: str | Path | None = None,
+    config_overrides: ConfigOverrides | None = None,
     cwd: str | Path | None = None,
     mocks: Sequence[ToolSpy] = (),
 ) -> SkillStream:
@@ -161,6 +163,7 @@ def stream_skill(
             judge_model=judge_model,
             max_turns=max_turns,
             config=config,
+            config_overrides=config_overrides,
             fmt="json-stream",
             mock_args=mock_args,
         )

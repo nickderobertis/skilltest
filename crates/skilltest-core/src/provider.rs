@@ -640,6 +640,9 @@ impl Provider for CommandProvider {
 /// independent of the harness under test, so the evaluator does not drift with
 /// the matrix.
 pub struct OneharnessProvider {
+    judge_role: Option<crate::config::OneharnessRoleConfig>,
+    user_role: Option<crate::config::OneharnessRoleConfig>,
+    evaluator_overrides: Box<crate::config::EvaluatorOverrides>,
     bin: String,
     judge_harness: String,
     timeout_secs: u64,
@@ -699,6 +702,8 @@ struct OhResult {
 /// Parameters for one `oneharness run` invocation.
 struct RunArgs<'a> {
     schema: Option<&'a Path>,
+    role: Option<&'a crate::config::OneharnessRoleConfig>,
+    evaluator: Option<&'a crate::config::EvaluatorSettings>,
     harness: &'a str,
     model: &'a str,
     prompt: &'a str,
@@ -732,6 +737,8 @@ impl<'a> RunArgs<'a> {
     fn plain(harness: &'a str, model: &'a str, prompt: &'a str) -> Self {
         RunArgs {
             schema: None,
+            role: None,
+            evaluator: None,
             harness,
             model,
             prompt,
@@ -908,6 +915,12 @@ impl OneharnessProvider {
     #[must_use]
     pub fn new(config: &OneharnessConfig) -> Self {
         Self {
+            judge_role: config.judge.clone(),
+            user_role: config
+                .simulated_user
+                .clone()
+                .or_else(|| config.judge.clone()),
+            evaluator_overrides: config.evaluator_overrides.clone(),
             bin: config.bin.clone(),
             judge_harness: config.judge_harness.clone(),
             timeout_secs: config.timeout_secs,
@@ -965,25 +978,61 @@ impl OneharnessProvider {
         // tune it (e.g. `bypass`) via oneharness config, not from here.
         cmd.args([
             "run",
-            "--harness",
-            args.harness,
-            // Not cosmetic: since oneharness 0.16 stdout is text unless `--compact`
-            // (or `--format json`) is given, so this is what selects the JSON
-            // report parsed below.
             "--compact",
             "--events",
-            "--timeout",
-            &timeout,
+            "--no-stream",
             "--prompt-file",
             "-",
         ]);
-        // An empty model means "unspecified" — omit `--model` so the harness uses
-        // its own default (cursor/crush/copilot) or an env-selected model (qwen
-        // via OPENAI_MODEL, goose via GOOSE_MODEL), exactly as oneharness's own
-        // smoke scripts do. Forwarding `--model ""` would push a broken empty
-        // model flag to the harness CLI.
-        if !args.model.is_empty() {
-            cmd.args(["--model", args.model]);
+        let mut tail = &[][..];
+        if let Some(role) = args.role {
+            if let Some(config) = &role.config {
+                cmd.args(["--config", config]);
+            }
+            let boundary = role
+                .args
+                .iter()
+                .position(|token| token == "--")
+                .unwrap_or(role.args.len());
+            tail = &role.args[boundary..];
+            let overrides = args.evaluator;
+            let mut index = 0;
+            while index < boundary {
+                let token = &role.args[index];
+                let flag = token
+                    .split_once('=')
+                    .map_or(token.as_str(), |(flag, _)| flag);
+                let overridden = overrides.is_some_and(|settings| match flag {
+                    "--harness" => settings.harness.is_some(),
+                    "--model" => settings.model.is_some(),
+                    "--timeout" => settings.timeout.is_some(),
+                    _ => false,
+                });
+                if overridden {
+                    index += if token.contains('=') { 1 } else { 2 };
+                } else {
+                    cmd.arg(token);
+                    index += 1;
+                }
+            }
+            if let Some(settings) = overrides {
+                if let Some(harness) = &settings.harness {
+                    cmd.args(["--harness", harness]);
+                }
+                if let Some(model) = &settings.model {
+                    if !model.is_empty() {
+                        cmd.args(["--model", model]);
+                    }
+                }
+                if let Some(timeout) = settings.timeout {
+                    cmd.args(["--timeout", &timeout.to_string()]);
+                }
+            }
+        } else {
+            cmd.args(["--harness", args.harness, "--timeout", &timeout]);
+            if !args.model.is_empty() {
+                cmd.args(["--model", args.model]);
+            }
         }
         if let Some(schema) = args.schema {
             cmd.arg("--schema").arg(schema);
@@ -1009,6 +1058,8 @@ impl OneharnessProvider {
             cmd.arg("--spy-file");
             cmd.arg(&files.spy);
         }
+
+        cmd.args(tail);
 
         let mut child = cmd
             .stdin(Stdio::piped())
@@ -1359,6 +1410,8 @@ impl Provider for OneharnessProvider {
         let history_name = self.history_name(platform, model, messages);
         let outcome = self.run(&RunArgs {
             schema: None,
+            role: None,
+            evaluator: None,
             harness: platform,
             model,
             prompt: &prompt,
@@ -1416,6 +1469,8 @@ impl Provider for OneharnessProvider {
         let outcome = self.run_streaming(
             &RunArgs {
                 schema: None,
+                role: None,
+                evaluator: None,
                 harness: platform,
                 model,
                 prompt: &prompt,
@@ -1443,7 +1498,10 @@ impl Provider for OneharnessProvider {
 
     fn simulate_user(&self, model: &str, persona: &str, messages: &[Message]) -> Result<UserTurn> {
         let prompt = build_user_prompt(persona, messages);
-        let outcome = self.run(&RunArgs::plain(&self.judge_harness, model, &prompt))?;
+        let mut args = RunArgs::plain(&self.judge_harness, model, &prompt);
+        args.role = self.user_role.as_ref();
+        args.evaluator = Some(&self.evaluator_overrides.simulated_user);
+        let outcome = self.run(&args)?;
         Ok(UserTurn {
             message: outcome.text.trim().to_string(),
             stop: false,
@@ -1461,6 +1519,8 @@ impl Provider for OneharnessProvider {
         let schema = SchemaFile::prepare(query.kind)?;
         let mut args = RunArgs::plain(&self.judge_harness, model, &prompt);
         args.schema = Some(&schema.path);
+        args.role = self.judge_role.as_ref();
+        args.evaluator = Some(&self.evaluator_overrides.judge);
         let outcome = self.run(&args)?;
         let mut verdict = outcome
             .structured
@@ -3265,6 +3325,7 @@ mod tests {
                 timeout_secs: 30,
                 history,
                 history_dir: Some(TEST_HISTORY_DIR.to_string()),
+                ..Default::default()
             })
         }
 

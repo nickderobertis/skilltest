@@ -98,3 +98,6 @@ export type {
   Usage,
 } from "./generated/report.js";
 export type { ValidationFinding, ValidationReport } from "./generated/validation.js";
+
+export type { Config } from "./generated/config.js";
+export type { ConfigOverrides } from "./generated/config_overrides.js";

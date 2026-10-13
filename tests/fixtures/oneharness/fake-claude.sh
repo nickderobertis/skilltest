@@ -51,7 +51,7 @@ command -v jq >/dev/null 2>&1 || {
     exit 2
 }
 
-prompt=""; settings=""; system=""; resume=""
+prompt=""; settings=""; system=""; resume=""; schema=""; model=""; mode=""
 args=("$@")
 i=0
 while [ $i -lt ${#args[@]} ]; do
@@ -67,11 +67,20 @@ while [ $i -lt ${#args[@]} ]; do
             fi
             i=$((i + 2)) ;;
         # Value-carrying flags we accept and ignore.
-        --model | --permission-mode | --json-schema | --output-format)
+        --json-schema) schema="${args[$((i + 1))]}"; i=$((i + 2)) ;;
+        --model) model="${args[$((i + 1))]}"; i=$((i + 2)) ;;
+        --permission-mode) mode="${args[$((i + 1))]}"; i=$((i + 2)) ;;
+        --output-format)
             i=$((i + 2)) ;;
         *) i=$((i + 1)) ;;
     esac
 done
+
+if [ -n "${SKILLTEST_BOUNDARY_LOG:-}" ]; then
+    jq -cn --arg schema "$schema" --arg model "$model" --arg mode "$mode" \
+        --arg role "${ROLE_MARKER:-responder}" --arg system "$system" --arg prompt "$prompt" \
+        --args '{schema:$schema,model:$model,mode:$mode,role:$role,system:$system,prompt:$prompt,argv:$ARGS.positional}' -- "${args[@]}" >> "$SKILLTEST_BOUNDARY_LOG"
+fi
 
 # A judge/user-simulation run (no skill => no --append-system-prompt): reply
 # with a passing verdict so judge-backed evals resolve deterministically.
@@ -82,12 +91,26 @@ if [ -z "$system" ]; then
         # skilltest must never deliver mocks to the judge; make it loud.
         text="JUDGE_SAW_SETTINGS"
     elif [ "$marker" = "verdict" ]; then
-        text='{"value": true, "reason": "fake-claude judge"}'
+        if [[ "$prompt" == *"Score how well"* ]]; then
+            text='{"value": 9, "reason": "fake-claude numeric judge"}'
+        else
+            text='{"value": true, "reason": "fake-claude judge"}'
+        fi
     else
         text="continue"
     fi
-    jq -cn --arg t "$text" \
-        '{type:"result", result:$t, session_id:"fake-claude-judge", usage:{input_tokens:3, output_tokens:1}}'
+    if [ -n "$schema" ]; then
+        structured="$text"
+        if [ -n "${SCHEMA_RETRY_MARKER:-}" ] && [ ! -f "$SCHEMA_RETRY_MARKER" ]; then
+            touch "$SCHEMA_RETRY_MARKER"
+            structured='{"value":"wrong type","reason":"retry me"}'
+        fi
+        jq -cn --arg t "$text" --argjson s "$structured" \
+            '{type:"result", result:$t, structured_output:$s, session_id:"fake-claude-judge", usage:{input_tokens:3, output_tokens:1}}'
+    else
+        jq -cn --arg t "$text" \
+            '{type:"result", result:$t, session_id:"fake-claude-judge", usage:{input_tokens:3, output_tokens:1}}'
+    fi
     exit 0
 fi
 

@@ -14,6 +14,7 @@
 #![forbid(unsafe_code)]
 
 pub mod config;
+mod config_resolution;
 pub mod conversation;
 pub mod error;
 pub mod eval;
@@ -26,8 +27,8 @@ pub mod skill;
 pub mod testcase;
 
 pub use config::{
-    ApiJudgeConfig, ApiVendor, CommandConfig, Config, JudgeConfig, OneharnessConfig, Overrides,
-    ProviderConfig,
+    ApiJudgeConfig, ApiVendor, CommandConfig, Config, JudgeConfig, OneharnessConfig,
+    OneharnessRoleConfig, Overrides, ProviderConfig,
 };
 pub use conversation::{Message, Role, ToolEvent, Transcript};
 pub use error::{Error, ProviderErrorKind, Result};

@@ -8,6 +8,7 @@
       "{projectRoot}/**/*",
       "sharedGlobals",
       "{workspaceRoot}/scripts/gen-contract.sh",
+      "{workspaceRoot}/scripts/config-overrides-schema.py",
       "{workspaceRoot}/tests/fixtures/contract/**/*"
     ]
   },

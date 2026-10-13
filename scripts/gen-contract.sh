@@ -20,6 +20,11 @@ if [[ "${1:-}" == "--check" ]]; then
 fi
 
 artifacts=(
+  "schemas/config.schema.json"
+  "sdks/python/skilltest_sdk/_config.py"
+  "sdks/python/skilltest_sdk/_config_overrides.py"
+  "sdks/typescript/src/generated/config.ts"
+  "sdks/typescript/src/generated/config_overrides.ts"
   "schemas/report.schema.json"
   "schemas/validation.schema.json"
   "schemas/case.schema.json"
@@ -56,11 +61,16 @@ cargo build -p skilltest-cli --quiet
 # branch on a typed `kind` instead of parsing the message string.
 ./target/debug/skilltest schema error > "$stage/schemas/error.schema.json"
 
+./target/debug/skilltest schema config > "$stage/schemas/config.schema.json"
+python3 scripts/config-overrides-schema.py "$stage/schemas/config.schema.json" "$stage/schemas/config_overrides.schema.json"
+
 # Python: pydantic models via datamodel-code-generator (pinned in uv.lock).
 # Run from sdks/python so the ruff formatter it invokes picks up that project's
 # config and the output matches the repo's formatting.
 gen_python() {
   local name="$1"
+  local extra=()
+  if [[ "$name" == "config" ]]; then extra=(--use-field-description); fi
   (cd sdks/python && PYTHONWARNINGS=ignore uv run --quiet datamodel-codegen \
     --input "$stage/schemas/$name.schema.json" \
     --input-file-type jsonschema \
@@ -74,9 +84,17 @@ gen_python() {
     --disable-timestamp \
     --collapse-root-models \
     --use-title-as-name \
-    --field-constraints \
+    --field-constraints "${extra[@]}" \
     --formatters ruff-format)
 }
+gen_python config
+(cd sdks/python && PYTHONWARNINGS=ignore uv run --quiet datamodel-codegen \
+  --input "$stage/schemas/config_overrides.schema.json" --input-file-type jsonschema \
+  --output "$stage/sdks/python/skilltest_sdk/_config_overrides.py" \
+  --output-model-type typing.TypedDict --target-python-version 3.12 \
+  --enum-field-as-literal all --use-union-operator --use-double-quotes \
+  --disable-timestamp --collapse-root-models --use-title-as-name --formatters ruff-format)
+(cd sdks/python && uv run --quiet ruff check --select I --fix "$stage/sdks/python/skilltest_sdk/_config.py" "$stage/sdks/python/skilltest_sdk/_config_overrides.py" >/dev/null)
 gen_python report
 gen_python validation
 gen_python case
@@ -99,6 +117,8 @@ gen_typescript() {
     --additionalProperties false \
     --bannerComment "$ts_banner"
 }
+gen_typescript config
+gen_typescript config_overrides
 gen_typescript report
 gen_typescript validation
 gen_typescript case

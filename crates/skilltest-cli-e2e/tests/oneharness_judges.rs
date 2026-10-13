@@ -156,3 +156,142 @@ fn malformed_wrong_type_and_failed_status_remain_provider_errors() {
         assert!(!std::path::Path::new(&path).exists());
     }
 }
+
+#[test]
+fn ordered_layers_and_role_defaults_reach_the_provider_boundary() {
+    let scratch = Scratch::new();
+    let boundary = scratch.0.join("oneharness");
+    let log = scratch.0.join("argv");
+    std::fs::write(&boundary, r#"#!/bin/sh
+printf '%s\n' CALL "$@" >> "$CONFIG_ARGV_LOG"
+cat >/dev/null
+printf '%s\n' '{"results":[{"status":"ok","text":"Hello confirmed","schema_valid":true,"structured":{"value":true,"reason":"passed"}}]}'
+"#).unwrap();
+    std::fs::set_permissions(&boundary, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let config = scratch.0.join("config.json");
+    std::fs::write(&config,json!({"provider":{"kind":"oneharness","bin":boundary,"judge_harness":"file-shorthand","timeout_secs":18,"judge":{"args":["--harness=file-role","--model=file-model","--timeout=29"]}},"judge_model":"file-model-shorthand"}).to_string()).unwrap();
+    let fixtures = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures");
+    for (sets, named, expected) in [
+        (
+            vec![],
+            vec![],
+            vec!["--harness=file-role", "--model=file-model", "--timeout=29"],
+        ),
+        (
+            vec![
+                "provider.judge_harness=\"set-harness\"",
+                "judge_model=\"set-model\"",
+                "provider.timeout_secs=31",
+            ],
+            vec![],
+            vec!["set-harness", "set-model", "31"],
+        ),
+        (
+            vec!["judge_model=\"earlier\"", "provider.judge={} "],
+            vec![],
+            vec!["--harness=file-role", "--model=file-model"],
+        ),
+        (
+            vec!["provider.judge=null", "provider.judge={}"],
+            vec![],
+            vec![],
+        ),
+        (
+            vec!["provider.judge.args=[\"--harness=role\",\"--model=role-model\",\"--timeout=7\"]"],
+            vec![
+                "--judge-harness",
+                "named",
+                "--judge-model",
+                "named-model",
+                "--timeout",
+                "42",
+            ],
+            vec!["named", "named-model", "42"],
+        ),
+    ] {
+        std::fs::write(&log, "").unwrap();
+        let mut command = Command::new(common::built_bin("skilltest"));
+        command
+            .arg("--config")
+            .arg(&config)
+            .arg("run")
+            .arg(fixtures.join("cases/greet_pass.yaml"))
+            .args(["--format", "json"])
+            .env("CONFIG_ARGV_LOG", &log);
+        for assignment in &sets {
+            command.args(["--set", assignment]);
+        }
+        command.args(&named);
+        let output = command.output().unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "{sets:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let text = std::fs::read_to_string(&log).unwrap();
+        let judge = text.split("CALL\n").nth(2).unwrap();
+        for value in expected {
+            assert!(judge.lines().any(|line| line == value), "{sets:?}: {judge}");
+        }
+        if sets == ["provider.judge=null", "provider.judge={}"] {
+            assert!(
+                !judge.contains("--model")
+                    && !judge.contains("--harness")
+                    && !judge.contains("--timeout"),
+                "explicit empty role uses defaults: {judge}"
+            );
+        }
+        if !named.is_empty() {
+            assert!(!judge.contains("=role") && !judge.contains("--timeout=7"));
+        }
+    }
+    // The environment is one complete layer: a role block owns same-layer defaults.
+    let output = Command::new(common::built_bin("skilltest"))
+        .arg("--config")
+        .arg(&config)
+        .arg("run")
+        .arg(fixtures.join("cases/greet_pass.yaml"))
+        .env("CONFIG_ARGV_LOG", &log)
+        .env("SKILLTEST_PROVIDER__JUDGE", "null")
+        .env("SKILLTEST_PROVIDER__JUDGE__ARGS", "[]")
+        .env("SKILLTEST_JUDGE_MODEL", "env-model")
+        .args(["--set", "judge_model=\"later-model\""])
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(std::fs::read_to_string(&log)
+        .unwrap()
+        .contains("later-model"));
+    for setting in [
+        "provider.judge.args.0=\"x\"",
+        "spy=null",
+        "max_turns=0",
+        "models=[]",
+        "judge_model=bad-json",
+        "provider.judge.args=[\"--schema=x\"]",
+        "provider.judge.args=[\"--run-mode=parallel\"]",
+        "provider.judge.args=[\"--stream\"]",
+    ] {
+        let output = Command::new(common::built_bin("skilltest"))
+            .arg("--config")
+            .arg(&config)
+            .arg("run")
+            .arg(fixtures.join("cases/greet_pass.yaml"))
+            .args(["--set", setting])
+            .output()
+            .unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "{setting}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(!output.stderr.is_empty());
+    }
+}
