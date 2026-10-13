@@ -58,6 +58,10 @@ REQUIRED_CONTEXTS = ("check (ubuntu-latest)", "check (macos-latest)", "pr-title"
 # Every live suite is an `e2e-*.yml` workflow; the set is derived from the files,
 # so a new one is held to the same routing without an edit here.
 LIVE_GLOB = "e2e-*.yml"
+# Live suites that run on every push to main but do not gate the release: each
+# fails for reasons no commit can fix (Copilot: the plan's usage limit). Every
+# other live suite still gates it.
+ADVISORY_LIVE = frozenset({"live-copilot"})  # ci.yml job ids
 GATED_PUSH_WORKFLOWS = ("ci.yml", "bundle-smoke.yml", "visual-docs.yml")
 FIX = 'fix the workflow named (AGENTS.md "Commits, releases, and merging" states the intended routing)'
 
@@ -835,10 +839,39 @@ def violations(
         bad.append(f"{feat.label}: the release (semantic-release.yml) does not run after a green sweep")
     if "semantic-release.yml" in runs:
         bad.append(f"{feat.label}: semantic-release.yml is triggered directly, not after the sweep")
-    for broken in ["ci.yml:check", *live_jobs.values()]:
+    # Which ci.yml job calls each live suite, so an advisory one is named by its job.
+    caller = {
+        sub.workflow: job_id
+        for job_id, r in runs.get("ci.yml", {}).items()
+        for sub in r.called.values()
+        if sub.workflow in lives
+    }
+    gating = [job for wf, job in live_jobs.items() if caller.get(wf) not in ADVISORY_LIVE]
+    for broken in ["ci.yml:check", *gating]:
         r = simulate(wfs, feat, frozenset({broken})).get("ci.yml", {}).get("release")
         if r is not None and r.result != Result.SKIPPED:
             bad.append(f"{feat.label}: with {broken} failing, the release still runs")
+    for advisory in sorted(ADVISORY_LIVE):
+        suite = next((wf for wf, job_id in caller.items() if job_id == advisory), None)
+        if suite is None or suite not in live_jobs:
+            bad.append(f"advisory ci.yml:{advisory} calls no live suite that runs")
+            continue
+        r = simulate(wfs, feat, frozenset({live_jobs[suite]})).get("ci.yml", {}).get("release")
+        ok = r is not None and any(
+            s.workflow == "semantic-release.yml" and s.result == Result.SUCCESS for s in r.called.values()
+        )
+        if not ok:
+            bad.append(f"{feat.label}: with advisory ci.yml:{advisory} failing, the release does not run")
+
+    # The one manual lever: a person may release main's head by hand.
+    lever = WorkflowFile("semantic-release.yml")
+    if not _ran(simulate(wfs, dispatch(lever)), lever):
+        bad.append("workflow_dispatch semantic-release.yml: the manual release lever does not run on main")
+    elsewhere = Event(
+        f"workflow_dispatch {lever} on a feature branch", "workflow_dispatch", "refs/heads/topic", dispatch=lever
+    )
+    if _ran(simulate(wfs, elsewhere), lever):
+        bad.append(f"{elsewhere.label}: the manual release lever runs off main")
 
     # The release commit: nothing gated again; the tag still fires the builds.
     rel = push_main("chore(release): 0.13.0 [bot]")
@@ -895,6 +928,20 @@ MUTATIONS: tuple[Mutation, ...] = (
         lambda d: _jobs(d, "ci.yml")["release"]["needs"].remove("live-qwen"),
     ),
     Mutation("the release not waiting on the sweep", lambda d: _jobs(d, "ci.yml")["release"]["needs"].remove("check")),
+    Mutation(
+        "the release waiting on the advisory copilot suite",
+        lambda d: _jobs(d, "ci.yml")["release"]["needs"].append("live-copilot"),
+    ),
+    Mutation(
+        "the manual release lever without its main-branch guard",
+        lambda d: _jobs(d, "semantic-release.yml")["release"].update(
+            {"if": _jobs(d, "semantic-release.yml")["release"]["if"].replace("github.ref == 'refs/heads/main' &&", "")}
+        ),
+    ),
+    Mutation(
+        "semantic-release.yml without its manual lever",
+        lambda d: d["semantic-release.yml"][True].pop("workflow_dispatch"),
+    ),
     Mutation(
         "bundle-smoke without the release-commit guard", lambda d: _jobs(d, "bundle-smoke.yml")["smoke"].pop("if")
     ),

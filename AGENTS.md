@@ -261,7 +261,15 @@ from exactly that commit.
   same Linux `check` job runs `just check all`, `ci.yml` calls every live e2e workflow
   (external contact promotes them out of the PR tier, unconditionally), and its
   `release` job calls `semantic-release.yml` only when the sweep (both OSes) and
-  every live suite succeeded. A red sweep or live suite cuts no release.
+  every gating live suite succeeded. A red sweep or gating live suite cuts no
+  release. The Copilot suite is **advisory** — it runs, but the release does not
+  wait on it, because the Copilot plan's usage limit fails it for reasons no
+  commit can fix (`ADVISORY_LIVE` in `scripts/check-workflow-routing.py`).
+- **The manual release lever.** `semantic-release.yml` also takes
+  `workflow_dispatch` on `main` (`gh workflow run semantic-release.yml --ref
+  main`): it releases main's head without waiting for that commit's sweep. It is
+  a person's decision for a commit that already passed PR CI and whose broader
+  tier failed for a reason no commit can fix — never automation's.
 - **The `chore(release): X.Y.Z` commit** differs from the swept commit only in
   version strings, so every push job in `ci.yml`, `bundle-smoke.yml` and
   `visual-docs.yml` skips it (job-level guards, not `[skip ci]`, which would also
