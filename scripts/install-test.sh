@@ -44,50 +44,53 @@ for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu aarch64-apple-d
 done
 
 # $1 = uname -s, $2 = uname -m, $3 = sysctl.proc_translated ("" = no sysctl).
-# Writes a PATH directory whose uname/sysctl report that host and whose curl
-# serves $release, logging every URL it is asked for.
+# Sets $bin to a PATH directory whose uname/sysctl report that host and whose
+# curl serves $release, logging every URL it is asked for. Called directly, not
+# in a command substitution, so a failed write stops the test.
 host() {
-  local bin="$work/host-$1-$2-${3:-none}"
+  bin="$work/host-$1-$2-${3:-none}"
   mkdir -p "$bin" || fail "could not create $bin; check that $work is writable"
-  cat >"$bin/uname" <<EOF
+  cat >"$bin/uname" <<EOF || fail "could not write the uname double into $bin; check that $work is writable"
 #!/bin/sh
 case "\$1" in -s) echo $1 ;; -m) echo $2 ;; esac
 EOF
   if [ -n "$3" ]; then
-    cat >"$bin/sysctl" <<EOF
+    cat >"$bin/sysctl" <<EOF || fail "could not write the sysctl double into $bin; check that $work is writable"
 #!/bin/sh
 [ "\$2" = sysctl.proc_translated ] && echo $3
 EOF
   else
-    printf '#!/bin/sh\nexit 1\n' >"$bin/sysctl"
+    printf '#!/bin/sh\nexit 1\n' >"$bin/sysctl" || fail "could not write the sysctl double into $bin; check that $work is writable"
   fi
-  cat >"$bin/curl" <<EOF
+  # The transport double fails the download (as curl -f does) whenever it
+  # cannot log the URL or serve the file, so no fetch goes unrecorded.
+  cat >"$bin/curl" <<EOF || fail "could not write the curl double into $bin; check that $work is writable"
 #!/bin/sh
 dest=""
 while [ "\$#" -gt 1 ]; do
   case "\$1" in -o) dest="\$2"; shift ;; esac
   shift
 done
-echo "\$1" >>"$work/fetched"
+echo "\$1" >>"$work/fetched" || exit 23
 file="$work/release/\${1#https://github.com/nickderobertis/skilltest/releases/download/}"
 [ -f "\$file" ] || exit 22
-if [ -n "\$dest" ]; then cp "\$file" "\$dest"; else cat "\$file"; fi
+if [ -n "\$dest" ]; then cp "\$file" "\$dest" || exit 23; else cat "\$file" || exit 23; fi
 EOF
   chmod +x "$bin/uname" "$bin/sysctl" "$bin/curl" || fail "could not make the host doubles in $bin executable"
-  printf '%s\n' "$bin"
 }
 
-# $1 = host PATH directory. Runs the installer into a fresh directory.
+# Runs the installer on the host host() last set up, into a fresh directory.
 install_on() {
   { : >"$work/out" && : >"$work/fetched" && rm -rf "$work/dest"; } || fail "could not reset $work; check that it is writable"
-  PATH="$1:$PATH" SKILLTEST_VERSION=v1.2.3 SKILLTEST_INSTALL_DIR="$work/dest" sh scripts/install.sh >"$work/out" 2>&1
+  PATH="$bin:$PATH" SKILLTEST_VERSION=v1.2.3 SKILLTEST_INSTALL_DIR="$work/dest" sh scripts/install.sh >"$work/out" 2>&1
 }
 
 # $1 = what the host is, $2 = the target it must install, $3.. = host().
 expect_install() {
   local what="$1" target="$2"
   shift 2
-  install_on "$(host "$@")" || fail "the installer failed on $what; fix detect_target in scripts/install.sh"
+  host "$@"
+  install_on || fail "the installer failed on $what; fix detect_target in scripts/install.sh"
   [ "$("$work/dest/skilltest")" = "skilltest 1.2.3 $target" ] ||
     fail "the installer put something other than the $target release binary in place on $what; fix the target it resolves in scripts/install.sh"
 }
@@ -97,7 +100,8 @@ expect_install "aarch64 Linux" aarch64-unknown-linux-gnu Linux aarch64 ""
 expect_install "Apple Silicon macOS" aarch64-apple-darwin Darwin arm64 0
 expect_install "a Rosetta shell on Apple Silicon macOS" aarch64-apple-darwin Darwin x86_64 1
 
-if install_on "$(host Darwin x86_64 0)"; then
+host Darwin x86_64 0
+if install_on; then
   fail "the installer succeeded on Intel macOS, which no release ships a binary for; restore its Intel macOS refusal in scripts/install.sh"
 fi
 grep -Fq "Intel macOS (x86_64) is no longer supported" "$work/out" ||
