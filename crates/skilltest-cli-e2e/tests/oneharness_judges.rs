@@ -359,6 +359,21 @@ printf '%s\n' '{"results":[{"status":"ok","text":"Hello confirmed","schema_valid
 
 #[test]
 fn fallback_reports_choose_settled_success_and_reject_multiple_verdicts() {
+    for exit in [0, 1] {
+        let (_, output) = journey(
+            json!([
+                {"status":"error","failure_kind":"model_not_found","error":"first unavailable"},
+                {"status":"error","failure_kind":"rate_limit","error":"final candidate rate limited"}
+            ]),
+            false,
+            exit,
+        );
+        assert_eq!(output.status.code(), Some(3));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("final candidate rate limited"), "{stderr}");
+        assert!(stderr.contains("retry after a backoff"), "{stderr}");
+        assert!(!stderr.contains("first unavailable"), "{stderr}");
+    }
     let (_, output) = journey(
         json!([
             {"status":"error","failure_kind":"model_not_found","error":"candidate unavailable"},
@@ -508,6 +523,47 @@ fn transport_failures_and_invalid_patch_contents_cannot_be_hidden() {
         .unwrap();
     assert_eq!(output.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&output.stderr).contains("SKILLTEST_JUDGE_MODEL"));
+}
+
+#[test]
+fn incomplete_file_variant_is_completed_by_environment_or_assignment() {
+    let scratch = Scratch::new();
+    let config = scratch.0.join("config.yaml");
+    std::fs::write(&config, "provider:\n  kind: command\n").unwrap();
+    let fixtures = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures");
+    let argv = json!([common::built_bin("skilltest-fake-provider")]).to_string();
+    for layer in ["missing", "environment", "assignment"] {
+        let mut command = Command::new(common::built_bin("skilltest"));
+        command
+            .arg("--config")
+            .arg(&config)
+            .arg("run")
+            .arg(fixtures.join("cases/greet_pass.yaml"))
+            .args(["--format", "json"])
+            .env_remove("SKILLTEST_PROVIDER__COMMAND");
+        match layer {
+            "environment" => {
+                command.env("SKILLTEST_PROVIDER__COMMAND", &argv);
+            }
+            "assignment" => {
+                command.args(["--set", &format!("provider.command={argv}")]);
+            }
+            _ => {}
+        }
+        let output = command.output().unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(if layer == "missing" { 2 } else { 0 }),
+            "{layer}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        if layer == "missing" {
+            assert!(String::from_utf8_lossy(&output.stderr).contains("command"));
+        } else {
+            let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(report["passed"], true);
+        }
+    }
 }
 
 #[test]
