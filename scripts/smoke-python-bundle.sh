@@ -51,7 +51,10 @@ if [ -n "${4:-}" ]; then
     exit 1
   }
 else
-  bash scripts/build-python-wheel.sh "$target" "$cli" "$work/dist" >/dev/null
+  bash scripts/build-python-wheel.sh "$target" "$cli" "$work/dist" >/dev/null || {
+    echo "error: wheel build failed; run scripts/build-python-wheel.sh $target $cli to reproduce" >&2
+    exit 1
+  }
 fi
 wheels=("$work"/dist/skilltest_sdk-*.whl)
 wheel="${wheels[0]}"

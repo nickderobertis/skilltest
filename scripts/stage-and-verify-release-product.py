@@ -117,14 +117,57 @@ def main() -> None:
     )
     if check_wheels:
         version = release_version()
+        expected_wheels = set()
         for platform in platforms:
             expected = (
                 Path(sys.argv[2])
                 / platform.target
                 / f"skilltest_sdk-{version}-py3-none-{platform.wheel_tag}.whl"
             )
+            expected_wheels.add(expected)
             require(expected.is_file(), f"missing staged platform wheel: {expected}")
+            asset = f"skilltest-{platform.target}" + (
+                ".zip" if "windows" in platform.target else ".tar.gz"
+            )
+            released = expected.parent / asset
+            require(released.is_file(), f"missing staged archive: {released}")
+            checksum = (expected.parent / (asset + ".sha256")).read_text()
+            require(
+                checksum == f"{digest(released.read_bytes())}  {asset}\n",
+                "staged archive checksum differs",
+            )
+            if asset.endswith(".zip"):
+                with zipfile.ZipFile(released) as packed:
+                    require(
+                        packed.namelist() == [platform.bin],
+                        "unexpected archive contents",
+                    )
+                    binary_data = packed.read(platform.bin)
+            else:
+                with tarfile.open(released) as packed:
+                    members = packed.getmembers()
+                    require(
+                        len(members) == 1
+                        and members[0].name == platform.bin
+                        and members[0].isfile(),
+                        "unexpected archive contents",
+                    )
+                    payload = packed.extractfile(members[0])
+                    require(payload is not None, "archive binary missing")
+                    if payload is None:
+                        raise ValueError("archive binary missing")
+                    binary_data = payload.read()
             with zipfile.ZipFile(expected) as archive:
+                names = archive.namelist()
+                require(len(names) == len(set(names)), "duplicate wheel member")
+                require(
+                    not any("_bin/skilltest-fake-provider" in name for name in names),
+                    "wheel contains fake provider",
+                )
+                require(
+                    archive.read(f"skilltest_sdk/_bin/{platform.bin}") == binary_data,
+                    "wheel binary differs",
+                )
                 metadata_names = [
                     name
                     for name in archive.namelist()
@@ -137,6 +180,10 @@ def main() -> None:
                     and headers.get_all("Version", []) == [version],
                     f"invalid staged wheel identity: {expected}",
                 )
+        require(
+            set(Path(sys.argv[2]).rglob("*.whl")) == expected_wheels,
+            "unexpected staged wheel",
+        )
         return
     target, binary_arg, output, package = sys.argv[1:]
     platform = next((p for p in platforms if p.target == target), None)
@@ -218,17 +265,16 @@ def main() -> None:
             manifest.cpu == ("x64" if target.startswith("x86_64") else "arm64",),
             "wrong npm architecture",
         )
-        require(
-            manifest.os
-            == (
-                "darwin"
-                if "apple" in target
-                else "win32"
-                if "windows" in target
-                else "linux",
-            ),
-            "wrong npm OS",
-        )
+        match target.split("-"):
+            case [_, "apple", "darwin"]:
+                expected_os = "darwin"
+            case [_, "pc", "windows", "msvc"]:
+                expected_os = "win32"
+            case [_, "unknown", "linux", "gnu"]:
+                expected_os = "linux"
+            case _:
+                raise ValueError("unsupported npm target")
+        require(manifest.os == (expected_os,), "wrong npm OS")
         require(
             set(t.getnames())
             == {"package/package.json", f"package/bin/{platform.bin}"},

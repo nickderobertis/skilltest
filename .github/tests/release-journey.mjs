@@ -275,6 +275,62 @@ assert.notEqual(result.status, 0);
 assert.match(result.stderr, /missing staged platform wheel/);
 assert.equal(readFileSync(wheelLog, "utf8"), "");
 writeFileSync(wheelFile, wheelBytes);
+for (const [mutation, message] of [
+  ["malformed", /BadZipFile/],
+  ["duplicate", /duplicate wheel member/],
+  ["metadata", /invalid wheel metadata/],
+  ["identity", /invalid staged wheel identity/],
+  ["payload", /wheel binary differs/],
+  ["provider", /wheel contains fake provider/],
+]) {
+  const changed = spawnSync(
+    "python3",
+    [
+      "-c",
+      `
+import sys, zipfile, io
+path, mutation = sys.argv[1:]
+if mutation == "malformed":
+    open(path, "wb").write(b"invalid zip")
+else:
+    source = zipfile.ZipFile(path)
+    entries = [(n, source.read(n)) for n in source.namelist()]
+    source.close()
+    with zipfile.ZipFile(path, "w") as out:
+        for name, data in entries:
+            if mutation == "metadata" and name.endswith(".dist-info/METADATA"):
+                continue
+            if mutation == "identity" and name.endswith(".dist-info/METADATA"):
+                data = b"Name: wrong\\nVersion: 0.0.0\\n"
+            if mutation == "payload" and "/_bin/" in name:
+                data = b"wrong binary"
+            out.writestr(name, data)
+        if mutation == "duplicate":
+            out.writestr(entries[0][0], entries[0][1])
+        if mutation == "provider":
+            out.writestr("skilltest_sdk/_bin/skilltest-fake-provider", b"fake")
+`,
+      wheelFile,
+      mutation,
+    ],
+    { encoding: "utf8" },
+  );
+  assert.equal(changed.status, 0, changed.stderr);
+  writeFileSync(wheelLog, "");
+  result = run(commands.pypi, 0, wheelLog);
+  assert.notEqual(result.status, 0, mutation);
+  assert.match(result.stderr, message);
+  assert.equal(readFileSync(wheelLog, "utf8"), "");
+  writeFileSync(wheelFile, wheelBytes);
+}
+const extraWheel = join(wheelDir, "unexpected.whl");
+writeFileSync(extraWheel, wheelBytes);
+writeFileSync(wheelLog, "");
+result = run(commands.pypi, 0, wheelLog);
+assert.notEqual(result.status, 0);
+assert.match(result.stderr, /unexpected staged wheel/);
+assert.equal(readFileSync(wheelLog, "utf8"), "");
+rmSync(extraWheel);
 // Carrier metadata and archive corruption must fail at the actual publication boundary.
 const carrierPlatform = platforms[0];
 const carrier = join(

@@ -53,7 +53,10 @@ if [ -n "${4:-}" ]; then
     exit 1
   }
 else
-  ( cd "$pkgdir" && npm pack --pack-destination "$work" >/dev/null )
+  ( cd "$pkgdir" && npm pack --pack-destination "$work" >/dev/null ) || {
+    echo "error: carrier packing failed; run npm pack in $pkgdir to reproduce" >&2
+    exit 1
+  }
 fi
 ( cd sdks/typescript && pnpm pack --pack-destination "$work" >/dev/null )
 ( cd plugins/vitest && pnpm pack --pack-destination "$work" >/dev/null )
