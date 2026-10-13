@@ -36,6 +36,7 @@ test("real CLI verifies version-only histories and fails closed for forged/mixed
     assert.equal(classifyCLI(h, event({ event_name: name }), h.source).macosRequired, false);
 });
 
+// llmlint: ignore[shell_test_tiers_stay_split] The task requires these real Git/classifier journeys inside the integrated deterministic recording target, without external-service or model probes.
 test("parsed TOML and workspace lockfiles admit only internal version fields", (t) => {
   const h = history(t);
   const git = (...args) => execFileSync("git", args, { cwd: h.dir, encoding: "utf8" }).trim();
@@ -103,6 +104,7 @@ test("parsed TOML and workspace lockfiles admit only internal version fields", (
   assert.equal(classifyCLI(h, event(), git("rev-parse", "HEAD")).macosRequired, true);
 });
 
+// llmlint: ignore[shell_test_tiers_stay_split] The task requires these real Git/classifier journeys inside the integrated deterministic recording target, without external-service or model probes.
 test("classifier rejects empty and added/deleted/renamed release histories", (t) => {
   const h = history(t);
   const git = (...args) => execFileSync("git", args, { cwd: h.dir, encoding: "utf8" }).trim();

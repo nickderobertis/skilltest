@@ -105,7 +105,9 @@ def main() -> None:
         len({p.target for p in platforms}) == len(platforms),
         "duplicate platform target",
     )
-    platform = next(p for p in platforms if p.target == target)
+    platform = next((p for p in platforms if p.target == target), None)
+    if platform is None:
+        raise ValueError(f"undeclared release target: {target}")
     require(
         platform.bin == ("skilltest.exe" if "windows" in target else "skilltest"),
         "wrong binary filename",
