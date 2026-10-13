@@ -122,6 +122,8 @@ process.exit(result.status ?? 3);
     const program = ts.createProgram([proof], {
       strict: true,
       noEmit: true,
+      // This isolated fixture checks generated override literals; the SDK's
+      // normal typecheck owns dependency declaration validation.
       skipLibCheck: true,
       target: ts.ScriptTarget.ES2022,
       module: ts.ModuleKind.NodeNext,
