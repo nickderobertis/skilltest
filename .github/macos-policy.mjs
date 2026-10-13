@@ -1,3 +1,5 @@
+// Exit codes: 0 classified (a fail-closed "Mac required" result included);
+// 1 the result could not be written; 2 invalid invocation.
 import { execFileSync } from "node:child_process";
 import { appendFileSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -118,26 +120,31 @@ export function classify(event, base, head, cwd = process.cwd()) {
     );
   }
 }
+class UsageError extends Error {}
 function mainCLI() {
   if (process.argv[2] !== "classify")
-    throw new Error("usage: macos-policy.mjs classify --event PATH --base REF --head REF");
-  const parsed = parseArgs({
-    args: process.argv.slice(3),
-    options: { event: { type: "string" }, base: { type: "string" }, head: { type: "string" } },
-    tokens: true,
-    strict: true,
-  });
+    throw new UsageError("usage: macos-policy.mjs classify --event PATH --base REF --head REF");
+  let parsed;
+  try {
+    parsed = parseArgs({
+      args: process.argv.slice(3),
+      options: { event: { type: "string" }, base: { type: "string" }, head: { type: "string" } },
+      tokens: true,
+      strict: true,
+    });
+  } catch (error) {
+    throw new UsageError(error instanceof Error ? error.message : String(error));
+  }
   const seen = new Set();
   for (const token of parsed.tokens)
     if (token.kind === "option") {
       if (seen.has(token.name))
-        throw new Error(`duplicate --${token.name}; pass one value per classifier flag`);
+        throw new UsageError(`duplicate --${token.name}; pass one value per classifier flag`);
       seen.add(token.name);
     }
   const args = parsed.values;
-  string(args.event, "--event");
-  string(args.base, "--base");
-  string(args.head, "--head");
+  for (const flag of /** @type {const} */ (["event", "base", "head"]))
+    if (typeof args[flag] !== "string") throw new UsageError(`missing --${flag}`);
   let event;
   try {
     event = JSON.parse(readFileSync(string(args.event, "--event"), "utf8"));
@@ -162,6 +169,6 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     console.error(
       `macos-policy: ${error instanceof Error ? error.message : String(error)}; pass classify --event PATH --base REF --head REF`,
     );
-    process.exitCode = 1;
+    process.exitCode = error instanceof UsageError ? 2 : 1;
   }
 }

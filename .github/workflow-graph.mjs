@@ -285,6 +285,10 @@ export function resolveRun(
       env: {},
       vars: {},
     };
+    // GitHub offers no env context to a job's if or runs-on; refuse rather
+    // than evaluate one against an empty map.
+    if (/\benv\./.test(`${job.if ?? ""} ${JSON.stringify(job["runs-on"] ?? "")}`))
+      throw new Error(`${file}:${id}: unsupported env reference in job if/runs-on`);
     let runs = truth(evaluate(job.if, ctx, outcomes));
     if (!/\b(always|failure|success|cancelled)\s*\(/.test(String(job.if ?? "")))
       runs &&= outcomes.every((o) => o === "success");
@@ -294,9 +298,12 @@ export function resolveRun(
       const step = (job.steps ?? []).find((candidate) => candidate.run);
       if (step?.run !== "node .github/required-result.mjs")
         throw new Error("unresolved required result command");
-      // The carrier reads only what its workflow step wires into env.
+      // The carrier reads only what its workflow, job and step wire into env,
+      // with the step's own values winning as on a runner.
+      const jobEnv = stepEnv({ env: { ...wf.env, ...job.env } }, ctx);
+      ctx.env = jobEnv;
       const outcome = spawnSync("bash", ["-c", step.run], {
-        env: { ...process.env, ...stepEnv(step, ctx) },
+        env: { ...process.env, ...jobEnv, ...stepEnv(step, ctx) },
         encoding: "utf8",
       });
       result = outcome.status === 0 ? "success" : "failure";

@@ -1,4 +1,8 @@
-"""Parse release TOML and normalize only this workspace's version fields."""
+"""Parse release TOML and normalize only this workspace's version fields.
+
+Exit codes: 0 normalized; 1 the manifest is not an admitted release manifest;
+2 invalid invocation.
+"""
 
 import json
 import re
@@ -43,7 +47,11 @@ def erase(obj: dict) -> None:
 
 def main() -> None:
     if len(sys.argv) != 2:
-        raise ValueError("pass exactly one admitted TOML path")
+        print(
+            "semantic-version-diff: usage: semantic-version-diff.py <admitted TOML path> < manifest",
+            file=sys.stderr,
+        )
+        sys.exit(2)
     path = sys.argv[1]
     doc = table(tomllib.loads(sys.stdin.read()), "document")
     match path:

@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import test from "node:test";
 import YAML from "yaml";
 import { join, resolve } from "node:path";
@@ -930,6 +939,7 @@ test("workflow decoder rejects unsupported step controls and policy output drift
   );
 });
 
+// llmlint: ignore[shell_test_tiers_stay_split] resolveRun reads the capture matrix through the real screencomp reader the reusable workflow runs, as the task requires of dynamic reusable outputs; it is deterministic and reaches no network, service or model.
 test("a caller's arches input drives the reusable capture matrix and its runners", () => {
   const e = scenario("pr-synchronize", "pull_request", "synchronize", "source", "same-repository");
   const overridden = structuredClone(graph);
@@ -945,6 +955,132 @@ test("a caller's arches input drives the reusable capture matrix and its runners
   ]);
   // Without the input the matrix is read from screencomp.toml through the real reader.
   assert.deepEqual(captures(graph), ["capture (x86_64)@ubuntu-latest"]);
+});
+
+// llmlint: ignore[shell_test_tiers_stay_split] The carrier runs as its real result-handling subprocess, the boundary the task requires its outcomes be driven through; no network, service or model is reached.
+test("workflow and job env reach the carrier; job conditions cannot read env", () => {
+  assert.equal(graph["e2e-claude.yml"].env?.CARGO_TERM_COLOR, "always");
+  const reusable = Object.keys(graph).find((f) => f.startsWith("nickderobertis/screencomp/"));
+  assert.match(graph[reusable].jobs.capture.env?.SHOTS_OUT ?? "", /matrix\.arch/);
+  const e = scenario("pr-synchronize", "pull_request", "synchronize", "source", "same-repository");
+  const carrier = (g) =>
+    resolveRun(g, "ci.yml", e, { macosRequired: true }).results["mac-result"].result;
+  assert.equal(carrier(graph), "success");
+  // The same variable supplied at job level still reaches the command...
+  const lifted = structuredClone(graph);
+  const job = lifted["ci.yml"].jobs["mac-result"];
+  const step = job.steps.find((s) => s.run);
+  const { MACOS_REQUIRED, ...rest } = step.env;
+  job.env = { MACOS_REQUIRED };
+  step.env = rest;
+  assert.equal(carrier(lifted), "success");
+  // ...and without it anywhere the carrier refuses to claim the Mac lane ran.
+  job.env = undefined;
+  assert.equal(carrier(lifted), "failure");
+  const conditioned = structuredClone(graph);
+  conditioned["ci.yml"].jobs["mac-check"].if = "env.FORCE == 'true'";
+  assert.throws(
+    () => resolveRun(conditioned, "ci.yml", e, { macosRequired: true }),
+    /unsupported env reference/,
+  );
+});
+
+// llmlint: ignore[shell_test_tiers_stay_split] The classify step's own command runs against a generated Git history, the real boundary its routing depends on; no network, service or model is reached.
+test("ci.yml's classify step, as wired, classifies the PR's own base and head", (t) => {
+  const h = history(t);
+  // The checkout's own .github, as the runner sees it; only the installed
+  // tooling packages are linked rather than copied.
+  cpSync(".github", join(h.dir, ".github"), {
+    recursive: true,
+    filter: (src) => !/[/\\](node_modules|\.telemetry|\.tools)$/.test(src),
+  });
+  symlinkSync(resolve(".github/node_modules"), join(h.dir, ".github", "node_modules"));
+  const step = graph["ci.yml"].jobs.policy.steps.find((s) => s.id === "classify");
+  assert.ok(step?.run);
+  for (const [head, releaseOnly] of [
+    [h.release, true],
+    [h.source, false],
+  ]) {
+    const payload = event();
+    payload.pull_request.base.sha = h.base;
+    payload.pull_request.head.sha = head;
+    const eventFile = join(h.dir, ".git", "classify-event.json");
+    const outputFile = join(h.dir, ".git", "classify-output");
+    writeFileSync(eventFile, JSON.stringify(payload));
+    writeFileSync(outputFile, "");
+    const result = spawnSync("bash", ["-c", step.run], {
+      cwd: h.dir,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        ...stepEnv(step, { github: { event: payload } }),
+        GITHUB_EVENT_PATH: eventFile,
+        GITHUB_EVENT_NAME: "pull_request",
+        GITHUB_OUTPUT: outputFile,
+      },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(JSON.parse(result.stdout).isReleaseOnly, releaseOnly);
+    assert.match(readFileSync(outputFile, "utf8"), new RegExp(`macosRequired=${!releaseOnly}`));
+  }
+});
+
+// llmlint: ignore[shell_test_tiers_stay_split] Each tool's exit status is its CLI contract, observable only by running it; no network, service or model is reached.
+test("release and policy tools exit 2 for invalid invocation and 1 for failures", () => {
+  const status = (command, args, input, env = {}) =>
+    spawnSync(command, args, { encoding: "utf8", input, env: { ...process.env, ...env } }).status;
+  const sha = "a".repeat(40);
+  for (const [usage, failure] of [
+    [
+      [process.execPath, [".github/macos-policy.mjs", "classify", "--event"]],
+      // An unreadable event still classifies (fail closed); only an unwritable
+      // result is a failure.
+      [
+        process.execPath,
+        [
+          ".github/macos-policy.mjs",
+          "classify",
+          "--event",
+          "missing.json",
+          "--base",
+          "x",
+          "--head",
+          "y",
+        ],
+        undefined,
+        { GITHUB_OUTPUT: ".github" },
+      ],
+    ],
+    [
+      [process.execPath, [".github/macos-budget.mjs", "--metric", "unknown", "--telemetry", "x"]],
+      [
+        process.execPath,
+        [".github/macos-budget.mjs", "--metric", "jobs-per-run", "--telemetry", "missing.json"],
+      ],
+    ],
+    [
+      ["python3", [".github/semantic-version-diff.py"]],
+      ["python3", [".github/semantic-version-diff.py", "Cargo.toml"], "not = [toml"],
+    ],
+    [
+      ["python3", ["scripts/stage-and-verify-release-product.py"]],
+      [
+        "python3",
+        ["scripts/stage-and-verify-release-product.py", "--check-wheels", "missing-products"],
+      ],
+    ],
+    [
+      ["bash", ["scripts/check-release-identity.sh", "v1.2.3"]],
+      ["bash", ["scripts/check-release-identity.sh", "v1.2.3", "1.2.4", sha, sha]],
+    ],
+    [
+      ["bash", ["scripts/verify-staged-archives.sh", "missing-products"]],
+      ["bash", ["scripts/verify-staged-archives.sh", ".github", "1.2.3"]],
+    ],
+  ]) {
+    assert.equal(status(...usage), 2, usage.flat().join(" "));
+    assert.equal(status(...failure), 1, failure.flat().join(" "));
+  }
 });
 
 test("production screencomp reader matches the installer and locked reusable version", () => {

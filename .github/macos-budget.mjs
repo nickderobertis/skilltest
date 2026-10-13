@@ -1,3 +1,4 @@
+// Exit codes: 0 reported; 1 missing, stale or malformed telemetry; 2 invalid invocation.
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
@@ -5,14 +6,29 @@ import { report } from "@onebudgetspec/sdk";
 import { string, telemetry as validateTelemetry } from "./validation.mjs";
 import { loadGraph, reconcileTelemetry, sourceDigest } from "./workflow-graph.mjs";
 process.chdir(fileURLToPath(new URL("../", import.meta.url)));
+const usage = "usage: macos-budget.mjs --metric jobs-per-run|runs-per-change --telemetry PATH";
+/** @type {{metric: string, path: string}} */
+let invocation;
 try {
   const args = parseArgs({
     options: { metric: { type: "string" }, telemetry: { type: "string" } },
     strict: true,
   }).values;
-  const metric = string(args.metric, "--metric");
+  if (!["jobs-per-run", "runs-per-change"].includes(args.metric ?? "") || !args.telemetry)
+    throw new Error("pass a known --metric and a --telemetry path");
+  invocation = {
+    metric: string(args.metric, "--metric"),
+    path: string(args.telemetry, "--telemetry"),
+  };
+} catch (error) {
+  console.error(
+    `macos-budget: ${error instanceof Error ? error.message : String(error)}; ${usage}`,
+  );
+  process.exit(2);
+}
+try {
+  const { metric, path } = invocation;
   // A path passed from budgets.yaml is relative to .github; the public command uses the root.
-  const path = string(args.telemetry, "--telemetry");
   const telemetry = validateTelemetry(
     JSON.parse(readFileSync(path.startsWith(".telemetry/") ? `.github/${path}` : path, "utf8")),
   );

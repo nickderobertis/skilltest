@@ -1,4 +1,8 @@
-"""Stage an archive and verify all package identities and binary payloads."""
+"""Stage an archive and verify all package identities and binary payloads.
+
+Exit codes: 0 verified; 1 a product, package or payload failed verification;
+2 invalid invocation.
+"""
 
 from dataclasses import asdict, dataclass
 from email.parser import Parser
@@ -242,11 +246,13 @@ def check_carriers(platforms: list[Platform], products: Path) -> None:
 def main() -> None:
     check_wheels = len(sys.argv) == 3 and sys.argv[1] == "--check-wheels"
     carriers = len(sys.argv) == 3 and sys.argv[1] == "--check-carriers"
-    require(
-        check_wheels or carriers or len(sys.argv) == 5,
-        "usage: <target> <binary> <output-dir> <npm-package-dir>, "
-        "--check-wheels <products-dir> or --check-carriers <products-dir>",
-    )
+    if not (check_wheels or carriers or len(sys.argv) == 5):
+        print(
+            "release product: usage: <target> <binary> <output-dir> <npm-package-dir>, "
+            "--check-wheels <products-dir> or --check-carriers <products-dir>",
+            file=sys.stderr,
+        )
+        sys.exit(2)
     records = tomllib.loads(Path("release-platforms.toml").read_text()).get("platform")
     if not isinstance(records, list):
         raise ValueError("release platforms must be an array")

@@ -1,10 +1,10 @@
 export type Result = "success" | "failure" | "cancelled" | "skipped";
 export interface Outcome { result: Result; outputs: Record<string,string>; }
 export interface Step { id?: string; run?: string; uses?: string; with?: Record<string,unknown>; if?: string|boolean; env?: Record<string,unknown>; }
-export interface Job { name?: string; if?: string|boolean; needs?: string|string[]; uses?: string; "runs-on"?: string|string[]; strategy?: {matrix?:Record<string,unknown>}; steps?: Step[]; with?:Record<string,unknown>; outputs?:Record<string,string>; }
+export interface Job { name?: string; if?: string|boolean; needs?: string|string[]; uses?: string; "runs-on"?: string|string[]; strategy?: {matrix?:Record<string,unknown>}; steps?: Step[]; with?:Record<string,unknown>; env?:Record<string,string>; outputs?:Record<string,string>; }
 export interface Input {default?:unknown;}
 export interface Trigger {branches?:string[];tags?:string[];types?:string[];paths?:string[];workflows?:string[];inputs?:Record<string,Input>;}
-export interface Workflow {on:Record<string,Trigger|null>;jobs:Record<string,Job>;}
+export interface Workflow {on:Record<string,Trigger|null>;env?:Record<string,string>;jobs:Record<string,Job>;}
 export type Graph = Record<string,Workflow>;
 export interface Scenario {event_name:string; ref:string; label?:string;action?:string;changed:string[];inputs?:Record<string,unknown>;sender?:{login?:string};repository?:{full_name:string};head_commit?:{message:string};pull_request?:{title?:string;head?:{ref?:string;repo?:{full_name?:string}};base?:{ref?:string}};workflow_run?:{name?:string;head_branch?:string;head_sha?:string;head_repository?:{full_name?:string};conclusion?:string;event?:string;id?:number};}
 export interface Classification {isReleaseOnly?:boolean;macosRequired:boolean;reason?:string;}

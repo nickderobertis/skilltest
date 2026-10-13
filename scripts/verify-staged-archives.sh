@@ -10,7 +10,9 @@
 #   --list-assets prints the verified archive and checksum paths, one per line,
 #   instead of the summary, for release.yml to upload exactly that set.
 #
-# Quiet on success, one line (or the asset list).
+# Quiet on success, one line (or the asset list). Exit codes: 0 verified;
+# 1 a declared archive is missing or bad, or an undeclared asset is staged;
+# 2 invalid invocation.
 set -euo pipefail
 
 err() {
@@ -19,7 +21,10 @@ err() {
 }
 
 usage="usage: verify-staged-archives.sh <products-dir> <version> [--list-assets]; pass the downloaded release-products directory and the release version X.Y.Z"
-{ [ "$#" -eq 2 ] || { [ "$#" -eq 3 ] && [ "$3" = --list-assets ]; }; } && [ -d "$1" ] || err "$usage"
+{ [ "$#" -eq 2 ] || { [ "$#" -eq 3 ] && [ "$3" = --list-assets ]; }; } && [ -d "$1" ] || {
+  echo "verify-staged-archives: $usage" >&2
+  exit 2
+}
 products="${1%/}" version="$2"
 here="$(dirname "$0")" || err "could not resolve this script's directory from $0; run it as bash scripts/verify-staged-archives.sh from the repository root"
 

@@ -195,12 +195,13 @@ export function workflow(value) {
       strategy,
       steps,
       with: optionalObject(job.with, "job.with"),
+      env: job.env === undefined ? undefined : stringMap(job.env, "job.env"),
       outputs: job.outputs === undefined ? undefined : stringMap(job.outputs, "outputs"),
     };
   }
   // Returning constructed records lets strict tsc check the decoder against the
   // model definitions; no unchecked deserialization assertion bridges them.
-  return { on: triggers, jobs };
+  return { on: triggers, env: doc.env === undefined ? undefined : stringMap(doc.env, "env"), jobs };
 }
 /** @param {unknown} value @returns {import('./models.js').Telemetry} */
 export function telemetry(value) {
