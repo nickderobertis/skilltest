@@ -696,7 +696,9 @@ mod surface_tests {
                 )
                 .env(
                     format!("SKILLTEST_{}", leaf.path.replace('.', "__").to_uppercase()),
-                    leaf.value.to_string(),
+                    leaf.value
+                        .as_str()
+                        .map_or_else(|| leaf.value.to_string(), str::to_owned),
                 )
                 .output()
                 .unwrap();

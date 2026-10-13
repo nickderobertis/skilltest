@@ -247,6 +247,31 @@ printf '%s\n' '{"results":[{"status":"ok","text":"Hello confirmed","schema_valid
         }
     }
     // The environment is one complete layer: a role block owns same-layer defaults.
+    std::fs::write(&log, "").unwrap();
+    let output = Command::new(common::built_bin("skilltest"))
+        .arg("--config")
+        .arg(&config)
+        .arg("run")
+        .arg(fixtures.join("cases/greet_pass.yaml"))
+        .env("CONFIG_ARGV_LOG", &log)
+        .env("SKILLTEST_PROVIDER__JUDGE", "null")
+        .env("SKILLTEST_PROVIDER__JUDGE__ARGS", "[]")
+        .env("SKILLTEST_JUDGE_MODEL", "env-model")
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let observations = std::fs::read_to_string(&log).unwrap();
+    let judge = observations.split("CALL\n").nth(2).unwrap();
+    assert!(
+        !judge.contains("--model") && !judge.contains("env-model"),
+        "{judge}"
+    );
+    // A later ordered assignment overrides that environment role.
     let output = Command::new(common::built_bin("skilltest"))
         .arg("--config")
         .arg(&config)
