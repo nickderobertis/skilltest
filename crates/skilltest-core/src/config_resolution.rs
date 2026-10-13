@@ -483,13 +483,13 @@ pub fn validate_role_args(setting: &str, args: &[String]) -> Result<()> {
                 | "--print-command"
         );
         if incompatible {
-            return Err(Error::Invalid(format!("{setting} setting `{flag}` is incompatible with a single buffered skilltest verdict")));
+            return Err(Error::Invalid(format!("config setting `{setting}`: `{flag}` is incompatible with a single buffered skilltest verdict")));
         }
         if flag == "--run-mode" {
             let mode = inline.or_else(|| tokens.next().map(String::as_str));
             if mode != Some("fallback") {
                 return Err(Error::Invalid(format!(
-                    "{setting} setting `--run-mode` must be fallback for a single verdict"
+                    "config setting `{setting}`: `--run-mode` must be fallback for a single verdict"
                 )));
             }
         } else if token.starts_with("--")
