@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { appendFileSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { isDeepStrictEqual } from "node:util";
+import { isDeepStrictEqual, parseArgs } from "node:util";
 import YAML from "yaml";
 import { object, string } from "./validation.mjs";
 
@@ -41,7 +41,14 @@ function semantic(path, content) {
     doc.version = "<version>";
     return doc;
   }
-  if (path === "pnpm-lock.yaml") return YAML.parse(content);
+  if (path === "pnpm-lock.yaml") {
+    const lock = object(YAML.parse(content), "pnpm lock");
+    if (lock.lockfileVersion !== "9.0") throw new Error("unsupported pnpm lockfile version");
+    object(lock.importers, "pnpm importers");
+    if (lock.packages !== undefined) object(lock.packages, "pnpm packages");
+    if (lock.snapshots !== undefined) object(lock.snapshots, "pnpm snapshots");
+    return lock;
+  }
   throw new Error(`non-release file ${path}`);
 }
 /** @param {unknown} event @param {string|undefined} base @param {string|undefined} head @param {string} cwd @returns {import('./models.js').Classification} */
@@ -50,11 +57,22 @@ export function classify(event, base, head, cwd = process.cwd()) {
   const eventDoc =
     event && typeof event === "object" && !Array.isArray(event) ? object(event, "event") : {};
   const name = eventDoc.event_name;
-  if (typeof name === "string" && name !== "pull_request")
+  const knownEvents = new Set([
+    "push",
+    "pull_request",
+    "pull_request_target",
+    "workflow_dispatch",
+    "workflow_run",
+    "repository_dispatch",
+    "schedule",
+    "release",
+  ]);
+  if (typeof name === "string" && knownEvents.has(name) && name !== "pull_request")
     return { isReleaseOnly: false, macosRequired: false, reason: `${name}: no automatic Mac lane` };
   /** @param {string} reason */
   const required = (reason) => ({ isReleaseOnly: false, macosRequired: true, reason });
   try {
+    if (name !== "pull_request") return required("unknown event metadata; PR coverage required");
     const pr = object(eventDoc.pull_request, "pull_request");
     const repository = object(eventDoc.repository, "repository");
     const prHead = object(pr.head, "PR head");
@@ -97,27 +115,50 @@ export function classify(event, base, head, cwd = process.cwd()) {
     );
   }
 }
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+function mainCLI() {
   if (process.argv[2] !== "classify")
     throw new Error("usage: macos-policy.mjs classify --event PATH --base REF --head REF");
-  const args = Object.fromEntries(
-    Array.from({ length: (process.argv.length - 3) / 2 }, (_, i) =>
-      process.argv.slice(3 + i * 2, 5 + i * 2),
-    ),
-  );
+  const parsed = parseArgs({
+    args: process.argv.slice(3),
+    options: { event: { type: "string" }, base: { type: "string" }, head: { type: "string" } },
+    tokens: true,
+    strict: true,
+  });
+  const seen = new Set();
+  for (const token of parsed.tokens)
+    if (token.kind === "option") {
+      if (seen.has(token.name))
+        throw new Error(`duplicate --${token.name}; pass one value per classifier flag`);
+      seen.add(token.name);
+    }
+  const args = parsed.values;
+  string(args.event, "--event");
+  string(args.base, "--base");
+  string(args.head, "--head");
   let event;
   try {
-    event = JSON.parse(readFileSync(args["--event"], "utf8"));
+    event = JSON.parse(readFileSync(string(args.event, "--event"), "utf8"));
   } catch {
     event = { event_name: process.env.GITHUB_EVENT_NAME };
   }
   if (!event || Array.isArray(event) || typeof event !== "object") event = {};
   event.event_name ??= process.env.GITHUB_EVENT_NAME;
-  const result = classify(event, args["--base"], args["--head"]);
+  const result = classify(event, args.base, args.head);
   console.log(JSON.stringify(result));
   if (process.env.GITHUB_OUTPUT)
     appendFileSync(
       process.env.GITHUB_OUTPUT,
       `macosRequired=${result.macosRequired}\nisReleaseOnly=${result.isReleaseOnly}\n`,
     );
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  try {
+    mainCLI();
+  } catch (error) {
+    console.error(
+      `macos-policy: ${error instanceof Error ? error.message : String(error)}; pass classify --event PATH --base REF --head REF`,
+    );
+    process.exitCode = 1;
+  }
 }

@@ -502,11 +502,13 @@ matrix_fix="write one '- { target: <triple>, os: <runner>, bin: <file> }' row pe
 rows="$(matrix_rows "$workflow" binaries)" || exit 1
 # Darwin targets share one sequential job; these are real upload artifact names,
 # checked together with its build loop by github-workflows:test.
+darwin_runner="$(job_body darwin | sed -n 's/^ *runs-on: *\([^ ]*\)$/\1/p')"
+[ -n "$darwin_runner" ] || fail "$workflow has no literal Darwin runner; name the declared runner in its consolidated job"
 darwin_targets="$(job_body darwin | sed -n 's/^ *name: skilltest-\([^ ]*apple-darwin\)$/\1/p')"
 while read -r target; do
   [ -n "$target" ] || continue
   rows="${rows}
-${target}\tmacos-14\tskilltest"
+${target}\t${darwin_runner}\tskilltest"
 done <<<"$darwin_targets"
 rows="$(printf '%b\n' "$rows")"
 compare_platforms "$workflow's binaries matrix" "$declared_builds" "$rows" "$matrix_fix"

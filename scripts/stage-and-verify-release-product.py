@@ -1,6 +1,7 @@
 """Stage an archive and verify all package identities and binary payloads."""
 
 from dataclasses import asdict, dataclass
+from email.parser import Parser
 import hashlib
 import json
 from pathlib import Path
@@ -17,6 +18,18 @@ VERSION = re.compile(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
 def require(condition: bool, reason: str) -> None:
     if not condition:
         raise ValueError(reason)
+
+
+def text(value: object, where: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{where} must be a nonempty string")
+    return value
+
+
+def string_array(value: object, where: str) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        raise ValueError(f"{where} must be an array")
+    return tuple(text(item, where) for item in value)
 
 
 @dataclass(frozen=True)
@@ -39,7 +52,7 @@ class Platform:
             all(isinstance(v, str) and v for v in values), "missing platform fields"
         )
         require(set(raw) == set(names), "unexpected platform fields")
-        return cls(**dict(zip(names, values, strict=True)))
+        return cls(**{key: text(raw.get(key), key) for key in names})
 
 
 @dataclass(frozen=True)
@@ -53,22 +66,14 @@ class NpmIdentity:
     def parse(cls, raw: object) -> "NpmIdentity":
         if not isinstance(raw, dict):
             raise ValueError("npm manifest must be an object")
-        name, version, cpu, os = (raw.get(k) for k in ("name", "version", "cpu", "os"))
-        require(
-            isinstance(name, str) and name.startswith("@skill-test/cli-"),
-            "invalid npm name",
-        )
-        require(
-            isinstance(version, str) and bool(VERSION.fullmatch(version)),
-            "invalid npm version",
-        )
-        require(
-            isinstance(cpu, list) and cpu in (["x64"], ["arm64"]), "invalid npm CPU"
-        )
-        require(
-            isinstance(os, list) and os in (["linux"], ["darwin"], ["win32"]),
-            "invalid npm OS",
-        )
+        name = text(raw.get("name"), "npm name")
+        version = text(raw.get("version"), "npm version")
+        cpu = string_array(raw.get("cpu"), "npm CPU")
+        os = string_array(raw.get("os"), "npm OS")
+        require(name.startswith("@skill-test/cli-"), "invalid npm name")
+        require(bool(VERSION.fullmatch(version)), "invalid npm version")
+        require(cpu in (("x64",), ("arm64",)), "invalid npm CPU")
+        require(os in (("linux",), ("darwin",), ("win32",)), "invalid npm OS")
         return cls(name, version, tuple(cpu), tuple(os))
 
 
@@ -93,7 +98,8 @@ def main() -> None:
     )
     target, binary_arg, output, package = sys.argv[1:]
     records = tomllib.loads(Path("release-platforms.toml").read_text()).get("platform")
-    require(isinstance(records, list), "release platforms must be an array")
+    if not isinstance(records, list):
+        raise ValueError("release platforms must be an array")
     platforms = [Platform.parse(raw) for raw in records]
     require(
         len({p.target for p in platforms}) == len(platforms),
@@ -110,29 +116,32 @@ def main() -> None:
         binary.is_file() and not binary.is_symlink(), "binary must be a regular file"
     )
     data = binary.read_bytes()
-    if "apple" in target:
-        cpu = struct.unpack("<I", data[4:8])[0]
-        require(
-            data[:4] == b"\xcf\xfa\xed\xfe"
-            and cpu == (0x01000007 if target.startswith("x86_64") else 0x0100000C),
-            "wrong Mach-O architecture",
-        )
-    elif "linux" in target:
-        require(
-            data[:4] == b"\x7fELF"
-            and struct.unpack("<H", data[18:20])[0]
-            == (62 if target.startswith("x86_64") else 183),
-            "wrong ELF architecture",
-        )
-    else:
-        offset = struct.unpack("<I", data[60:64])[0]
-        require(
-            data[:2] == b"MZ"
-            and data[offset : offset + 4] == b"PE\0\0"
-            and struct.unpack("<H", data[offset + 4 : offset + 6])[0]
-            == (0x8664 if target.startswith("x86_64") else 0xAA64),
-            "wrong PE architecture",
-        )
+    match target.split("-"):
+        case [arch, "apple", "darwin"] if arch in ("x86_64", "aarch64"):
+            cpu = struct.unpack("<I", data[4:8])[0]
+            require(
+                data[:4] == b"\xcf\xfa\xed\xfe"
+                and cpu == (0x01000007 if target.startswith("x86_64") else 0x0100000C),
+                "wrong Mach-O architecture",
+            )
+        case [arch, "unknown", "linux", "gnu"] if arch in ("x86_64", "aarch64"):
+            require(
+                data[:4] == b"\x7fELF"
+                and struct.unpack("<H", data[18:20])[0]
+                == (62 if target.startswith("x86_64") else 183),
+                "wrong ELF architecture",
+            )
+        case [arch, "pc", "windows", "msvc"] if arch in ("x86_64", "aarch64"):
+            offset = struct.unpack("<I", data[60:64])[0]
+            require(
+                data[:2] == b"MZ"
+                and data[offset : offset + 4] == b"PE\0\0"
+                and struct.unpack("<H", data[offset + 4 : offset + 6])[0]
+                == (0x8664 if target.startswith("x86_64") else 0xAA64),
+                "wrong PE architecture",
+            )
+        case _:
+            raise ValueError("unsupported declared binary target")
     out = Path(output)
     version = tomllib.loads(Path("Cargo.toml").read_text())["workspace"]["package"][
         "version"
@@ -150,17 +159,19 @@ def main() -> None:
             "wheel contains fake provider",
         )
         (metadata,) = [n for n in z.namelist() if n.endswith(".dist-info/METADATA")]
-        require(
-            f"Version: {version}\n" in z.read(metadata).decode(), "wrong wheel version"
-        )
+        headers = Parser().parsestr(z.read(metadata).decode())
+        require(headers.get_all("Version", []) == [version], "wrong wheel version")
+
     (packed,) = out.glob("skill-test-cli-*.tgz")
     with tarfile.open(packed) as t:
         payload = t.extractfile(f"package/bin/{platform.bin}")
-        require(payload is not None, "npm binary missing")
+        if payload is None:
+            raise ValueError("npm binary missing")
         npm_data = payload.read()
         require(npm_data == data, "npm binary differs")
         manifest_stream = t.extractfile("package/package.json")
-        require(manifest_stream is not None, "npm manifest missing")
+        if manifest_stream is None:
+            raise ValueError("npm manifest missing")
         manifest = NpmIdentity.parse(json.load(manifest_stream))
         source = NpmIdentity.parse(
             json.loads((Path(package) / "package.json").read_text())
@@ -201,7 +212,10 @@ def main() -> None:
         with tarfile.open(archive, "w:gz") as t:
             t.add(binary, arcname=platform.bin, recursive=False)
         with tarfile.open(archive) as t:
-            archive_data = t.extractfile(platform.bin).read()
+            archived_binary = t.extractfile(platform.bin)
+            if archived_binary is None:
+                raise ValueError("archive binary missing")
+            archive_data = archived_binary.read()
     require(archive_data == data, "archive binary differs")
     (out / (asset + ".sha256")).write_text(f"{digest(archive.read_bytes())}  {asset}\n")
     evidence = PayloadEvidence(
@@ -231,6 +245,8 @@ if __name__ == "__main__":
         OSError,
         struct.error,
         TypeError,
+        zipfile.BadZipFile,
+        tarfile.TarError,
     ) as error:
         sys.exit(
             f"release product: {error}; rebuild the declared target and restage its products"

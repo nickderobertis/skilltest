@@ -139,8 +139,8 @@ expect_red "the binary does not run" "skilltest from skilltest-x86_64-unknown-li
   "$work/x86_64-unknown-linux-gnu" x86_64-unknown-linux-gnu skilltest 1.2.3
 
 verify "$work/x86_64-unknown-linux-gnu" x86_64-unknown-linux-gnu skilltest 1.2.3 --contents-only ||
-  fail "contents-only verification executed the deliberately failing foreign binary"
-grep -Fq 'binary not executed' "$work/out" || fail "contents-only verification claimed execution"
+  fail "contents-only verification executed the deliberately failing foreign binary; restore the contents-only early return in verify-release-archive.sh"
+grep -Fq 'binary not executed' "$work/out" || fail "contents-only verification claimed execution; restore the verifier's binary-not-executed diagnostic"
 
 expect_red "the binary name escapes the archive" "bin '../skilltest' is neither skilltest nor skilltest.exe" \
   "$work/x86_64-unknown-linux-gnu" x86_64-unknown-linux-gnu ../skilltest 1.2.3

@@ -1,7 +1,13 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import YAML from "yaml";
-import { observation as validateObservation, workflow as validateWorkflow } from "./validation.mjs";
+import {
+  array,
+  object,
+  string,
+  observation as validateObservation,
+  workflow as validateWorkflow,
+} from "./validation.mjs";
 import { loadGraph, scenarioRuns } from "./workflow-graph.mjs";
 const base = process.argv[2] ?? "origin/main";
 const after = loadGraph();
@@ -89,16 +95,27 @@ console.log(
 console.log(
   "Retained release platforms and forms (read from release-platforms.toml):\n\n| Target | Archive | Python wheel platform | npm carrier |\n| --- | --- | --- | --- |",
 );
-const platforms = JSON.parse(
-  execFileSync(
-    "python3",
-    [
-      "-c",
-      "import json,tomllib;print(json.dumps(tomllib.load(open('release-platforms.toml','rb'))['platform']))",
-    ],
-    { encoding: "utf8" },
+const platforms = array(
+  JSON.parse(
+    execFileSync(
+      "python3",
+      [
+        "-c",
+        "import json,tomllib;print(json.dumps(tomllib.load(open('release-platforms.toml','rb'))['platform']))",
+      ],
+      { encoding: "utf8" },
+    ),
   ),
-);
+  "platforms",
+).map((raw) => {
+  const platform = object(raw, "release platform");
+  return {
+    target: string(platform.target, "target"),
+    bin: string(platform.bin, "bin"),
+    wheel_tag: string(platform.wheel_tag, "wheel_tag"),
+    npm_package: string(platform.npm_package, "npm_package"),
+  };
+});
 for (const p of platforms)
   console.log(
     `| ${p.target} | skilltest-${p.target}.${p.bin.endsWith(".exe") ? "zip" : "tar.gz"} + sha256 | ${p.wheel_tag} | ${p.npm_package} |`,
@@ -113,7 +130,7 @@ console.log(
   "The budgets_track_product_owner_outcomes ignore marker was omitted because that rule is not configured in this repository. Both budget descriptions carry the manager-approved separate scheduling-constraints exception; the jobs/run description also records its inner_measure_reason. llmlint configuration and plugins are unchanged.\n",
 );
 console.log(
-  "Scoped lint exceptions: the two upstream comment annotations in .github/tests/fixtures/screencomp-v0.4.2.yml preserve immutable upstream bytes, verified after removal of exactly those annotations. github-workflows:test carries shell_test_tiers_stay_split because its recording contract requires the deterministic real Git/classifier/carrier boundaries in the integrated graph suite. The standing agents_md_durable_and_terse block in AGENTS.md still covers its composition audit; the changed Mac-proof location remains part of that audit. No lint configuration or plugins changed.\n",
+  "Scoped lint exceptions: the four upstream comment annotations in .github/tests/fixtures/screencomp-v0.4.2.yml preserve immutable upstream bytes, verified after removal of exactly those annotations. github-workflows:test carries shell_test_tiers_stay_split because its recording contract requires the deterministic real Git/classifier/carrier boundaries in the integrated graph suite. release-packaging:packaging carries new_projects_keep_the_graph_uniform because native builder journeys stay behind the explicit release edge, with ordinary cheap lint/format targets retained. The standing agents_md_durable_and_terse block in AGENTS.md still covers its composition audit; the changed Mac-proof location remains part of that audit. No lint configuration or plugins changed.\n",
 );
 if (process.argv[3]) {
   const observed = validateObservation(JSON.parse(readFileSync(process.argv[3], "utf8")));

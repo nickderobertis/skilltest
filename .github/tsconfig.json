@@ -8,8 +8,12 @@
     "checkJs": true,
     "noEmit": true,
     "skipLibCheck": true,
-    "types": ["node"],
-    "typeRoots": ["../sdks/typescript/node_modules/@types"]
+    "types": [
+      "node"
+    ]
   },
-  "include": ["*.mjs", "*.d.ts"]
+  "include": [
+    "*.mjs",
+    "*.d.ts"
+  ]
 }

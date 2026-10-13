@@ -8,14 +8,38 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
 import YAML from "yaml";
+import { evaluate } from "../workflow-graph.mjs";
 const root = process.cwd();
+if (process.argv.length !== 4 || !process.argv[2] || !process.argv[3])
+  throw new Error(
+    "usage: release-journey.mjs <existing-builder-scratch-dir> <declared-native-target>",
+  );
 const work = resolve(process.argv[2]);
 const native = process.argv[3];
+if (
+  !statSync(work).isDirectory() ||
+  !statSync(join(work, "contracts", native)).isDirectory() ||
+  !statSync(join(work, "native-products")).isDirectory()
+)
+  throw new Error("builder scratch inputs missing; run release-product-test");
+const declared = JSON.parse(
+  execFileSync(
+    "python3",
+    [
+      "-c",
+      "import json,tomllib;print(json.dumps([p['target'] for p in tomllib.load(open('release-platforms.toml','rb'))['platform']]))",
+    ],
+    { encoding: "utf8" },
+  ),
+);
+if (!Array.isArray(declared) || !declared.includes(native))
+  throw new Error("undeclared native target");
 const fixture = join(work, "transport");
 rmSync(fixture, { recursive: true, force: true });
 mkdirSync(fixture, { recursive: true });
@@ -191,6 +215,24 @@ for (const packed of readdirSync(packs)) {
 }
 const uploadLog = join(work, "archive-upload.jsonl");
 writeFileSync(uploadLog, "");
+const archiveIf = YAML.parse(readFileSync(".github/workflows/release.yml", "utf8")).jobs.upload.if;
+for (const conclusion of ["success", "failure"]) {
+  const decision = evaluate(archiveIf, {
+    github: {
+      event: {
+        workflow_run: {
+          event: "push",
+          head_branch: `v${version}`,
+          head_repository: { full_name: "nickderobertis/skilltest" },
+          conclusion,
+        },
+      },
+    },
+  });
+  assert.equal(typeof decision === "boolean" ? String(decision) : decision.coerceString(), "true");
+  const response = run(archive, 0, uploadLog);
+  assert.equal(response.status, 0, `${response.stdout}\n${response.stderr}`);
+}
 let result = run(archive, 0, uploadLog);
 assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
 const uploads = readFileSync(uploadLog, "utf8")

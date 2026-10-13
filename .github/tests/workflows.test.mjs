@@ -310,6 +310,11 @@ test("release artifact authority retains every platform and enforces pre-publica
       { encoding: "utf8" },
     ),
   );
+  // The Linux native journey executes these helpers; Mac execution belongs to
+  // the existing native CI lane. Preserve both original bundle assertions here.
+  const ciBundle = graph["ci.yml"].jobs["mac-check"].steps.map((s) => s.run ?? "").join("\n");
+  assert.match(ciBundle, /scripts\/smoke-python-bundle.sh/);
+  assert.match(ciBundle, /scripts\/smoke-npm-bundle.sh/);
   const publish = graph["publish.yml"].jobs;
   // Linux cannot execute Darwin/Rosetta. Native packaging is exercised on the
   // host through release-packaging:packaging; these assertions preserve the
@@ -350,6 +355,7 @@ test("release artifact authority retains every platform and enforces pre-publica
     { event: "workflow_dispatch" },
     { head_repository: { full_name: "fork/skilltest" } },
     { head_branch: "main" },
+    { head_branch: "v0.0.0" },
     { conclusion: "cancelled" },
   ]) {
     const e = scenario("downstream", "workflow_run", undefined, "source", "same-repository");

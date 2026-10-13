@@ -49,7 +49,7 @@ test("parsed TOML and workspace lockfiles admit only internal version fields", (
     "plugins/pytest/pyproject.toml":
       '[project]\nname="skilltest-pytest"\nversion="0.1.0"\ndependencies=["skilltest-sdk==0.1.0", "pytest>=8"]\n',
     "uv.lock":
-      'version=1\n[[package]]\nname="skilltest-sdk"\nversion="0.1.0"\nsource={editable="sdks/python"}\n[[package]]\nname="pydantic"\nversion="1.0.0"\nsource={registry="https://example.invalid"}\n',
+      'version=1\n[[package]]\nname="skilltest-sdk"\nversion="0.1.0"\nsource={editable="sdks/python"}\n[[package]]\nname="skilltest-pytest"\nversion="0.1.0"\nsource={editable="plugins/pytest"}\n[package.metadata]\nrequires-dist=[{name="skilltest-sdk",specifier="==0.1.0"},{name="pydantic",specifier=">=2.7"}]\n[[package]]\nname="pydantic"\nversion="1.0.0"\nsource={registry="https://example.invalid"}\n',
     "pnpm-lock.yaml": "lockfileVersion: '9.0'\nimporters: {}\npackages: {}\n",
   };
   for (const [path, src] of Object.entries(fixtures)) {
@@ -66,6 +66,17 @@ test("parsed TOML and workspace lockfiles admit only internal version fields", (
   git("commit", "--quiet", "-m", "version fields");
   const release = git("rev-parse", "HEAD");
   assert.equal(classifyCLI(h, event(), release).isReleaseOnly, true);
+  git("checkout", "--quiet", release);
+  writeFileSync(
+    join(h.dir, "uv.lock"),
+    fixtures["uv.lock"].replaceAll("0.1.0", "0.2.0").replace("==0.2.0", "==invalid"),
+  );
+  git("add", ".");
+  git("commit", "--quiet", "-m", "invalid SDK metadata pin");
+  const invalidPin = classifyCLI(h, event(), git("rev-parse", "HEAD"));
+  assert.equal(invalidPin.macosRequired, true);
+  assert.match(invalidPin.reason, /invalid SDK pin/);
+
   for (const [path, src] of Object.entries(fixtures)) {
     git("checkout", "--quiet", release);
     writeFileSync(

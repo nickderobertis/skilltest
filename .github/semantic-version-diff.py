@@ -1,55 +1,92 @@
-"""Parse TOML release files; erase only this workspace's version fields."""
+"""Parse release TOML and normalize only this workspace's version fields."""
 
 import json
 import re
 import sys
 import tomllib
 
-path = sys.argv[1]
-doc = tomllib.loads(sys.stdin.read())
-version = re.compile(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
+VERSION = re.compile(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
 
 
-def erase(obj, key="version"):
-    if key in obj:
-        if not isinstance(obj[key], str) or not version.fullmatch(obj[key]):
-            raise ValueError("invalid version")
-        obj[key] = "<version>"
+def table(value: object, where: str) -> dict:
+    if not isinstance(value, dict):
+        raise ValueError(f"{where} must be a table")
+    return value
 
 
-match path:
-    case "Cargo.toml":
-        erase(doc["workspace"]["package"])
-        erase(doc["workspace"]["dependencies"]["skilltest-core"])
-    case "Cargo.lock":
-        for package in doc["package"]:
-            if package["name"].startswith("skilltest") and "source" not in package:
-                erase(package)
-    case "sdks/python/pyproject.toml" | "plugins/pytest/pyproject.toml":
-        erase(doc["project"])
-        doc["project"]["dependencies"] = [
-            re.sub(
-                r"^skilltest-sdk==\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$",
-                "skilltest-sdk==<version>",
-                d,
-            )
-            for d in doc["project"].get("dependencies", [])
-        ]
-    case "uv.lock":
-        for package in doc["package"]:
-            if package["name"] in (
-                "skilltest-sdk",
-                "skilltest-pytest",
-            ) and "editable" in package.get("source", {}):
-                erase(package)
-            for dep in package.get("metadata", {}).get("requires-dist", []):
-                if dep["name"] == "skilltest-sdk" and dep.get(
-                    "specifier", ""
-                ).startswith("=="):
-                    pin = dep["specifier"][2:]
-                    if not version.fullmatch(pin):
-                        raise ValueError("invalid SDK pin")
-                    dep["specifier"] = "==<version>"
-    case _:
-        raise ValueError("unsupported TOML path")
-print(json.dumps(doc, sort_keys=True))
+def records(value: object, where: str) -> list[dict]:
+    if not isinstance(value, list):
+        raise ValueError(f"{where} must be an array")
+    return [table(item, where) for item in value]
+
+
+def erase(obj: dict) -> None:
+    version = obj.get("version")
+    if not isinstance(version, str) or not VERSION.fullmatch(version):
+        raise ValueError("invalid or missing version")
+    obj["version"] = "<version>"
+
+
+def main() -> None:
+    if len(sys.argv) != 2:
+        raise ValueError("pass exactly one admitted TOML path")
+    path = sys.argv[1]
+    doc = table(tomllib.loads(sys.stdin.read()), "document")
+    match path:
+        case "Cargo.toml":
+            workspace = table(doc.get("workspace"), "workspace")
+            erase(table(workspace.get("package"), "workspace.package"))
+            deps = table(workspace.get("dependencies"), "workspace.dependencies")
+            erase(table(deps.get("skilltest-core"), "skilltest-core dependency"))
+        case "Cargo.lock":
+            for package in records(doc.get("package"), "package"):
+                name = package.get("name")
+                if not isinstance(name, str):
+                    raise ValueError("package name must be a string")
+                if name.startswith("skilltest") and "source" not in package:
+                    erase(package)
+        case "sdks/python/pyproject.toml" | "plugins/pytest/pyproject.toml":
+            project = table(doc.get("project"), "project")
+            erase(project)
+            deps = project.get("dependencies", [])
+            if not isinstance(deps, list) or not all(isinstance(d, str) for d in deps):
+                raise ValueError("project dependencies must be strings")
+            project["dependencies"] = [
+                re.sub(
+                    r"^skilltest-sdk==\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$",
+                    "skilltest-sdk==<version>",
+                    d,
+                )
+                for d in deps
+            ]
+        case "uv.lock":
+            for package in records(doc.get("package"), "package"):
+                source = table(package.get("source", {}), "package source")
+                if (
+                    package.get("name") in ("skilltest-sdk", "skilltest-pytest")
+                    and "editable" in source
+                ):
+                    erase(package)
+                metadata = table(package.get("metadata", {}), "package metadata")
+                for dep in records(metadata.get("requires-dist", []), "requires-dist"):
+                    specifier = dep.get("specifier", "")
+                    if not isinstance(specifier, str):
+                        raise ValueError("dependency specifier must be a string")
+                    if dep.get("name") == "skilltest-sdk" and specifier.startswith(
+                        "=="
+                    ):
+                        if not VERSION.fullmatch(specifier[2:]):
+                            raise ValueError("invalid SDK pin")
+                        dep["specifier"] = "==<version>"
+        case _:
+            raise ValueError("unsupported TOML path")
+    print(json.dumps(doc, sort_keys=True))
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (ValueError, TypeError, KeyError) as error:
+        sys.exit(
+            f"semantic-version-diff: {error}; restore a valid admitted release manifest"
+        )

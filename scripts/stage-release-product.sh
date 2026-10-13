@@ -6,10 +6,11 @@ if [ "$#" -ne 3 ] || [ ! -f "$2" ]; then
   exit 2
 fi
 target="$1"
-binary="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"
+binary_dir="$(cd "$(dirname "$2")" && pwd)" || { echo 'stage-release-product: cannot resolve binary directory; restore the build output and check permissions' >&2; exit 1; }
+binary="$binary_dir/$(basename "$2")"
 mkdir -p "$3" || { echo 'stage-release-product: cannot create output directory; check its parent permissions' >&2; exit 1; }
 out="$(cd "$3" && pwd)" || { echo 'stage-release-product: cannot resolve output directory; check its permissions' >&2; exit 1; }
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || { echo 'stage-release-product: cannot enter repository; restore a complete checkout' >&2; exit 1; }
 if ! build_output="$(bash scripts/build-python-wheel.sh "$target" "$binary" "$out" 2>&1)"; then
   printf 'stage-release-product: wheel build failed for %s; rerun build-python-wheel.sh
 %s
@@ -23,4 +24,4 @@ if ! pack_output="$(cd "$pkg" && npm pack --silent --pack-destination "$out" 2>&
 ' "$target" "$pack_output" >&2
   exit 1
 fi
-python3 scripts/verify-release-product.py "$target" "$binary" "$out" "$pkg"
+python3 scripts/stage-and-verify-release-product.py "$target" "$binary" "$out" "$pkg"

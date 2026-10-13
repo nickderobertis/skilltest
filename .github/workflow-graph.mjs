@@ -58,15 +58,10 @@ function truth(v) {
 }
 /** @param {string} src @param {Record<string,unknown>} ctx */
 function interpolate(src, ctx) {
-  return src.replace(/\$\{\{([\s\S]*?)\}\}/g, (_, e) =>
-    String(
-      typeof evaluate(e, ctx) === "boolean"
-        ? evaluate(e, ctx)
-        : /** @type {import('@actions/expressions/data/expressiondata').ExpressionData} */ (
-            evaluate(e, ctx)
-          ).coerceString(),
-    ),
-  );
+  return src.replace(/\$\{\{([\s\S]*?)\}\}/g, (_, expression) => {
+    const evaluated = evaluate(expression, ctx);
+    return typeof evaluated === "boolean" ? String(evaluated) : evaluated.coerceString();
+  });
 }
 export function loadGraph(directory = ".github/workflows") {
   /** @type {import('./models.js').Graph} */
@@ -119,7 +114,7 @@ export function sourceDigest() {
       ".github",
       "scripts/stage-release-product.sh",
       "scripts/check-release-identity.sh",
-      "scripts/verify-release-product.py",
+      "scripts/stage-and-verify-release-product.py",
       "scripts/verify-release-archive.sh",
       "scripts/smoke-python-bundle.sh",
       "scripts/smoke-npm-bundle.sh",

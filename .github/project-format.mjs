@@ -1,8 +1,10 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
-if (process.argv.length > 3 || (process.argv[2] !== undefined && process.argv[2] !== "--write"))
+const target = process.argv[2] === "--scripts" ? "scripts/project.json" : ".github/project.json";
+const args = process.argv.slice(2).filter((arg) => arg !== "--scripts");
+if (args.length > 1 || (args[0] !== undefined && args[0] !== "--write"))
   throw new Error("usage: project-format.mjs [--write]");
-const source = readFileSync(".github/project.json", "utf8");
+const source = readFileSync(target, "utf8");
 // Nx accepts JSONC; select Biome's JSONC parser for this one annotated project.
 const formatted = execFileSync(
   "pnpm",
@@ -17,7 +19,7 @@ const formatted = execFileSync(
   ],
   { input: source, encoding: "utf8" },
 );
-if (process.argv[2] === "--write") writeFileSync(".github/project.json", formatted);
+if (args[0] === "--write") writeFileSync(target, formatted);
 else if (source !== formatted) {
   console.error(
     "github-workflows project format differs; run node .github/project-format.mjs --write",

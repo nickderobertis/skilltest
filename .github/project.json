@@ -12,7 +12,7 @@
       "{workspaceRoot}/scripts/check-release-targets*",
       "{workspaceRoot}/scripts/stage-release-product.sh",
       "{workspaceRoot}/scripts/check-release-identity.sh",
-      "{workspaceRoot}/scripts/verify-release-product.py",
+      "{workspaceRoot}/scripts/stage-and-verify-release-product.py",
       "{workspaceRoot}/scripts/verify-release-archive*",
       "{workspaceRoot}/scripts/smoke-*-bundle.sh"
     ]
@@ -23,7 +23,7 @@
       "executor": "nx:run-commands",
       "cache": false,
       "options": {
-        "command": "bash .github/setup-screencomp.sh && node --test .github/tests/*.test.mjs"
+        "command": "node --test .github/tests/*.test.mjs"
       }
     },
     "lint": {
@@ -41,7 +41,7 @@
     "typecheck": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "pnpm --filter @skill-test/sdk exec tsc -p ../../.github/tsconfig.json"
+        "command": "pnpm exec tsc -p .github/tsconfig.json"
       }
     },
     "budgets": {

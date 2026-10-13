@@ -68,7 +68,7 @@ export function event(overrides = {}) {
   };
 }
 export function classifyCLI(h, eventDoc, head = h.release) {
-  const file = join(h.dir, "event.json");
+  const file = join(h.dir, ".git", "skilltest-event.json");
   writeFileSync(file, typeof eventDoc === "string" ? eventDoc : JSON.stringify(eventDoc));
   return JSON.parse(
     execFileSync(

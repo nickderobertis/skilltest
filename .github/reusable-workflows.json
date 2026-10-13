@@ -11,6 +11,14 @@
       {
         "before": "      # Hand this arch's screenshots to the host-side `report` job.",
         "reason": "Immutable upstream workflow comment; keep its bytes intact so the reusable-call digest proves the actual upstream contract."
+      },
+      {
+        "before": "      - uses: nickderobertis/screencomp@v0 # install the CLI on the host",
+        "reason": "Immutable upstream architecture reader installation comment; preserve source bytes while the reusable-call digest gates the exact upstream workflow."
+      },
+      {
+        "before": "      - uses: nickderobertis/screencomp@v0 # install the CLI on the host",
+        "reason": "Immutable upstream host report reader installation comment; preserve source bytes while the reusable-call digest gates the exact upstream workflow."
       }
     ]
   }

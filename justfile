@@ -46,6 +46,7 @@ bootstrap:
     pnpm install
     cargo fetch
     uv sync
+    bash .github/setup-screencomp.sh
 
 # Install nx and the TS workspace exactly as locked — the slice of `bootstrap` a
 # CI job needs to run an nx recipe (the live suites) without the Python stack.

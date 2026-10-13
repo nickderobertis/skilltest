@@ -29,6 +29,9 @@ importers:
       '@semantic-release/release-notes-generator':
         specifier: ^14.1.1
         version: 14.1.1(semantic-release@25.0.5(typescript@5.9.3))
+      '@types/node':
+        specifier: 22.19.21
+        version: 22.19.21
       conventional-changelog-conventionalcommits:
         specifier: ^9.3.1
         version: 9.3.1
@@ -38,6 +41,9 @@ importers:
       semantic-release:
         specifier: ^25.0.5
         version: 25.0.5(typescript@5.9.3)
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
 
   .github:
     dependencies:
