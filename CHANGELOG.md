@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.13.0](https://github.com/nickderobertis/skilltest/compare/v0.12.2...v0.13.0) (2026-10-13)
+
+### ⚠ BREAKING CHANGES
+
+* unify configuration surfaces and constrain oneharness judging (#85)
+* **core:** ** `skilltest_core::Error::Yaml` replaces `source:
+serde_yaml::Error` with `message: String`, retaining `path` and the
+`invalid YAML in <path>: …` display. Consumers matching or constructing
+this variant must update; the parser error is no longer available
+through the error source chain.
+
+The minimum supported Rust version rises from 1.82 to 1.89; the pinned
+toolchain is unchanged.
+
+Co-authored-by: nick <nick@U-17UN402ICR95C.workspaces.hellopatient.internal>
+
+### Features
+
+* **core:** read YAML with serde-saphyr and carry YAML errors as skilltest's own message ([#82](https://github.com/nickderobertis/skilltest/issues/82)) ([d9e5a80](https://github.com/nickderobertis/skilltest/commit/d9e5a80acb7c95ebea60bfc06d521fa7956a15a8))
+* unify configuration surfaces and constrain oneharness judging ([#85](https://github.com/nickderobertis/skilltest/issues/85)) ([b36acc0](https://github.com/nickderobertis/skilltest/commit/b36acc0c4df554787803d48832890734c48dd753)), closes [docs/schema.md#config-file-skilltestyaml](https://github.com/docs/schema.md/issues/config-file-skilltestyaml)
+
+### Bug Fixes
+
+* **hooks:** remove CI-duplicated pre-push checks ([#79](https://github.com/nickderobertis/skilltest/issues/79)) ([b692322](https://github.com/nickderobertis/skilltest/commit/b6923228896466bc4afcede4aaa1372382064df0))
+
+### Performance
+
+* **build:** drop dev and test debuginfo; ignore RUSTSEC-2024-0449 until the YAML crate is replaced ([#75](https://github.com/nickderobertis/skilltest/issues/75)) ([fb9258d](https://github.com/nickderobertis/skilltest/commit/fb9258de4b9a2424b68b5358012c2da8ba379fb1))
+
 ## [0.12.2](https://github.com/nickderobertis/skilltest/compare/v0.12.1...v0.12.2) (2026-10-07)
 
 ### Bug Fixes
