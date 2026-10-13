@@ -52,6 +52,7 @@ command -v jq >/dev/null 2>&1 || {
 }
 
 emit() { # emit <jq args…> — one transcript record, or stop the run loudly
+    # llmlint: ignore[tool_output_is_signal] This stdout record is the Claude stream-json protocol consumed by real oneharness; each transcript event requires its own JSON record.
     jq -cn "$@" || {
         echo "fake-claude: jq could not write a transcript record (see its error above); fix the record's arguments and rerun" >&2
         exit 1
