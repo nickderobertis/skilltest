@@ -6,6 +6,20 @@ import sys
 import tomllib
 
 VERSION = re.compile(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
+# This workspace's own packages, by exact name and location. Anything else is
+# dependency content; a member added later is refused (the Mac lane runs) until
+# it is listed here, never silently admitted.
+CORE_PATH = "crates/skilltest-core"
+CARGO_MEMBERS = frozenset(
+    {
+        "skilltest-cli",
+        "skilltest-cli-e2e",
+        "skilltest-core",
+        "skilltest-live-claude",
+        "skilltest-live-judge-api",
+    }
+)
+UV_MEMBERS = {"skilltest-sdk": "sdks/python", "skilltest-pytest": "plugins/pytest"}
 
 
 def table(value: object, where: str) -> dict:
@@ -38,17 +52,17 @@ def main() -> None:
             erase(table(workspace.get("package"), "workspace.package"))
             deps = table(workspace.get("dependencies"), "workspace.dependencies")
             core = table(deps.get("skilltest-core"), "skilltest-core dependency")
-            # Only a path dependency is this workspace's own crate; a registry
-            # crate sharing the name is dependency content.
-            if not isinstance(core.get("path"), str):
-                raise ValueError("skilltest-core dependency is not a workspace path")
+            # Only the workspace's own crate path is a version field; a registry
+            # crate or another path sharing the name is dependency content.
+            if core.get("path") != CORE_PATH:
+                raise ValueError("skilltest-core dependency is not the workspace crate")
             erase(core)
         case "Cargo.lock":
             for package in records(doc.get("package"), "package"):
                 name = package.get("name")
                 if not isinstance(name, str):
                     raise ValueError("package name must be a string")
-                if name.startswith("skilltest") and "source" not in package:
+                if name in CARGO_MEMBERS and "source" not in package:
                     erase(package)
         case "sdks/python/pyproject.toml" | "plugins/pytest/pyproject.toml":
             project = table(doc.get("project"), "project")
@@ -74,18 +88,21 @@ def main() -> None:
                 ]
         case "uv.lock":
             packages = records(doc.get("package"), "package")
-            local = {
-                package.get("name")
-                for package in packages
-                if "editable" in table(package.get("source", {}), "package source")
-            }
+
+            # A member is editable from its own directory; a registry or
+            # elsewhere-editable package sharing its name is dependency content.
+            def member(package: dict) -> bool:
+                source = table(package.get("source", {}), "package source")
+                name = package.get("name")
+                return isinstance(name, str) and source == {
+                    "editable": UV_MEMBERS.get(name)
+                }
+
+            local = {package.get("name") for package in packages if member(package)}
             for package in packages:
-                # Workspace members are editable; a registry package sharing a
-                # member's name keeps its version as dependency content.
-                if "editable" not in table(package.get("source", {}), "package source"):
+                if not member(package):
                     continue
-                if package.get("name") in ("skilltest-sdk", "skilltest-pytest"):
-                    erase(package)
+                erase(package)
                 metadata = table(package.get("metadata", {}), "package metadata")
                 for dep in records(metadata.get("requires-dist", []), "requires-dist"):
                     specifier = dep.get("specifier", "")

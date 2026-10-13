@@ -56,17 +56,47 @@ test("a registry dependency sharing a workspace package's name is dependency con
     git("commit", "--quiet", "-m", message);
     return git("rev-parse", "HEAD");
   };
-  const cases = {
-    "Cargo.toml": (v) =>
-      `[workspace.package]\nversion="0.1.0"\n[workspace.dependencies]\nskilltest-core={version="${v}"}\n`,
-    "Cargo.lock": (v) =>
-      `version=4\n[[package]]\nname="skilltest-cli"\nversion="0.1.0"\n[[package]]\nname="skilltest-core"\nversion="${v}"\nsource="registry+https://github.com/rust-lang/crates.io-index"\n`,
-    "plugins/pytest/pyproject.toml": (v) =>
-      `[project]\nname="skilltest-pytest"\nversion="0.1.0"\ndependencies=["skilltest-sdk==${v}"]\n`,
-    "uv.lock": (v) =>
-      `version=1\n[[package]]\nname="skilltest-pytest"\nversion="0.1.0"\nsource={editable="plugins/pytest"}\n[package.metadata]\nrequires-dist=[{name="skilltest-sdk",specifier="==${v}"}]\n[[package]]\nname="skilltest-sdk"\nversion="${v}"\nsource={registry="https://pypi.org/simple"}\n`,
-  };
-  for (const [path, render] of Object.entries(cases)) {
+  const cases = [
+    [
+      "Cargo.toml",
+      (v) =>
+        `[workspace.package]\nversion="0.1.0"\n[workspace.dependencies]\nskilltest-core={version="${v}"}\n`,
+    ],
+    // A path dependency named like the core crate but outside the workspace.
+    [
+      "Cargo.toml",
+      (v) =>
+        `[workspace.package]\nversion="0.1.0"\n[workspace.dependencies]\nskilltest-core={path="../vendored/skilltest-core",version="${v}"}\n`,
+    ],
+    [
+      "Cargo.lock",
+      (v) =>
+        `version=4\n[[package]]\nname="skilltest-cli"\nversion="0.1.0"\n[[package]]\nname="skilltest-core"\nversion="${v}"\nsource="registry+https://github.com/rust-lang/crates.io-index"\n`,
+    ],
+    // A source-less (path) crate sharing the prefix but not a workspace member.
+    [
+      "Cargo.lock",
+      (v) =>
+        `version=4\n[[package]]\nname="skilltest-cli"\nversion="0.1.0"\n[[package]]\nname="skilltest-vendored"\nversion="${v}"\n`,
+    ],
+    [
+      "plugins/pytest/pyproject.toml",
+      (v) =>
+        `[project]\nname="skilltest-pytest"\nversion="0.1.0"\ndependencies=["skilltest-sdk==${v}"]\n`,
+    ],
+    [
+      "uv.lock",
+      (v) =>
+        `version=1\n[[package]]\nname="skilltest-pytest"\nversion="0.1.0"\nsource={editable="plugins/pytest"}\n[package.metadata]\nrequires-dist=[{name="skilltest-sdk",specifier="==${v}"}]\n[[package]]\nname="skilltest-sdk"\nversion="${v}"\nsource={registry="https://pypi.org/simple"}\n`,
+    ],
+    // An editable package with a member's name from another directory.
+    [
+      "uv.lock",
+      (v) =>
+        `version=1\n[[package]]\nname="skilltest-sdk"\nversion="${v}"\nsource={editable="vendor/skilltest-sdk"}\n`,
+    ],
+  ];
+  for (const [path, render] of cases) {
     git("checkout", "--quiet", h.release);
     h.base = commit({ [path]: render("0.1.0") }, `registry ${path}`);
     const bumped = commit({ [path]: render("0.2.0") }, `bump registry ${path}`);

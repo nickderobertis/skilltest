@@ -94,6 +94,7 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           cache: false
+          # llmlint: ignore[diagnostics_error_or_absent] warnings fail the gate through each Rust project's `cargo clippy ... -- -D warnings` in `just check`; the action's injected RUSTFLAGS="-D warnings" would make CI compile with different flags than local builds and every other workflow (all clear it the same way).
           rustflags: ""
       - uses: astral-sh/setup-uv@v5
       - uses: pnpm/action-setup@v4

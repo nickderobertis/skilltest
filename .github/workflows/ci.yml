@@ -70,6 +70,7 @@ jobs:
           # off this action's own cache (Swatinem/rust-cache runs where wanted)
           # and its default RUSTFLAGS="-D warnings", which would change builds.
           cache: false
+          # llmlint: ignore[diagnostics_error_or_absent] warnings fail the gate through each Rust project's `cargo clippy ... -- -D warnings` in `just check`; the action's injected RUSTFLAGS="-D warnings" would make CI compile with different flags than local builds and every other workflow (all clear it the same way).
           rustflags: ""
 
       - name: Install cargo-nextest and cargo-llvm-cov
@@ -130,6 +131,7 @@ jobs:
           # off this action's own cache (Swatinem/rust-cache runs where wanted)
           # and its default RUSTFLAGS="-D warnings", which would change builds.
           cache: false
+          # llmlint: ignore[diagnostics_error_or_absent] warnings fail the gate through each Rust project's `cargo clippy ... -- -D warnings` in `just check`; the action's injected RUSTFLAGS="-D warnings" would make CI compile with different flags than local builds and every other workflow (all clear it the same way).
           rustflags: ""
 
       - name: Install cargo-nextest and cargo-llvm-cov

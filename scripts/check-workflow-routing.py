@@ -531,7 +531,7 @@ def matrix_targets(wfs: dict[WorkflowFile, Workflow]) -> dict[str, set[str]]:
             axis = job.matrix.get("target")
             rows = job.matrix.get("include")
             named = [*(axis if isinstance(axis, list) else []), *(r.get("target") for r in rows or [])]
-            # Darwin builds are sequential in one job, not two matrix instances.
+            # Darwin builds in its own job, not a matrix instance; read its targets from the step.
             if wf.filename == "publish.yml" and job.id == "darwin":
                 named.extend(t for step in job.steps for t in re.findall(r"\b(?:x86_64|aarch64)-apple-darwin\b", step.run or ""))
             for target in named:
