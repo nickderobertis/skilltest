@@ -121,6 +121,6 @@ if env -u SKILLTEST_BIN SKILLTEST_PROVIDER="$work/missing-provider" \
   echo 'error: bundled Python plugin accepted a missing provider; inspect SDK error propagation' >&2
   exit 1
 fi
-grep -Ei 'provider|No such file|not found' "$work/failure.log" >/dev/null || { cat "$work/failure.log" >&2; echo 'python bundle smoke: missing-provider failure had an unexpected diagnostic; reproduce the plugin case and inspect SDK error propagation' >&2; exit 1; }
+grep -Ei 'provider|No such file|not found' "$work/failure.log" >/dev/null || { cat "$work/failure.log" >&2 || echo "(unreadable: $work/failure.log; rerun the plugin case by hand to see its output)" >&2; echo 'python bundle smoke: missing-provider failure had an unexpected diagnostic; reproduce the plugin case and inspect SDK error propagation' >&2; exit 1; }
 
 echo "python bundle smoke ($target): ok (plugin pins $pin)"

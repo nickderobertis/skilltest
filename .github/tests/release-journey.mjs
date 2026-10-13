@@ -311,6 +311,12 @@ for (const [mutation, message] of [
   ["tags", /invalid wheel tags/],
   ["module", /wheel module differs from source: skilltest_sdk\/runner\.py/],
   ["extra", /unexpected wheel members: extra \['skilltest_sdk\/injected\.py'\]/],
+  ["directory", /wheel holds a directory entry/],
+  ["record-row", /invalid wheel RECORD row/],
+  ["record-duplicate", /duplicate wheel RECORD row: skilltest_sdk\/runner\.py/],
+  ["record-missing", /wheel RECORD does not list exactly its members/],
+  ["record-self", /wheel RECORD hashes itself/],
+  ["record-hash", /wheel RECORD hash differs: skilltest_sdk\/runner\.py/],
 ]) {
   const changed = spawnSync(
     "python3",
@@ -335,11 +341,27 @@ else:
                 data = b"wrong binary"
             if mutation == "module" and name == "skilltest_sdk/runner.py":
                 data = data + b"\\nraise SystemExit('altered')\\n"
+            if name.endswith(".dist-info/RECORD") and mutation.startswith("record-"):
+                rows = data.decode().splitlines()
+                runner = next(r for r in rows if r.startswith("skilltest_sdk/runner.py,"))
+                if mutation == "record-row":
+                    rows.append("skilltest_sdk/runner.py,sha256=x")
+                if mutation == "record-duplicate":
+                    rows.append(runner)
+                if mutation == "record-missing":
+                    rows.remove(runner)
+                if mutation == "record-self":
+                    rows = [r + "sha256=x" if r.endswith("/RECORD,,") else r for r in rows]
+                if mutation == "record-hash":
+                    rows[rows.index(runner)] = runner.split(",")[0] + ",sha256=AAAA," + runner.split(",")[2]
+                data = ("\\n".join(rows) + "\\n").encode()
             if mutation == "tags" and name.endswith(".dist-info/WHEEL"):
                 data = b"Wheel-Version: 1.0\\nRoot-Is-Purelib: true\\nTag: py3-none-any\\n"
             out.writestr(name, data)
         if mutation == "duplicate":
             out.writestr(entries[0][0], entries[0][1])
+        if mutation == "directory":
+            out.writestr(zipfile.ZipInfo("skilltest_sdk/sub/"), b"")
         if mutation == "extra":
             out.writestr("skilltest_sdk/injected.py", b"print('injected')\\n")
         if mutation == "provider":

@@ -90,6 +90,6 @@ if ( cd "$proj" && env -u SKILLTEST_BIN SKILLTEST_PROVIDER="$work/missing-provid
   echo 'error: bundled npm plugin accepted a missing provider; inspect SDK error propagation' >&2
   exit 1
 fi
-grep -Ei 'provider|ENOENT|not found' "$work/failure.log" >/dev/null || { cat "$work/failure.log" >&2; echo 'npm bundle smoke: missing-provider failure had an unexpected diagnostic; reproduce the plugin case and inspect SDK error propagation' >&2; exit 1; }
+grep -Ei 'provider|ENOENT|not found' "$work/failure.log" >/dev/null || { cat "$work/failure.log" >&2 || echo "(unreadable: $work/failure.log; rerun the plugin case by hand to see its output)" >&2; echo 'npm bundle smoke: missing-provider failure had an unexpected diagnostic; reproduce the plugin case and inspect SDK error propagation' >&2; exit 1; }
 
 echo "npm bundle smoke ($target): ok"

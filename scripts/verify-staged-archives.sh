@@ -28,12 +28,22 @@ usage="usage: verify-staged-archives.sh <products-dir> <version> [--list-assets]
 products="${1%/}" version="$2"
 here="$(dirname "$0")" || err "could not resolve this script's directory from $0; run it as bash scripts/verify-staged-archives.sh from the repository root"
 
+# Each target names a products/ directory, so only a well-formed, unique target
+# triple and a known binary name are accepted before any path is built.
 platforms="$(python3 -c '
-import sys, tomllib
+import re, sys, tomllib
 with open(sys.argv[1], "rb") as f:
-    for p in tomllib.load(f)["platform"]:
-        print(p["target"], p["bin"])
-' "$here/../release-platforms.toml")" || err "could not read the declared platforms from release-platforms.toml; check that python3 (3.11+) is on PATH and the file is valid TOML"
+    records = tomllib.load(f)["platform"]
+seen = set()
+for p in records:
+    target, bin = p.get("target"), p.get("bin")
+    if not isinstance(target, str) or not re.fullmatch(r"[A-Za-z0-9_]+(-[A-Za-z0-9_]+)+", target) or target in seen:
+        sys.exit(f"invalid or duplicate target {target!r}")
+    if bin not in ("skilltest", "skilltest.exe"):
+        sys.exit(f"invalid bin {bin!r} for {target}")
+    seen.add(target)
+    print(target, bin)
+' "$here/../release-platforms.toml")" || err "could not read valid declared platforms from release-platforms.toml (reason above); fix its [[platform]] target/bin fields, and check that python3 (3.11+) is on PATH"
 [ -n "$platforms" ] || err "release-platforms.toml declares no platform; restore its [[platform]] entries"
 
 assets="" count=0

@@ -192,6 +192,13 @@ def require_wheel_tags(wheel: zipfile.ZipFile, platform: Platform) -> None:
 SDK_SOURCE = Path("sdks/python/skilltest_sdk")
 
 
+class RecordEntry(NamedTuple):
+    """One wheel RECORD row's integrity fields (empty for RECORD itself)."""
+
+    hash: str
+    size: str
+
+
 def require_wheel_payload(
     wheel: zipfile.ZipFile, platform: Platform, version: Version
 ) -> None:
@@ -230,20 +237,23 @@ def require_wheel_payload(
             == path.read_bytes().replace(b"\r\n", b"\n"),
             f"wheel module differs from source: {name}",
         )
-    recorded = {}
-    for row in csv.reader(io.StringIO(wheel.read(f"{dist_info}/RECORD").decode())):
+    record = f"{dist_info}/RECORD"
+    recorded: dict[str, RecordEntry] = {}
+    for row in csv.reader(io.StringIO(wheel.read(record).decode())):
         require(len(row) == 3, "invalid wheel RECORD row")
-        recorded[row[0]] = (row[1], row[2])
+        require(row[0] not in recorded, f"duplicate wheel RECORD row: {row[0]}")
+        recorded[row[0]] = RecordEntry(row[1], row[2])
     require(
         set(recorded) == set(names), "wheel RECORD does not list exactly its members"
     )
+    require(recorded[record] == RecordEntry("", ""), "wheel RECORD hashes itself")
     for name in names:
-        if name == f"{dist_info}/RECORD":
+        if name == record:
             continue
         data = wheel.read(name)
         hashed = base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b"=")
         require(
-            recorded[name] == (f"sha256={hashed.decode()}", str(len(data))),
+            recorded[name] == RecordEntry(f"sha256={hashed.decode()}", str(len(data))),
             f"wheel RECORD hash differs: {name}",
         )
 

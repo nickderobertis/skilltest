@@ -308,6 +308,18 @@ done <<<"$declared")"
 [ "$(sort "$work/out")" = "$(sort <<<"$expected_assets")" ] ||
   fail "--list-assets did not print exactly the declared archives and checksums, so release.yml would upload the wrong set; compare $work/out with release-platforms.toml and fix the asset list built in scripts/verify-staged-archives.sh"
 
+# A declaration whose target could escape products/ is refused before any path
+# is built: the scripts run from a scratch tree holding that declaration.
+{ mkdir -p "$work/tree/scripts" && cp scripts/verify-staged-archives.sh scripts/verify-release-archive.sh "$work/tree/scripts/" &&
+  printf '[[platform]]\ntarget = "../escape"\nbin = "skilltest"\n' >"$work/tree/release-platforms.toml"; } ||
+  fail "could not build the scratch declaration tree; check that $work is writable"
+: >"$work/out" || fail "could not write $work/out; check that $work is writable"
+if "$BASH" "$work/tree/scripts/verify-staged-archives.sh" "$work/products" 1.2.3 >"$work/out" 2>&1; then
+  fail "the aggregation accepted a declared target that is not a target triple; restore the platform validation in scripts/verify-staged-archives.sh"
+fi
+grep -Fq "invalid or duplicate target '../escape'" "$work/out" ||
+  fail "the aggregation refused a malformed declaration without naming it; restore the target check's message in scripts/verify-staged-archives.sh"
+
 cp "$work/products/aarch64-apple-darwin/skilltest-aarch64-apple-darwin.tar.gz" "$work/products/aarch64-apple-darwin/skilltest-x86_64-apple-darwin.tar.gz" ||
   fail "could not stage an undeclared archive; check that $work is writable"
 expect_aggregate_red "an undeclared archive was staged" "skilltest-x86_64-apple-darwin.tar.gz is not a declared release asset" "$work/products" 1.2.3 --list-assets

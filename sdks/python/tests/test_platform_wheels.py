@@ -57,12 +57,9 @@ PLATFORMS = tuple(
 _BY_TARGET = {p.target: p for p in PLATFORMS}
 
 HOST_PLATFORMS = {
-    Host(system, machine): _BY_TARGET[target]
-    for system, machine, target in (
-        ("Linux", "x86_64", "x86_64-unknown-linux-gnu"),
-        ("Linux", "aarch64", "aarch64-unknown-linux-gnu"),
-        ("Darwin", "arm64", "aarch64-apple-darwin"),
-    )
+    Host("Linux", "x86_64"): _BY_TARGET["x86_64-unknown-linux-gnu"],
+    Host("Linux", "aarch64"): _BY_TARGET["aarch64-unknown-linux-gnu"],
+    Host("Darwin", "arm64"): _BY_TARGET["aarch64-apple-darwin"],
 }
 
 
