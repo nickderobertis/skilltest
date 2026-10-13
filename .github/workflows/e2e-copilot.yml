@@ -11,9 +11,10 @@ name: E2E (Copilot)
 # the secrets).
 
 # Never on a pull request: this suite contacts a paid external service, so it
-# runs at the broader tier — ci.yml calls it on every ordinary push to main, and
-# semantic-release cuts no release from that commit unless it succeeds (the
-# `chore(release):` commit calls nothing). Also runnable by hand.
+# runs at the broader tier — ci.yml calls it on every ordinary push to main (the
+# `chore(release):` commit calls nothing). Unlike the other live suites it is
+# advisory: the release does not wait on it, because the Copilot plan's usage
+# limit fails it for reasons no commit can fix. Also runnable by hand.
 on:
   workflow_call:
   workflow_dispatch:
