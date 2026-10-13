@@ -106,8 +106,9 @@ process.exit(result.status ?? 3);
         delivered[assignment.slice(0, boundary)] = JSON.parse(assignment.slice(boundary + 1));
       }
       expect(delivered, path).toEqual(payload);
-      // The wrapper executes the actual CLI with unchanged stdio. Combined with
-      // core's applied-value suite, this catches omission of any SDK setting.
+      // The wrapper runs the real CLI; success proves the names are accepted.
+      // The argv equality above proves SDK delivery. Core's differing-value
+      // leaf suite separately proves application by the resolver.
     }
     // Compile real object literals, so a missing generated leaf fails the test
     // even though TypeScript types disappear at runtime.

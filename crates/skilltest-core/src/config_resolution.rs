@@ -635,6 +635,8 @@ mod surface_tests {
         let root = schema();
         let mut cases = Vec::new();
         leaves(&root, &root, "", &json!({}), &mut cases);
+        // Prove ordinary enum leaves before discriminants that need companion leaves.
+        cases.sort_by_key(|leaf| leaf.path.ends_with(".kind"));
         for leaf in cases {
             let mut context = leaf.context;
             if context.pointer("/provider/kind") == Some(&json!("command")) {
@@ -654,28 +656,83 @@ mod surface_tests {
                 "YAML {}",
                 leaf.path
             );
-            // Start lower layers with a differing value wherever the leaf has
-            // another valid value, so an adapter that ignores the patch fails.
-            let lower = match &leaf.value {
-                Value::Bool(value) => json!(!value),
-                Value::Number(_) => json!(3),
-                Value::String(_)
-                    if !leaf.path.ends_with(".kind") && leaf.path != "judge.vendor" =>
-                {
-                    json!("lower value")
+            let mut known = BTreeMap::new();
+            paths(&root, &root, "", &mut known);
+            let mut support = BTreeMap::new();
+            if leaf.path.ends_with(".kind") {
+                let parent = leaf.path.strip_suffix(".kind").unwrap();
+                let target = context
+                    .pointer(&format!("/{}", parent.replace('.', "/")))
+                    .unwrap()
+                    .clone();
+                let alternative = known[parent]
+                    .iter()
+                    .map(|node| specimen(node, &root))
+                    .find(|value| value.get("kind").is_some_and(|kind| kind != &leaf.value));
+                if let Some(mut alternative) = alternative {
+                    if alternative.get("kind") == Some(&json!("command")) {
+                        alternative["command"] = json!(["fixture-provider"]);
+                    }
+                    merge(&mut context, patch(parent, alternative));
+                } else {
+                    // A single-valued discriminant has no second enum value.
+                    // Exercise creation from its nullable parent instead, explicitly.
+                    eprintln!(
+                        "single-valued schema leaf {}: testing from null parent",
+                        leaf.path
+                    );
+                    assert!(known[parent].iter().any(|node| valid_patch(&Value::Null, node, &root, true)),
+                        "{} has no alternate value or nullable parent; add explicit sensitivity proof", leaf.path);
+                    merge(&mut context, patch(parent, Value::Null));
                 }
-                Value::Array(_) if leaf.path == "mocks" => {
-                    json!([{"name":"lower","match":{"tool":"lower"}}])
+                for (name, value) in target.as_object().unwrap() {
+                    if name != "kind" {
+                        support.insert(format!("{parent}.{name}"), value.clone());
+                    }
                 }
-                Value::Array(_) if leaf.path.ends_with(".args") => json!(["--model", "lower"]),
-                Value::Array(_) => json!(["lower"]),
-                _ => leaf.value.clone(),
-            };
-            merge(&mut context, patch(&leaf.path, lower));
+            } else {
+                let candidates = known[&leaf.path]
+                    .iter()
+                    .map(|node| specimen(node, &root))
+                    .chain([
+                        json!(false),
+                        json!(true),
+                        json!(3),
+                        json!("lower value"),
+                        json!([]),
+                        json!(["lower"]),
+                        json!(["--model", "lower"]),
+                        json!([{"name":"lower","match":{"tool":"lower"}}]),
+                        Value::Null,
+                    ]);
+                let lower = candidates.into_iter().find(|candidate| candidate != &leaf.value
+                    && known[&leaf.path].iter().any(|node| valid_patch(candidate, node, &root, true))
+                    && {
+                        let mut full = serde_json::to_value(Config::default()).unwrap();
+                        merge(&mut full, context.clone());
+                        merge(&mut full, patch(&leaf.path, candidate.clone()));
+                        serde_json::from_value::<Config>(full).is_ok_and(|config| config.validate().is_ok())
+                    })
+                    .unwrap_or_else(|| panic!("schema leaf {} has no second valid value; add explicit sensitivity proof", leaf.path));
+                merge(&mut context, patch(&leaf.path, lower));
+            }
+            assert_ne!(
+                context.pointer(&pointer),
+                Some(&leaf.value),
+                "lower {}",
+                leaf.path
+            );
             std::fs::write(&file, context.to_string()).unwrap();
-            let assignment = format!("{}={}", leaf.path, leaf.value);
+            Config::load(&file)
+                .unwrap_or_else(|error| panic!("invalid lower {}: {error}", leaf.path));
+            let mut assignments = vec![format!("{}={}", leaf.path, leaf.value)];
+            assignments.extend(
+                support
+                    .iter()
+                    .map(|(path, value)| format!("{path}={value}")),
+            );
             let actual = serde_json::to_value(
-                Config::resolve(Some(&file), &[assignment], Overrides::default()).unwrap(),
+                Config::resolve(Some(&file), &assignments, Overrides::default()).unwrap(),
             )
             .unwrap();
             assert_eq!(
@@ -685,7 +742,14 @@ mod surface_tests {
                 leaf.path
             );
             let output = dir.join("resolved.json");
-            let status = std::process::Command::new(std::env::current_exe().unwrap())
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+            for (path, value) in &support {
+                child.env(
+                    format!("SKILLTEST_{}", path.replace('.', "__").to_uppercase()),
+                    value.to_string(),
+                );
+            }
+            let status = child
                 .args([
                     "--exact",
                     "config_resolution::surface_tests::resolver_child",

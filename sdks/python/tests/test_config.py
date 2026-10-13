@@ -107,9 +107,9 @@ def test_schema_leaves_reach_yaml_set_environment_and_typed_overrides(
                 key, encoded = captured[index + 1].split("=", 1)
                 delivered[key] = json.loads(encoded)
         assert delivered == payload, path
-        # Core's schema-leaf suite asserts the applied values; this real-process
-        # edge proves the SDK delivers every leaf without bypassing that resolver.
-        # Use the file as variant context, replacing only the derived leaf.
+        # These direct CLI/env journeys prove each derived name is accepted.
+        # The file already holds the value; applied-value sensitivity belongs
+        # to core's leaf suite. The argv assertion above proves SDK delivery.
         argv = [
             os.environ["SKILLTEST_BIN"],
             "--config",
