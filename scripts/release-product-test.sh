@@ -2,7 +2,7 @@
 # Native packaging journey through the production builder and fresh consumers.
 set -euo pipefail
 cd "$(dirname "$0")/.." || { echo 'release-product-test: cannot enter repository; restore a complete checkout' >&2; exit 1; }
-target="$(rustc -vV | sed -n 's/^host: //p')"
+target="$(rustc -vV | sed -n 's/^host: //p')" || { echo 'release-product-test: host detection failed; install the pinned Rust toolchain and verify sed is available' >&2; exit 1; }
 work="$(mktemp -d)" || { echo 'release-product-test: cannot create scratch directory; check TMPDIR permissions and free space' >&2; exit 1; }
 exec 3>&1 4>&2
 finish() {

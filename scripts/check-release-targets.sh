@@ -502,9 +502,9 @@ matrix_fix="write one '- { target: <triple>, os: <runner>, bin: <file> }' row pe
 rows="$(matrix_rows "$workflow" binaries)" || exit 1
 # Darwin targets share one sequential job; these are real upload artifact names,
 # checked together with its build loop by github-workflows:test.
-darwin_runner="$(job_body darwin | sed -n 's/^ *runs-on: *\([^ ]*\)$/\1/p')"
+darwin_runner="$(job_body darwin | sed -n 's/^ *runs-on: *\([^ ]*\)$/\1/p')" || { echo 'check-release-targets: cannot extract Darwin runner; restore the literal runs-on field and verify sed is installed' >&2; exit 1; }
 [ -n "$darwin_runner" ] || fail "$workflow has no literal Darwin runner; name the declared runner in its consolidated job"
-darwin_targets="$(job_body darwin | sed -n 's/^ *name: skilltest-\([^ ]*apple-darwin\)$/\1/p')"
+darwin_targets="$(job_body darwin | sed -n 's/^ *name: skilltest-\([^ ]*apple-darwin\)$/\1/p')" || { echo 'check-release-targets: cannot extract Darwin artifacts; restore upload names and verify sed is installed' >&2; exit 1; }
 while read -r target; do
   [ -n "$target" ] || continue
   rows="${rows}
@@ -514,7 +514,7 @@ rows="$(printf '%b\n' "$rows")"
 compare_platforms "$workflow's binaries matrix" "$declared_builds" "$rows" "$matrix_fix"
 # release.yml transports already built artifacts on Linux; it no longer owns
 # a compiler matrix. The executable graph contract checks exact-run downloads.
-release_targets="$(sed -n 's/^ *for target in \(.*\); do$/\1/p' "$release_workflow" | tr ' ' '\n' | sort)"
+release_targets="$(sed -n 's/^ *for target in \(.*\); do$/\1/p' "$release_workflow" | tr ' ' '\n' | sort)" || { echo 'check-release-targets: cannot read archive transport targets; restore release.yml and verify sed, tr and sort are installed' >&2; exit 1; }
 compare_platforms "$release_workflow's archive targets" "$(printf '%s\n' "$declared_builds" | cut -f1 | sort)" "$release_targets" "retain each declared platform in the Linux upload loop"
 
 windows_only() { printf '%s\n' "$declared_builds" | awk -F'\t' '$1 ~ /-windows-/'; }

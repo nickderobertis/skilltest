@@ -132,6 +132,9 @@ console.log(
 console.log(
   "Scoped lint exceptions: the site-specific upstream comment annotations in .github/tests/fixtures/screencomp-v0.4.2.yml preserve immutable upstream bytes, verified after removal of exactly those annotations. github-workflows:test carries shell_test_tiers_stay_split because its recording contract requires the deterministic real Git/classifier/carrier boundaries in the integrated graph suite. release-packaging:packaging carries new_projects_keep_the_graph_uniform because native builder journeys stay behind the explicit release edge, with ordinary cheap lint/format targets retained. The standing agents_md_durable_and_terse block in AGENTS.md still covers its composition audit; the changed Mac-proof location remains part of that audit. No llmlint configuration or plugins changed.\n",
 );
+console.log(
+  "Manager-approved narrow adjustment to the Linux-only visual-docs caller: screencomp-version is pinned to 0.4.2 so its production architecture reader matches the checksum-pinned reader used by the graph contract. Its events, runners and assertions are unchanged.\n",
+);
 if (process.argv[3]) {
   const observed = validateObservation(JSON.parse(readFileSync(process.argv[3], "utf8")));
   console.log(`Observed draft exact-head runs for ${observed.head}:\n`);

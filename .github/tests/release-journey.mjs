@@ -56,6 +56,7 @@ for (const path of [
   ".github/validation.mjs",
   ".github/package.json",
   "scripts/verify-release-archive.sh",
+  "scripts/stage-and-verify-release-product.py",
   "scripts/check-release-identity.sh",
 ])
   cpSync(path, join(fixture, path), {
@@ -115,7 +116,7 @@ flags=int(os.environ['PUBLISHED_FLAGS'])
 if command=='git' and args[0]=='fetch': record();sys.exit(0)
 if command=='gh':
     record()
-    if args[:2]==['release','view']:sys.exit(1)
+    if args[:2]==['release','view']:sys.exit(0 if os.environ.get('EXISTING_RELEASE')=='1' else 1)
     if args[:2]==['release','upload']:
         for path in args[2:]:
             if path.startswith('products/'):assert pathlib.Path(path).is_file()
@@ -246,6 +247,34 @@ for (const p of platforms) {
   assert.ok(uploads.some((f) => f.endsWith(`/${asset}`)));
   assert.ok(uploads.some((f) => f.endsWith(`/${asset}.sha256`)));
 }
+const existingLog = join(work, "existing-release.jsonl");
+writeFileSync(existingLog, "");
+result = spawnSync("bash", ["-c", archive], {
+  cwd: fixture,
+  encoding: "utf8",
+  env: { ...env, PUBLISHED_FLAGS: "0", EXISTING_RELEASE: "1", TRANSPORT_LOG: existingLog },
+});
+assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+const existingCalls = readFileSync(existingLog, "utf8")
+  .trim()
+  .split("\n")
+  .map((line) => JSON.parse(line));
+assert.ok(existingCalls.some((c) => c.command === "gh" && c.args[1] === "upload"));
+assert.ok(!existingCalls.some((c) => c.command === "gh" && c.args[1] === "create"));
+const wheelDir = join(fixture, "products", platforms[0].target);
+const wheelFile = join(
+  wheelDir,
+  readdirSync(wheelDir).find((n) => n.endsWith(".whl")),
+);
+const wheelBytes = readFileSync(wheelFile);
+rmSync(wheelFile);
+const wheelLog = join(work, "missing-wheel.jsonl");
+writeFileSync(wheelLog, "");
+result = run(commands.pypi, 0, wheelLog);
+assert.notEqual(result.status, 0);
+assert.match(result.stderr, /missing staged platform wheel/);
+assert.equal(readFileSync(wheelLog, "utf8"), "");
+writeFileSync(wheelFile, wheelBytes);
 // Carrier metadata and archive corruption must fail at the actual publication boundary.
 const carrierPlatform = platforms[0];
 const carrier = join(

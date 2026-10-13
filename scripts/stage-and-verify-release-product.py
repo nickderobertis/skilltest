@@ -92,11 +92,21 @@ def digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def release_version() -> str:
+    value = tomllib.loads(Path("Cargo.toml").read_text())["workspace"]["package"][
+        "version"
+    ]
+    version = text(value, "manifest version")
+    require(bool(VERSION.fullmatch(version)), "invalid manifest version")
+    return version
+
+
 def main() -> None:
+    check_wheels = len(sys.argv) == 3 and sys.argv[1] == "--check-wheels"
     require(
-        len(sys.argv) == 5, "usage: <target> <binary> <output-dir> <npm-package-dir>"
+        check_wheels or len(sys.argv) == 5,
+        "usage: <target> <binary> <output-dir> <npm-package-dir> or --check-wheels <products-dir>",
     )
-    target, binary_arg, output, package = sys.argv[1:]
     records = tomllib.loads(Path("release-platforms.toml").read_text()).get("platform")
     if not isinstance(records, list):
         raise ValueError("release platforms must be an array")
@@ -105,6 +115,30 @@ def main() -> None:
         len({p.target for p in platforms}) == len(platforms),
         "duplicate platform target",
     )
+    if check_wheels:
+        version = release_version()
+        for platform in platforms:
+            expected = (
+                Path(sys.argv[2])
+                / platform.target
+                / f"skilltest_sdk-{version}-py3-none-{platform.wheel_tag}.whl"
+            )
+            require(expected.is_file(), f"missing staged platform wheel: {expected}")
+            with zipfile.ZipFile(expected) as archive:
+                metadata_names = [
+                    name
+                    for name in archive.namelist()
+                    if name.endswith(".dist-info/METADATA")
+                ]
+                require(len(metadata_names) == 1, f"invalid wheel metadata: {expected}")
+                headers = Parser().parsestr(archive.read(metadata_names[0]).decode())
+                require(
+                    headers.get_all("Name", []) == ["skilltest-sdk"]
+                    and headers.get_all("Version", []) == [version],
+                    f"invalid staged wheel identity: {expected}",
+                )
+        return
+    target, binary_arg, output, package = sys.argv[1:]
     platform = next((p for p in platforms if p.target == target), None)
     if platform is None:
         raise ValueError(f"undeclared release target: {target}")
@@ -145,13 +179,7 @@ def main() -> None:
         case _:
             raise ValueError("unsupported declared binary target")
     out = Path(output)
-    version = tomllib.loads(Path("Cargo.toml").read_text())["workspace"]["package"][
-        "version"
-    ]
-    require(
-        isinstance(version, str) and bool(VERSION.fullmatch(version)),
-        "invalid manifest version",
-    )
+    version = release_version()
     (wheel,) = out.glob(f"skilltest_sdk-{version}-py3-none-{platform.wheel_tag}.whl")
     with zipfile.ZipFile(wheel) as z:
         wheel_data = z.read(f"skilltest_sdk/_bin/{platform.bin}")

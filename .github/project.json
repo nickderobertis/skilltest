@@ -29,7 +29,7 @@
     "lint": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "uv run --frozen actionlint .github/workflows/ci.yml .github/workflows/publish.yml .github/workflows/release.yml .github/workflows/bundle-smoke.yml && pnpm exec biome lint --config-path .github .github/*.mjs .github/tests/*.mjs"
+        "command": "uv run --frozen actionlint .github/workflows/visual-docs.yml .github/workflows/ci.yml .github/workflows/publish.yml .github/workflows/release.yml .github/workflows/bundle-smoke.yml && pnpm exec biome lint --config-path .github .github/*.mjs .github/tests/*.mjs"
       }
     },
     "format-check": {

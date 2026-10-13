@@ -211,6 +211,7 @@ test("base master pushes and automatic diagnostic attempts never spend Mac", () 
   }
 });
 
+// llmlint: ignore[shell_test_tiers_stay_split] This task mandates real subprocess boundaries in the deterministic workflow-recording target; these are integrated contract proofs without external-service or model probes.
 test("required carrier command propagates third-party results and distinguishes authorized omission", () => {
   const ci = graph["ci.yml"];
   const carrier = ci.jobs["mac-result"];
@@ -306,6 +307,7 @@ test("routing resolver rejects unsupported calls, runners, needs and matrix inpu
   );
 });
 
+// llmlint: ignore[shell_test_tiers_stay_split] This task mandates real subprocess boundaries in the deterministic workflow-recording target; these are integrated contract proofs without external-service or model probes.
 test("release artifact authority retains every platform and enforces pre-publication Darwin proofs", () => {
   const platforms = JSON.parse(
     execFileSync(
@@ -378,6 +380,7 @@ test("release artifact authority retains every platform and enforces pre-publica
   }
 });
 
+// llmlint: ignore[shell_test_tiers_stay_split] This task mandates real subprocess boundaries in the deterministic workflow-recording target; these are integrated contract proofs without external-service or model probes.
 test("budget reporters consume recorded telemetry and refuse stale/missing input", () => {
   for (const metric of ["jobs-per-run", "runs-per-change"]) {
     const result = spawnSync(
@@ -485,6 +488,7 @@ test("forged and unreadable PRs drive the actual graph into required Mac coverag
   }
 });
 
+// llmlint: ignore[shell_test_tiers_stay_split] This task mandates real subprocess boundaries in the deterministic workflow-recording target; these are integrated contract proofs without external-service or model probes.
 test("SDK budget analysis alone judges an induced matrix expansion", () => {
   const original = JSON.parse(readFileSync(".github/.telemetry/macos-policy.json", "utf8"));
   const mutated = structuredClone(graph);
@@ -571,7 +575,6 @@ test("workflow decoder rejects unsupported step controls and policy output drift
   for (const control of ["continue-on-error", "timeout-minutes"]) {
     const broken = structuredClone(graph);
     broken["ci.yml"].jobs["mac-check"].steps[0][control] = true;
-    // Drive the actual YAML decoder, not an already-decoded object.
     assert.throws(() => validateWorkflow(broken["ci.yml"]), /step outcome control/);
   }
   const broken = structuredClone(graph);
@@ -586,4 +589,13 @@ test("workflow decoder rejects unsupported step controls and policy output drift
       ),
     /policy output mapping/,
   );
+});
+
+test("production screencomp reader matches the installer and locked reusable version", () => {
+  const caller = graph["visual-docs.yml"].jobs["visual-docs"];
+  const installer = readFileSync(".github/setup-screencomp.sh", "utf8");
+  const version = installer.match(/screencomp ([0-9]+\.[0-9]+\.[0-9]+)/)?.[1];
+  assert.ok(version);
+  assert.equal(caller.with["screencomp-version"], version);
+  assert.ok(caller.uses.endsWith(`@v${version}`));
 });

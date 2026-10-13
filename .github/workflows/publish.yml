@@ -266,6 +266,7 @@ jobs:
             echo "skip: skilltest-sdk $sdk_version already on PyPI"
           else
             echo "publishing: skilltest-sdk $sdk_version (platform wheels + sdist)"
+            python3 scripts/stage-and-verify-release-product.py --check-wheels products
             mkdir -p sdks/python/dist
             cp products/*/*.whl sdks/python/dist/
             rm -rf sdks/python/skilltest_sdk/_bin
