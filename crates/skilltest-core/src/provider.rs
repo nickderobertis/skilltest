@@ -665,6 +665,10 @@ struct OhEnvelope {
 
 #[derive(Deserialize)]
 struct OhResult {
+    #[serde(default)]
+    structured: Option<serde_json::Value>,
+    #[serde(default)]
+    schema_valid: Option<bool>,
     status: String,
     #[serde(default)]
     text: Option<String>,
@@ -694,6 +698,7 @@ struct OhResult {
 
 /// Parameters for one `oneharness run` invocation.
 struct RunArgs<'a> {
+    schema: Option<&'a Path>,
     harness: &'a str,
     model: &'a str,
     prompt: &'a str,
@@ -726,6 +731,7 @@ impl<'a> RunArgs<'a> {
     /// The common mock-less, history-less shape (judge / simulated-user calls).
     fn plain(harness: &'a str, model: &'a str, prompt: &'a str) -> Self {
         RunArgs {
+            schema: None,
             harness,
             model,
             prompt,
@@ -739,6 +745,8 @@ impl<'a> RunArgs<'a> {
 
 /// What we get back from one `oneharness run`.
 struct RunOutcome {
+    structured: Option<serde_json::Value>,
+    schema_valid: Option<bool>,
     text: String,
     session_id: Option<String>,
     usage: Option<Usage>,
@@ -749,6 +757,45 @@ struct RunOutcome {
     /// The absolute path oneharness recorded this run's history to, when history
     /// was on and the run was recorded; `None` otherwise.
     history_file: Option<String>,
+}
+
+/// A uniquely owned schema file, retained while oneharness executes its retries.
+struct SchemaFile {
+    path: PathBuf,
+}
+impl SchemaFile {
+    fn prepare(kind: JudgeKind) -> Result<Self> {
+        use std::fs::OpenOptions;
+        let path = std::env::temp_dir().join(format!(
+            "skilltest-schema-{}-{}.json",
+            std::process::id(),
+            curl_config_nonce()
+        ));
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .map_err(|e| {
+                Error::provider(
+                    "oneharness:judge",
+                    format!("could not create verdict schema: {e}"),
+                )
+            })?;
+        let owned = Self { path };
+        file.write_all(verdict_schema(kind).to_string().as_bytes())
+            .map_err(|e| {
+                Error::provider(
+                    "oneharness:judge",
+                    format!("could not write verdict schema: {e}"),
+                )
+            })?;
+        Ok(owned)
+    }
+}
+impl Drop for SchemaFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
 }
 
 /// The per-run temp files a mock plan needs: the rules JSON `--mock-rules`
@@ -938,6 +985,9 @@ impl OneharnessProvider {
         if !args.model.is_empty() {
             cmd.args(["--model", args.model]);
         }
+        if let Some(schema) = args.schema {
+            cmd.arg("--schema").arg(schema);
+        }
         if let Some(system) = args.system {
             cmd.args(["--system", system]);
         }
@@ -1000,11 +1050,33 @@ impl OneharnessProvider {
         // `history_file` is on the run report, not per result — capture it
         // before consuming `results`.
         let history_file = envelope.history_file;
-        let result = envelope
-            .results
-            .into_iter()
-            .next()
+        let mut results = envelope.results;
+        if results.iter().filter(|r| r.status == "ok").count() > 1 {
+            return Err(Error::provider(
+                "oneharness",
+                "multiple successful results cannot be consumed as a single verdict",
+            ));
+        }
+        let settled = results
+            .iter()
+            .rposition(|r| r.status == "ok")
+            .or_else(|| results.len().checked_sub(1))
             .ok_or_else(|| Error::provider("oneharness", "oneharness returned no results"))?;
+        let result = results.remove(settled);
+        if !output.status.success()
+            && !(args.schema.is_some() && result.schema_valid == Some(false))
+        {
+            return Err(oh_failure(
+                format!("oneharness:{}", args.harness),
+                format!(
+                    "oneharness exited with {}; {}",
+                    output.status,
+                    result.error.as_deref().unwrap_or(&result.stderr)
+                ),
+                result.failure_kind.as_deref(),
+                &result.status,
+            ));
+        }
 
         if result.status != "ok" {
             let detail = result
@@ -1026,14 +1098,18 @@ impl OneharnessProvider {
         // harness's output shape defeats extraction (oneharness's documented
         // contract — see OhResult::stdout). Only a run that produced *neither* is
         // a real error.
-        let text = select_reply_text(result.text, &result.stdout).ok_or_else(|| {
-            Error::provider(
-                format!("oneharness:{}", args.harness),
-                "harness produced neither extractable text nor stdout",
-            )
-        })?;
+        let text = select_reply_text(result.text, &result.stdout)
+            .or_else(|| args.schema.map(|_| String::new()))
+            .ok_or_else(|| {
+                Error::provider(
+                    format!("oneharness:{}", args.harness),
+                    "harness produced neither extractable text nor stdout",
+                )
+            })?;
         let mock_calls = mock_files.as_ref().map(MockFiles::records).transpose()?;
         Ok(RunOutcome {
+            structured: result.structured,
+            schema_valid: result.schema_valid,
             text,
             session_id: result.session_id,
             usage: result.usage,
@@ -1179,6 +1255,8 @@ impl OneharnessProvider {
             // far). The spy log may be torn mid-line by the kill, and an
             // aborted run is never scored, so no records are reported.
             return Ok(RunOutcome {
+                structured: None,
+                schema_valid: None,
                 text: String::new(),
                 session_id: None,
                 usage: None,
@@ -1236,6 +1314,8 @@ impl OneharnessProvider {
         };
         let mock_calls = mock_files.as_ref().map(MockFiles::records).transpose()?;
         Ok(RunOutcome {
+            structured: result.structured,
+            schema_valid: result.schema_valid,
             text,
             session_id: result.session_id,
             usage: result.usage,
@@ -1278,6 +1358,7 @@ impl Provider for OneharnessProvider {
         };
         let history_name = self.history_name(platform, model, messages);
         let outcome = self.run(&RunArgs {
+            schema: None,
             harness: platform,
             model,
             prompt: &prompt,
@@ -1334,6 +1415,7 @@ impl Provider for OneharnessProvider {
         let history_name = self.history_name(platform, model, messages);
         let outcome = self.run_streaming(
             &RunArgs {
+                schema: None,
                 harness: platform,
                 model,
                 prompt: &prompt,
@@ -1376,8 +1458,17 @@ impl Provider for OneharnessProvider {
         messages: &[Message],
     ) -> Result<JudgeVerdict> {
         let prompt = build_judge_prompt(query, messages);
-        let outcome = self.run(&RunArgs::plain(&self.judge_harness, model, &prompt))?;
-        let mut verdict = parse_verdict(query.kind, &outcome.text)?;
+        let schema = SchemaFile::prepare(query.kind)?;
+        let mut args = RunArgs::plain(&self.judge_harness, model, &prompt);
+        args.schema = Some(&schema.path);
+        let outcome = self.run(&args)?;
+        let mut verdict = outcome
+            .structured
+            .as_ref()
+            .filter(|_| outcome.schema_valid == Some(true))
+            .and_then(|value| verdict_from_value(query.kind, value).ok())
+            .map(Ok)
+            .unwrap_or_else(|| parse_verdict(query.kind, &outcome.text))?;
         verdict.usage = outcome.usage;
         Ok(verdict)
     }
@@ -2246,31 +2337,61 @@ fn build_judge_prompt(query: &JudgeQuery<'_>, messages: &[Message]) -> String {
     }
 }
 
-/// Extract the first JSON object from `text`, tolerating code fences and prose
-/// around it (real models do not always emit bare JSON).
-fn extract_json_object(text: &str) -> Option<&str> {
-    let start = text.find('{')?;
-    let end = text.rfind('}')?;
-    if end > start {
-        Some(&text[start..=end])
-    } else {
+/// Enumerate complete objects, accounting for quoted braces and escapes. Starting
+/// at each opening brace also recovers a verdict after an unrelated malformed fragment.
+fn json_objects(text: &str) -> impl Iterator<Item = &str> {
+    text.match_indices('{').filter_map(|(start, _)| {
+        let mut depth = 0;
+        let mut quoted = false;
+        let mut escaped = false;
+        for (offset, ch) in text[start..].char_indices() {
+            if quoted {
+                if escaped {
+                    escaped = false;
+                } else if ch == '\\' {
+                    escaped = true;
+                } else if ch == '"' {
+                    quoted = false;
+                }
+            } else {
+                match ch {
+                    '"' => quoted = true,
+                    '{' => depth += 1,
+                    '}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            return Some(&text[start..start + offset + 1]);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
         None
-    }
+    })
+}
+
+#[cfg(test)]
+fn extract_json_object(text: &str) -> Option<&str> {
+    json_objects(text).next()
 }
 
 fn parse_verdict(kind: JudgeKind, text: &str) -> Result<JudgeVerdict> {
-    let json = extract_json_object(text).ok_or_else(|| {
-        Error::provider(
-            "oneharness:judge",
-            format!("judge did not return a JSON object; got: {text}"),
-        )
-    })?;
-    let value: serde_json::Value = serde_json::from_str(json).map_err(|e| {
-        Error::provider(
-            "oneharness:judge",
-            format!("judge verdict was not valid JSON: {e}; got: {json}"),
-        )
-    })?;
+    let mut last = None;
+    let mut problem = None;
+    for object in json_objects(text) {
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(object) {
+            match verdict_from_value(kind, &value) {
+                Ok(verdict) => last = Some(verdict),
+                Err(error) => problem = Some(error),
+            }
+        }
+    }
+    last.ok_or_else(|| problem.unwrap_or_else(|| Error::provider(
+        "oneharness:judge", format!("judge did not return a usable JSON verdict; got: {text}. Return an object with a correctly typed `value`."))))
+}
+
+fn verdict_from_value(kind: JudgeKind, value: &serde_json::Value) -> Result<JudgeVerdict> {
     let reason = value
         .get("reason")
         .and_then(serde_json::Value::as_str)
