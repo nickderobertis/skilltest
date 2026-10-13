@@ -500,8 +500,8 @@ matrix_rows() {
 declared_builds="$(extract "$platforms_file's builds" declared_cols 1-3)" || exit 1
 matrix_fix="write one '- { target: <triple>, os: <runner>, bin: <file> }' row per $platforms_file platform, with its runner and bin"
 rows="$(matrix_rows "$workflow" binaries)" || exit 1
-# Darwin targets share one sequential job; these are real upload artifact names,
-# checked together with its build loop by github-workflows:test.
+# Darwin builds in its own Apple Silicon job; its targets are read from that
+# job's real upload artifact names (github-workflows:test checks its build step).
 darwin_runner="$(job_body darwin | sed -n 's/^ *runs-on: *\([^ ]*\)$/\1/p')" || { echo 'check-release-targets: cannot extract Darwin runner; restore the literal runs-on field and verify sed is installed' >&2; exit 1; }
 [ -n "$darwin_runner" ] || fail "$workflow has no literal Darwin runner; name the declared runner in its consolidated job"
 darwin_targets="$(job_body darwin | sed -n 's/^ *name: skilltest-\([^ ]*apple-darwin\)$/\1/p')" || { echo 'check-release-targets: cannot extract Darwin artifacts; restore upload names and verify sed is installed' >&2; exit 1; }

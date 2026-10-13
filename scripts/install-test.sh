@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# llmlint: ignore-file[new_code_lands_in_a_project] tests scripts/install.sh, repo-level install glue that belongs to no Nx package; run workspace-wide from `just release-targets-check` (AGENTS.md: scripts/*.sh are orchestrator-independent glue).
 # Test of scripts/install.sh as a user runs it, with only the host identity
 # (uname, sysctl) and the GitHub download transport (curl) doubled: it installs
 # a stand-in release archive on Linux and Apple Silicon macOS, takes the arm64

@@ -24,8 +24,9 @@ if [ -z "$VERSION" ]; then
   echo "error: set-version.sh requires a semver version, e.g. set-version.sh 0.4.1" >&2
   exit 2
 fi
-# Accept X.Y.Z plus an optional prerelease/build suffix (semantic-release may pass one).
-if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)*$'; then
+# Accept X.Y.Z plus one optional prerelease/build suffix (semantic-release may
+# pass one): the release grammar github-workflows:test holds every release script to.
+if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$'; then
   echo "error: '$VERSION' is not a semver version (expected like 0.4.1)" >&2
   exit 2
 fi

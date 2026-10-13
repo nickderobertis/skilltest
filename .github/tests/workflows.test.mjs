@@ -719,7 +719,7 @@ test("workflow decoder refuses fields it does not model instead of dropping them
 });
 
 // llmlint: ignore[shell_test_tiers_stay_split] Each release script's version grammar is exercised through its own interpreter, which is the drift this test exists to catch; no network, service or model is reached.
-test("every release script accepts exactly the classifier's version grammar", () => {
+test("every release script accepts exactly the classifier's version grammar", (t) => {
   const samples = [
     "0.12.2",
     "10.0.0",
@@ -757,11 +757,43 @@ print(json.dumps([bool(m.VERSION.fullmatch(v)) for v in json.loads(sys.argv[2])]
         encoding: "utf8",
       }).status === 0,
   );
+  // set-version.sh writes the version into the repository after validating it,
+  // so it runs from a scratch copy whose cargo stops it at its first write step.
+  const root = mkdtempSync(
+    join(process.env.ONEPIPELINE_NODE_SCRATCH_DIR ?? "/tmp", "set-version-"),
+  );
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  mkdirSync(join(root, "scripts"));
+  mkdirSync(join(root, "bin"));
+  writeFileSync(join(root, "scripts", "set-version.sh"), readFileSync("scripts/set-version.sh"));
+  writeFileSync(join(root, "bin", "cargo"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+  const writer = samples.map((v) => {
+    const result = spawnSync("bash", [join(root, "scripts", "set-version.sh"), v], {
+      cwd: root,
+      env: { ...process.env, PATH: `${join(root, "bin")}:${process.env.PATH}` },
+      encoding: "utf8",
+    });
+    assert.notEqual(result.status, 0, "the scratch copy must stop before writing a lockfile");
+    if (/refresh Cargo\.lock failed/.test(result.stderr)) return true;
+    assert.match(result.stderr, /is not a semver version|requires a semver version/);
+    return false;
+  });
+  const verifier = samples.map((v) => {
+    const result = spawnSync(
+      "bash",
+      ["scripts/verify-release-archive.sh", root, "x86_64-unknown-linux-gnu", "skilltest", v],
+      { encoding: "utf8" },
+    );
+    assert.notEqual(result.status, 0, "the scratch directory holds no archive");
+    return !/is not X\.Y\.Z|usage:/.test(result.stderr);
+  });
   const expected = samples.map((v) => releaseVersion.test(v));
   assert.ok(expected.some(Boolean) && !expected.every(Boolean));
   assert.deepEqual(python(".github/semantic-version-diff.py"), expected);
   assert.deepEqual(python("scripts/stage-and-verify-release-product.py"), expected);
   assert.deepEqual(shell, expected);
+  assert.deepEqual(writer, expected);
+  assert.deepEqual(verifier, expected);
 });
 
 // llmlint: ignore[shell_test_tiers_stay_split] loadGraph reads the lock and fixture relative to its working directory, so each corruption runs it in a scratch copy; no network, service or model is reached.

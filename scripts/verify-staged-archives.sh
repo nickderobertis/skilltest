@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# llmlint: ignore-file[new_code_lands_in_a_project] repo-level release glue that belongs to no Nx package; publish.yml's products job and release.yml's upload job run it on Linux (AGENTS.md: scripts/*.sh are orchestrator-independent glue).
 # Proves a staged release-products directory holds a good archive for every
 # platform release-platforms.toml declares, without executing any binary: each
 # products/<target>/ archive is checked by verify-release-archive.sh

@@ -9,7 +9,8 @@
       "{projectRoot}/**/*",
       "sharedGlobals",
       "{workspaceRoot}/pyproject.toml",
-      "{workspaceRoot}/uv.lock"
+      "{workspaceRoot}/uv.lock",
+      "{workspaceRoot}/release-platforms.toml"
     ]
   },
   "targets": {
