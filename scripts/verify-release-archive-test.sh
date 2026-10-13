@@ -297,4 +297,19 @@ grep -Fq "staged aarch64-pc-windows-msvc archive failed verification" "$work/out
 stage_products
 expect_aggregate_red "it was called without a version" "usage: verify-staged-archives.sh" "$work/products"
 
+# --list-assets names exactly each declared archive and its checksum, which
+# release.yml uploads; an undeclared asset staged beside them is refused.
+"$BASH" scripts/verify-staged-archives.sh "$work/products" 1.2.3 --list-assets >"$work/out" 2>"$work/err" ||
+  fail "the aggregation refused complete products when listing assets: $(cat "$work/err")"
+expected_assets="$(while read -r target bin; do
+  case "$bin" in *.exe) asset="skilltest-$target.zip" ;; *) asset="skilltest-$target.tar.gz" ;; esac
+  printf '%s\n%s\n' "$work/products/$target/$asset" "$work/products/$target/$asset.sha256"
+done <<<"$declared")"
+[ "$(sort "$work/out")" = "$(sort <<<"$expected_assets")" ] ||
+  fail "--list-assets did not print exactly the declared archives and checksums; release.yml would upload the wrong set"
+
+cp "$work/products/aarch64-apple-darwin/skilltest-aarch64-apple-darwin.tar.gz" "$work/products/aarch64-apple-darwin/skilltest-x86_64-apple-darwin.tar.gz" ||
+  fail "could not stage an undeclared archive; check that $work is writable"
+expect_aggregate_red "an undeclared archive was staged" "skilltest-x86_64-apple-darwin.tar.gz is not a declared release asset" "$work/products" 1.2.3 --list-assets
+
 echo "verify-release-archive-test: the verifier passes good .tar.gz and Windows .zip archives and refuses each way one can be wrong; the products aggregation verifies every declared platform"

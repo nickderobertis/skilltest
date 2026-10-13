@@ -241,11 +241,22 @@ const uploads = readFileSync(uploadLog, "utf8")
   .map((line) => JSON.parse(line))
   .filter((c) => c.command === "gh" && c.args[1] === "upload")
   .flatMap((c) => c.args.filter((a) => a.startsWith("products/")));
-for (const p of platforms) {
-  const asset = `skilltest-${p.target}.${p.bin.endsWith(".exe") ? "zip" : "tar.gz"}`;
-  assert.ok(uploads.some((f) => f.endsWith(`/${asset}`)));
-  assert.ok(uploads.some((f) => f.endsWith(`/${asset}.sha256`)));
-}
+// Exactly the declared archives and checksums reach the forge, nothing else.
+const declaredAssets = platforms.flatMap((p) => {
+  const asset = `products/${p.target}/skilltest-${p.target}.${p.bin.endsWith(".exe") ? "zip" : "tar.gz"}`;
+  return [asset, `${asset}.sha256`];
+});
+assert.deepEqual([...new Set(uploads)].sort(), declaredAssets.sort());
+// An undeclared asset staged in products stops the upload before any is sent.
+const stray = join(fixture, "products", platforms[0].target, "skilltest-undeclared.zip");
+writeFileSync(stray, "not a declared release asset");
+const strayLog = join(work, "stray-asset.jsonl");
+writeFileSync(strayLog, "");
+result = run(archive, 0, strayLog);
+assert.notEqual(result.status, 0);
+assert.match(result.stderr, /skilltest-undeclared\.zip is not a declared release asset/);
+assert.ok(!readFileSync(strayLog, "utf8").includes('"upload"'));
+rmSync(stray);
 const existingLog = join(work, "existing-release.jsonl");
 writeFileSync(existingLog, "");
 result = spawnSync("bash", ["-c", archive], {

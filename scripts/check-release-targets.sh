@@ -518,8 +518,8 @@ compare_platforms "$workflow's binaries matrix" "$declared_builds" "$rows" "$mat
 # checks exact-run downloads.
 grep -Eq '^ +bash scripts/verify-staged-archives\.sh products ' < <(job_body products) ||
   fail "$workflow's products job does not run scripts/verify-staged-archives.sh over products; verify every declared archive there before publishing"
-grep -Eq '^ +bash scripts/verify-staged-archives\.sh products ' "$release_workflow" ||
-  fail "$release_workflow does not run scripts/verify-staged-archives.sh over products; verify every declared archive before uploading"
+grep -Fq 'assets="$(bash scripts/verify-staged-archives.sh products "${TAG#v}" --list-assets)"' "$release_workflow" ||
+  fail "$release_workflow does not run scripts/verify-staged-archives.sh over products; verify every declared archive before uploading and upload only the assets it lists"
 
 windows_only() { printf '%s\n' "$declared_builds" | awk -F'\t' '$1 ~ /-windows-/'; }
 windows_builds="$(extract "$platforms_file's Windows builds" windows_only)" || exit 1

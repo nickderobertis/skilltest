@@ -37,6 +37,9 @@ jobs:
           version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
           git fetch origin "refs/tags/$TAG:refs/tags/$TAG"
           bash scripts/check-release-identity.sh "$TAG" "$version" "$HEAD" "$(git rev-parse "$TAG^{commit}")"
-          bash scripts/verify-staged-archives.sh products "${TAG#v}"
+          # Upload exactly the declared archives and checksums the verifier
+          # proved; it refuses any other asset staged in products.
+          assets="$(bash scripts/verify-staged-archives.sh products "${TAG#v}" --list-assets)"
+          mapfile -t uploads <<<"$assets"
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --title "$TAG"
-          find products -type f \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.sha256' \) -exec gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber '{}' +
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "${uploads[@]}"

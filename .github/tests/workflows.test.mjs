@@ -32,7 +32,8 @@ const classes = [
   ["manual-default", "workflow_dispatch"],
   ["manual-opt-in", "workflow_dispatch"],
 ];
-// The recorded workload is the one telemetry validation requires.
+// Validation refuses telemetry that omits any class it demands, so recording
+// a different list would fail every budget run rather than measure less.
 assert.deepEqual(
   classes.map(([label]) => label),
   workload.eventClasses,
@@ -366,7 +367,7 @@ test("release artifact authority retains every platform and enforces pre-publica
   for (const job of [graph["release.yml"].jobs.upload, publish.products])
     assert.ok(
       job.steps.some((s) =>
-        /^\s*bash scripts\/verify-staged-archives\.sh products /m.test(s.run ?? ""),
+        /bash scripts\/verify-staged-archives\.sh products /.test(s.run ?? ""),
       ),
     );
   for (const script of [

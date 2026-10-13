@@ -288,13 +288,42 @@ test("description reads the actual baseline graph and renders typed hosted obser
       ],
     }),
   );
+  // A baseline whose bundle smoke still ran an Apple Silicon lane: the table must
+  // count it from that baseline and this tree's graph, not restate fixed text.
+  const workflows = join(h.dir, ".github", "workflows");
+  cpSync(".github/workflows", workflows, { recursive: true });
+  const smoke = join(workflows, "bundle-smoke.yml");
+  const lane = "          - { target: aarch64-unknown-linux-gnu, os: ubuntu-24.04-arm }\n";
+  assert.ok(readFileSync(smoke, "utf8").includes(lane));
+  writeFileSync(
+    smoke,
+    readFileSync(smoke, "utf8").replace(
+      lane,
+      `${lane}          - { target: aarch64-apple-darwin, os: macos-14 }\n`,
+    ),
+  );
+  const git = (...args) => execFileSync("git", args, { cwd: h.dir, encoding: "utf8" }).trim();
+  git("add", ".github");
+  git("commit", "--quiet", "-m", "baseline workflows");
+  const baseline = git("rev-parse", "HEAD");
   const result = spawnSync(
     process.execPath,
-    [".github/scheduling-description.mjs", "origin/main", observed],
-    { encoding: "utf8" },
+    [".github/scheduling-description.mjs", baseline, observed],
+    { encoding: "utf8", env: { ...process.env, GIT_DIR: join(h.dir, ".git") } },
   );
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /ci.yml/);
+  const rows = result.stdout.split("\n").filter((line) => /^\| [\w-]+\.yml \|/.test(line));
+  assert.deepEqual(rows, [
+    "| bundle-smoke.yml | 1; push (main); pull_request | 0; push (main); pull_request |",
+    "| ci.yml | 1; push (main); pull_request | 1; push (main); pull_request |",
+    "| publish.yml | 1; push (v*); workflow_dispatch | 1; push (v*); workflow_dispatch |",
+  ]);
+  assert.match(
+    result.stdout,
+    /^\| aarch64-apple-darwin \| skilltest-aarch64-apple-darwin\.tar\.gz \+ sha256 \| macosx_11_0_arm64 \| @skill-test\/cli-darwin-arm64 \|$/m,
+  );
+  assert.doesNotMatch(result.stdout, /\| x86_64-apple-darwin/);
+  assert.match(result.stdout, /Intel macOS artifacts are discontinued from the next release/);
   assert.match(result.stdout, /fixture-head/);
   assert.match(result.stdout, /queued\/pending/);
   assert.match(result.stdout, /not passing-test claims/);
