@@ -474,6 +474,7 @@ export function reconcileTelemetry(telemetry, graph) {
         `stale telemetry: ${scenario.label} records [${scenario.workflows.join(", ")}] but the committed workflows fire [${fires.join(", ")}]`,
       );
   }
+  // llmlint: ignore[boundary_inputs_validated, contracts_have_one_source_or_a_drift_gate] the brief requires the budget reporters to read recorded telemetry and never re-run a scenario; a row's runner, requested state and matrix multiplicity exist only by evaluating each job's conditions and matrix for that event, which is the scenario run github-workflows:test performs (asserting Mac rows per route) and binds to the tree by sourceDigest; the reporter checks every declaration it can without that evaluation.
   for (const run of telemetry.runs) {
     const declared = Object.keys(graph[run.workflow]?.jobs ?? {}).sort();
     if (declared.join(",") !== [...run.declaredJobs].sort().join(","))

@@ -233,6 +233,7 @@ export function telemetry(value) {
   });
   // Every job the workflow declares must be accounted for by a row of its own
   // or, for a reusable call, by its callee's rows (or the skipped call's row).
+  // llmlint: ignore[boundary_inputs_validated] the brief requires the budget reporters to read recorded telemetry and never re-run a scenario; a row's runner, requested state and matrix multiplicity exist only by evaluating each job's conditions and matrix for that event, which is the scenario run github-workflows:test performs (asserting Mac rows per route) and binds to the tree by sourceDigest; the reporter checks every declaration it can without that evaluation.
   for (const run of runs) {
     if (!run.declaredJobs.length) throw new Error(`run ${run.id} declares no jobs`);
     for (const job of run.declaredJobs)
