@@ -153,6 +153,7 @@ it("shares overrides across buffered and streaming calls and retains zero", asyn
   ).rejects.toBeInstanceOf(SkilltestUsageError);
 });
 
+// llmlint: ignore-block[shell_test_tiers_stay_split] Manager-approved task-required API-judge boundary proof runs in the existing SDK test-e2e target alongside its real-oneharness journeys.
 it("routes API judge overrides through HTTP in both run modes", async () => {
   const requests: { model: string; response_format?: unknown }[] = [];
   const server = createServer((request, response) => {
@@ -227,3 +228,4 @@ it("routes API judge overrides through HTTP in both run modes", async () => {
     );
   }
 });
+// llmlint: ignore-end[shell_test_tiers_stay_split]
