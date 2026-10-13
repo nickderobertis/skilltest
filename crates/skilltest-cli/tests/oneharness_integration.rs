@@ -1021,3 +1021,40 @@ fn role_inheritance_empty_defaults_named_overrides_and_deadlines() {
     let error: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(error["kind"], "timeout", "{error}");
 }
+
+#[test]
+#[ignore = "requires the oneharness fixture host tools"]
+fn scripted_boundaries_explain_invalid_inputs() {
+    for flag in [
+        "--json-schema",
+        "--model",
+        "--permission-mode",
+        "--output-format",
+    ] {
+        let output = Command::new(shim()).arg(flag).output().unwrap();
+        assert_eq!(output.status.code(), Some(2));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(&format!("{flag} requires a value")),
+            "{stderr}"
+        );
+        assert!(stderr.contains("rerun"), "{stderr}");
+    }
+    let output = Command::new(fixtures().join("fake-goose.sh"))
+        .arg("-t")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("pass -t <prompt>"));
+    let output = Command::new(shim())
+        .env("ROLE_SLEEP", "invalid-duration")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("invalid ROLE_SLEEP 'invalid-duration'"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("set a valid sleep duration"), "{stderr}");
+}

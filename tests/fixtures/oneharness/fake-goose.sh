@@ -9,7 +9,13 @@ command -v jq >/dev/null 2>&1 || {
 prompt=""
 args=("$@")
 for ((i=0; i<${#args[@]}; i++)); do
-    if [[ "${args[$i]}" == "-t" ]]; then prompt="${args[$((i+1))]}"; fi
+    if [[ "${args[$i]}" == "-t" ]]; then
+        if (( i + 1 >= ${#args[@]} )); then
+            echo "fake-goose: -t requires a prompt; pass -t <prompt> and rerun the integration test" >&2
+            exit 2
+        fi
+        prompt="${args[$((i+1))]}"
+    fi
 done
 if [[ -n "${SKILLTEST_BOUNDARY_LOG:-}" ]]; then
     if ! jq -cn --arg prompt "$prompt" --arg role "${ROLE_MARKER:-goose}" \

@@ -64,6 +64,13 @@ args=("$@")
 i=0
 while [ $i -lt ${#args[@]} ]; do
     case "${args[$i]}" in
+        -p | --settings | --append-system-prompt | --json-schema | --model | --permission-mode | --output-format)
+            if [ $((i + 1)) -ge ${#args[@]} ]; then
+                echo "fake-claude: ${args[$i]} requires a value; pass ${args[$i]} <value> and rerun the integration test" >&2
+                exit 2
+            fi ;;
+    esac
+    case "${args[$i]}" in
         -p) prompt="${args[$((i + 1))]}"; i=$((i + 2)) ;;
         --settings) settings="${args[$((i + 1))]}"; i=$((i + 2)) ;;
         --append-system-prompt) system="${args[$((i + 1))]}"; i=$((i + 2)) ;;
@@ -93,7 +100,10 @@ if [ -n "${SKILLTEST_BOUNDARY_LOG:-}" ]; then
     fi
 fi
 
-if [ -n "${ROLE_SLEEP:-}" ]; then sleep "$ROLE_SLEEP"; fi
+if [ -n "${ROLE_SLEEP:-}" ] && ! sleep "$ROLE_SLEEP"; then
+    echo "fake-claude: invalid ROLE_SLEEP '$ROLE_SLEEP'; set a valid sleep duration and rerun the integration test" >&2
+    exit 2
+fi
 
 # A judge/user-simulation run (no skill => no --append-system-prompt): reply
 # with a passing verdict so judge-backed evals resolve deterministically.
@@ -121,9 +131,11 @@ if [ -z "$system" ]; then
             fi
             structured='{"value":"wrong type","reason":"retry me"}'
         fi
+        # shellcheck disable=SC2016 # Single-quoted programs use jq variables, not shell expansions.
         emit --arg t "$text" --argjson s "$structured" \
             '{type:"result", result:$t, structured_output:$s, session_id:"fake-claude-judge", usage:{input_tokens:3, output_tokens:1}}'
     else
+        # shellcheck disable=SC2016 # Single-quoted programs use jq variables, not shell expansions.
         emit --arg t "$text" \
             '{type:"result", result:$t, session_id:"fake-claude-judge", usage:{input_tokens:3, output_tokens:1}}'
     fi

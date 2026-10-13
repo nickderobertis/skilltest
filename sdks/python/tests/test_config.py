@@ -174,9 +174,8 @@ def test_documented_config_loads_through_the_cli(fixtures: Path, tmp_path: Path)
         assert "no test" in result.stderr or "no cases" in result.stderr, result.stderr
 
 
-# Manager-approved API-judge boundary proof stays in the existing SDK test-e2e
-# target alongside its real-oneharness journeys.
-# llmlint: ignore-block[shell_test_tiers_stay_split] Task requires this SDK API edge.
+# llmlint: ignore-block[shell_test_tiers_stay_split] Required SDK API boundary proof.
+# The existing SDK test-e2e target also owns real-oneharness journeys.
 def test_api_judge_overrides_reach_http_for_buffered_and_streaming(
     cases: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
