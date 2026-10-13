@@ -512,10 +512,14 @@ ${target}\t${darwin_runner}\tskilltest"
 done <<<"$darwin_targets"
 rows="$(printf '%b\n' "$rows")"
 compare_platforms "$workflow's binaries matrix" "$declared_builds" "$rows" "$matrix_fix"
-# release.yml transports already built artifacts on Linux; it no longer owns
-# a compiler matrix. The executable graph contract checks exact-run downloads.
-release_targets="$(sed -n 's/^ *for target in \(.*\); do$/\1/p' "$release_workflow" | tr ' ' '\n' | sort)" || { echo 'check-release-targets: cannot read archive transport targets; restore release.yml and verify sed, tr and sort are installed' >&2; exit 1; }
-compare_platforms "$release_workflow's archive targets" "$(printf '%s\n' "$declared_builds" | cut -f1 | sort)" "$release_targets" "retain each declared platform in the Linux upload loop"
+# publish.yml's products job and release.yml's upload verify the staged
+# archives with verify-staged-archives.sh, which reads release-platforms.toml
+# itself, so neither restates the platform list. The executable graph contract
+# checks exact-run downloads.
+grep -Eq '^ +bash scripts/verify-staged-archives\.sh products ' < <(job_body products) ||
+  fail "$workflow's products job does not run scripts/verify-staged-archives.sh over products; verify every declared archive there before publishing"
+grep -Eq '^ +bash scripts/verify-staged-archives\.sh products ' "$release_workflow" ||
+  fail "$release_workflow does not run scripts/verify-staged-archives.sh over products; verify every declared archive before uploading"
 
 windows_only() { printf '%s\n' "$declared_builds" | awk -F'\t' '$1 ~ /-windows-/'; }
 windows_builds="$(extract "$platforms_file's Windows builds" windows_only)" || exit 1

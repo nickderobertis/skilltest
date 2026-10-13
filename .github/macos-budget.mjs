@@ -16,7 +16,7 @@ try {
   const telemetry = validateTelemetry(
     JSON.parse(readFileSync(path.startsWith(".telemetry/") ? `.github/${path}` : path, "utf8")),
   );
-  if (telemetry.schema_version !== 1 || telemetry.sourceDigest !== sourceDigest())
+  if (telemetry.schema_version !== 2 || telemetry.sourceDigest !== sourceDigest())
     throw new Error("missing or stale workflow telemetry; run github-workflows:test");
   if (
     !Array.isArray(telemetry.runs) ||

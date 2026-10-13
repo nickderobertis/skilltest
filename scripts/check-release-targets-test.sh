@@ -206,9 +206,14 @@ expect_red "publish.yml's binaries matrix lost a Windows target" \
   "publish.yml's binaries matrix lacks 'aarch64-pc-windows-msvc	windows-11-arm	skilltest.exe'"
 
 stage
-edit .github/workflows/release.yml 's/ x86_64-pc-windows-msvc aarch64-pc-windows-msvc; do/ aarch64-pc-windows-msvc; do/'
-expect_red "release.yml's archive transport lost the Windows x64 archive" \
-  "release.yml's archive targets lacks 'x86_64-pc-windows-msvc'"
+edit .github/workflows/release.yml '/bash scripts\/verify-staged-archives.sh products/d'
+expect_red "release.yml stopped verifying the staged archives before upload" \
+  "release.yml does not run scripts/verify-staged-archives.sh over products"
+
+stage
+edit .github/workflows/publish.yml '/bash scripts\/verify-staged-archives.sh products/d'
+expect_red "publish.yml's products job stopped verifying the staged archives" \
+  "publish.yml's products job does not run scripts/verify-staged-archives.sh over products"
 
 stage
 edit scripts/build-python-dist.sh 's/ x86_64-pc-windows-msvc aarch64-pc-windows-msvc"$/"/'

@@ -37,9 +37,6 @@ jobs:
           version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
           git fetch origin "refs/tags/$TAG:refs/tags/$TAG"
           bash scripts/check-release-identity.sh "$TAG" "$version" "$HEAD" "$(git rev-parse "$TAG^{commit}")"
-          for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu aarch64-apple-darwin x86_64-pc-windows-msvc aarch64-pc-windows-msvc; do
-            case "$target" in *-windows-*) bin=skilltest.exe ;; *) bin=skilltest ;; esac
-            bash scripts/verify-release-archive.sh "products/$target" "$target" "$bin" "${TAG#v}" --contents-only
-          done
+          bash scripts/verify-staged-archives.sh products "${TAG#v}"
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --title "$TAG"
           find products -type f \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.sha256' \) -exec gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber '{}' +

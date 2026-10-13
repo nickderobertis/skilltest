@@ -10,8 +10,8 @@ export interface Scenario {event_name:string; ref:string; label?:string;action?:
 export interface Classification {isReleaseOnly?:boolean;macosRequired:boolean;reason?:string;}
 export interface Row {workflow:string;event:string;job:string;name:string;runner:string;target:unknown;requested:boolean;result:Result;caller?:string;}
 export interface ResolvedRun {rows:Row[];results:Record<string,Outcome>;}
-export interface RecordedRun {id:string;scenario:string;event:string;workflow:string;manual:boolean;jobs:Row[];}
+export interface RecordedRun {id:string;scenario:string;event:string;workflow:string;manual:boolean;declaredJobs:string[];jobs:Row[];}
 export interface Lifecycle {id:string;runs:string[];optionalPublish:Record<string,boolean>;}
-export interface RecordedScenario {label:string;classification:{isReleaseOnly:boolean;macosRequired:boolean;reason:string};}
-export interface Telemetry {schema_version:1;sourceDigest:string;scenarios:RecordedScenario[];runs:RecordedRun[];lifecycles:Lifecycle[];}
+export interface RecordedScenario {label:string;workflows:string[];classification:{isReleaseOnly:boolean;macosRequired:boolean;reason:string};}
+export interface Telemetry {schema_version:2;sourceDigest:string;scenarios:RecordedScenario[];runs:RecordedRun[];lifecycles:Lifecycle[];}
 export interface Observation {head:string;runs:{name:string;html_url:string;status:string;conclusion:string|null;jobs:{name:string;status:string;conclusion:string|null}[]}[];}

@@ -53,6 +53,7 @@ for (const path of [
   "sdks/typescript",
   "plugins/vitest",
   "scripts/verify-release-archive.sh",
+  "scripts/verify-staged-archives.sh",
   "scripts/stage-and-verify-release-product.py",
   "scripts/check-release-identity.sh",
 ])

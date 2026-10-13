@@ -147,11 +147,8 @@ jobs:
           path: products
       - name: Verify every staged archive without executing foreign binaries
         run: |
-          for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu aarch64-apple-darwin x86_64-pc-windows-msvc aarch64-pc-windows-msvc; do
-            case "$target" in *-windows-*) bin=skilltest.exe ;; *) bin=skilltest ;; esac
-            version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
-            bash scripts/verify-release-archive.sh "products/$target" "$target" "$bin" "$version" --contents-only
-          done
+          version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
+          bash scripts/verify-staged-archives.sh products "$version"
       - uses: actions/upload-artifact@v4
         with:
           name: release-products

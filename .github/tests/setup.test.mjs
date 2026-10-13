@@ -15,7 +15,7 @@ import test from "node:test";
 import { event, history } from "./history.mjs";
 
 // llmlint: ignore[shell_test_tiers_stay_split] The task requires these deterministic real subprocess boundaries in the integrated workflow-recording test target; no external-service or model probe runs here.
-test("screencomp provisioning exercises real filesystem/extraction with only forge transport doubled", (t) => {
+test("screencomp provisioning exercises real filesystem/extraction with only host identity (uname) and forge transport doubled", (t) => {
   const root = mkdtempSync(
     join(process.env.ONEPIPELINE_NODE_SCRATCH_DIR ?? "/tmp", "screencomp-install-"),
   );

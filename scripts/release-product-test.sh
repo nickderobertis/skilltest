@@ -23,6 +23,30 @@ provider="target/$target/release/skilltest-fake-provider"
 bash scripts/stage-release-product.sh "$target" "$binary" "$work/products"
 version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
 bash scripts/verify-release-archive.sh "$work/products" "$target" skilltest "$version"
+# The emitted payload evidence must name the staged files and hash the bytes
+# each form actually carries, all equal to the compiled binary.
+python3 - "$work/products" "$binary" "$target" "$version" <<'PY' || { echo 'release-product-test: payload.json disagrees with the staged products; fix the evidence written by scripts/stage-and-verify-release-product.py' >&2; exit 1; }
+import hashlib, json, sys, tarfile, zipfile
+from pathlib import Path
+products, binary, target, version = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3], sys.argv[4]
+sha = lambda data: hashlib.sha256(data).hexdigest()
+evidence = json.loads((products / "payload.json").read_text())
+assert (evidence["target"], evidence["version"]) == (target, version), evidence
+built = sha(binary.read_bytes())
+assert evidence["binary_sha256"] == built, "binary digest is not the compiled binary's"
+with tarfile.open(products / evidence["archive"]) as t:
+    member = t.extractfile("skilltest")
+    assert member is not None, "archive lacks its binary"
+    archive = sha(member.read())
+with zipfile.ZipFile(products / evidence["wheel"]) as z:
+    wheel = sha(z.read("skilltest_sdk/_bin/skilltest"))
+with tarfile.open(products / evidence["npm"]) as t:
+    member = t.extractfile("package/bin/skilltest")
+    assert member is not None, "npm carrier lacks its binary"
+    npm = sha(member.read())
+assert evidence["payload_sha256"] == {"archive": archive, "wheel": wheel, "npm": npm}, evidence
+assert {archive, wheel, npm} == {built}, "a packaging form carries different bytes"
+PY
 bash scripts/smoke-python-bundle.sh "$target" "$binary" "$provider" "$work/products"
 bash scripts/smoke-npm-bundle.sh "$target" "$binary" "$provider" "$work/products"
 cp -r "$work/products" "$work/native-products" || { echo 'release-product-test: cannot retain native products; check scratch permissions and free space' >&2; exit 1; }

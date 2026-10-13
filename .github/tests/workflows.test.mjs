@@ -13,6 +13,7 @@ import {
   scenarioRuns,
   stepEnv,
   sourceDigest,
+  triggered,
 } from "../workflow-graph.mjs";
 import { classifyCLI, event, history } from "./history.mjs";
 
@@ -83,7 +84,11 @@ test("actual workflow graph across the complete workload records telemetry", (t)
           diff === "source" ? h.source : diff === "dependency" ? h.dependency : h.release,
         );
         const resolved = scenarioRuns(graph, e, classified);
-        scenarios.push({ label: e.label, classification: classified });
+        scenarios.push({
+          label: e.label,
+          workflows: Object.keys(graph).filter((file) => triggered(graph[file], e)),
+          classification: classified,
+        });
         byClass[label] = [];
         for (const run of resolved) {
           const id = `${e.label}:${run.workflow}`;
@@ -93,6 +98,7 @@ test("actual workflow graph across the complete workload records telemetry", (t)
             event: name,
             workflow: run.workflow,
             manual: label.startsWith("manual-"),
+            declaredJobs: Object.keys(graph[run.workflow].jobs),
             jobs: run.rows,
           });
           byClass[label].push(id);
@@ -195,7 +201,7 @@ test("actual workflow graph across the complete workload records telemetry", (t)
   writeFileSync(
     ".github/.telemetry/macos-policy.json",
     `${JSON.stringify(
-      { schema_version: 1, sourceDigest: sourceDigest(), scenarios, runs, lifecycles },
+      { schema_version: 2, sourceDigest: sourceDigest(), scenarios, runs, lifecycles },
       null,
       2,
     )}\n`,
@@ -353,8 +359,16 @@ test("release artifact authority retains every platform and enforces pre-publica
           (r) => r.target === p.target && r.os === p.runner && r.bin === p.bin,
         ),
       );
-    assert.ok(graph["release.yml"].jobs.upload.steps.find((s) => s.run)?.run.includes(p.target));
   }
+  // Both aggregation points verify every declared archive through the one
+  // script that reads release-platforms.toml (scripts/verify-release-archive-test.sh
+  // drives it over staged products).
+  for (const job of [graph["release.yml"].jobs.upload, publish.products])
+    assert.ok(
+      job.steps.some((s) =>
+        /^\s*bash scripts\/verify-staged-archives\.sh products /m.test(s.run ?? ""),
+      ),
+    );
   for (const script of [
     "stage-release-product.sh",
     "verify-release-archive.sh",
@@ -614,6 +628,42 @@ test("SDK budget analysis alone judges an induced matrix expansion", () => {
         t.runs[0].scenario = "unrecorded";
       },
       /names no recorded scenario/,
+    ],
+    // An execution record missing a triggered run, a job row or a lifecycle
+    // stage would undercount Mac spending, so each is refused.
+    [
+      (t) => {
+        t.runs = t.runs.filter((r) => r.id !== "schedule/source/fork:visual-docs.yml");
+      },
+      /schedule\/source\/fork has no run for visual-docs.yml/,
+    ],
+    [
+      (t) => {
+        const run = t.runs.find((r) => r.id === "release-tag/source/fork:publish.yml");
+        run.jobs = run.jobs.filter((j) => j.job !== "darwin");
+      },
+      /incomplete run release-tag\/source\/fork:publish.yml: no job row for darwin/,
+    ],
+    [
+      (t) => {
+        const run = t.runs.find((r) => r.id === "release-pr-merge/source/fork:visual-docs.yml");
+        run.jobs = [];
+      },
+      /no job row for visual-docs/,
+    ],
+    [
+      (t) => {
+        t.lifecycles[0].runs = t.lifecycles[0].runs.filter((id) => !id.startsWith("release-tag/"));
+      },
+      /incomplete lifecycle source\/same-repository\/publish-0: omits release-tag/,
+    ],
+    [
+      (t) => {
+        t.lifecycles[0].runs = t.lifecycles[0].runs.filter(
+          (id) => !id.startsWith("pr-opened/version-only/same-repository:"),
+        );
+      },
+      /omits pr-opened\/version-only\/same-repository/,
     ],
   ]) {
     const malformed = structuredClone(original);

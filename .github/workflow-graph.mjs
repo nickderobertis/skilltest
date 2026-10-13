@@ -349,6 +349,18 @@ export function resolveRun(
           rows.push(...sub.rows.map((row) => ({ ...row, caller: `${file}:${id}` })));
           if (Object.values(sub.results).some((r) => r.result === "failure")) result = "failure";
         }
+        // A skipped call requests no runner; its row keeps the job accounted for.
+        else
+          rows.push({
+            workflow: file,
+            event: scenario.label ?? scenario.event_name,
+            job: id,
+            name,
+            runner: "none (skipped call)",
+            target: null,
+            requested: false,
+            result: "skipped",
+          });
       } else {
         if (typeof job["runs-on"] !== "string" && !Array.isArray(job["runs-on"]))
           throw new Error(`${file}:${id}: unresolved runner`);

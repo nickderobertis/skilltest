@@ -100,6 +100,17 @@ export const workload = {
   diffs: ["source", "version-only", "dependency"],
   ownerships: ["same-repository", "fork"],
   optionalPublish: ["crates", "pypi", "npm"],
+  // Every automatic stage of one change's lifecycle, per diff/ownership, plus
+  // the automation's version-only release PR that follows it.
+  lifecycleStages: [
+    "pr-synchronize",
+    "base-push",
+    "release-pr-merge",
+    "release-tag",
+    "release-published",
+    "downstream",
+  ],
+  releasePullRequest: "pr-opened/version-only/same-repository",
 };
 /** @param {unknown} value @returns {import('./models.js').Workflow} */
 export function workflow(value) {
@@ -193,7 +204,7 @@ export function workflow(value) {
 /** @param {unknown} value @returns {import('./models.js').Telemetry} */
 export function telemetry(value) {
   const doc = object(value, "telemetry");
-  if (doc.schema_version !== 1) throw new Error("unsupported telemetry schema");
+  if (doc.schema_version !== 2) throw new Error("unsupported telemetry schema");
   const runs = array(doc.runs, "runs").map((raw) => {
     const run = object(raw, "run");
     const jobs = array(run.jobs, "jobs").map((rawJob) => {
@@ -203,6 +214,7 @@ export function telemetry(value) {
         event: string(job.event, "event"),
         job: string(job.job, "job"),
         name: string(job.name, "name"),
+        caller: job.caller === undefined ? undefined : string(job.caller, "caller"),
         runner: string(job.runner, "runner"),
         target: job.target,
         requested: boolean(job.requested, "requested"),
@@ -215,9 +227,24 @@ export function telemetry(value) {
       event: string(run.event, "event"),
       workflow: string(run.workflow, "workflow"),
       manual: boolean(run.manual, "manual"),
+      declaredJobs: strings(run.declaredJobs, "declaredJobs"),
       jobs,
     };
   });
+  // Every job the workflow declares must be accounted for by a row of its own
+  // or, for a reusable call, by its callee's rows (or the skipped call's row).
+  for (const run of runs) {
+    if (!run.declaredJobs.length) throw new Error(`run ${run.id} declares no jobs`);
+    for (const job of run.declaredJobs)
+      if (
+        !run.jobs.some(
+          (row) =>
+            (row.workflow === run.workflow && row.job === job) ||
+            row.caller === `${run.workflow}:${job}`,
+        )
+      )
+        throw new Error(`incomplete run ${run.id}: no job row for ${job}`);
+  }
   const ids = new Set(runs.map((run) => run.id));
   if (!runs.length || ids.size !== runs.length) throw new Error("empty or duplicate run telemetry");
   const scenarios = array(doc.scenarios, "scenarios").map((raw) => {
@@ -225,6 +252,7 @@ export function telemetry(value) {
     const classification = object(scenario.classification, "scenario classification");
     return {
       label: string(scenario.label, "scenario.label"),
+      workflows: strings(scenario.workflows, "scenario.workflows"),
       classification: {
         isReleaseOnly: boolean(classification.isReleaseOnly, "isReleaseOnly"),
         macosRequired: boolean(classification.macosRequired, "macosRequired"),
@@ -241,6 +269,16 @@ export function telemetry(value) {
           throw new Error(`incomplete workload: missing ${eventClass}/${diff}/${ownership}`);
   for (const run of runs)
     if (!labels.has(run.scenario)) throw new Error(`run ${run.id} names no recorded scenario`);
+  // Each scenario's runs are exactly the workflows its event triggers.
+  for (const scenario of scenarios) {
+    const recorded = runs.filter((run) => run.scenario === scenario.label).map((r) => r.workflow);
+    for (const workflow of scenario.workflows)
+      if (!recorded.includes(workflow))
+        throw new Error(`incomplete workload: ${scenario.label} has no run for ${workflow}`);
+    for (const workflow of recorded)
+      if (!scenario.workflows.includes(workflow))
+        throw new Error(`${scenario.label} records an untriggered run of ${workflow}`);
+  }
   const lifecycles = array(doc.lifecycles, "lifecycles").map((raw) => {
     const lifecycle = object(raw, "lifecycle");
     const references = strings(lifecycle.runs, "lifecycle.runs");
@@ -258,7 +296,18 @@ export function telemetry(value) {
         boolean(v, "publication option"),
       ]),
     );
-    return { id: string(lifecycle.id, "lifecycle.id"), runs: references, optionalPublish };
+    const id = string(lifecycle.id, "lifecycle.id");
+    const [diff, ownership] = id.split("/");
+    // A lifecycle covers every run of each automatic stage, so no stage can be
+    // omitted from the runs-per-change count.
+    for (const label of [
+      ...workload.lifecycleStages.map((stage) => `${stage}/${diff}/${ownership}`),
+      workload.releasePullRequest,
+    ])
+      for (const run of runs)
+        if (run.scenario === label && !references.includes(run.id))
+          throw new Error(`incomplete lifecycle ${id}: omits ${run.id}`);
+    return { id, runs: references, optionalPublish };
   });
   if (!lifecycles.length) throw new Error("empty lifecycle telemetry");
   for (const diff of workload.diffs)
@@ -279,7 +328,7 @@ export function telemetry(value) {
           );
       }
   return {
-    schema_version: 1,
+    schema_version: 2,
     sourceDigest: string(doc.sourceDigest, "sourceDigest"),
     scenarios,
     runs,

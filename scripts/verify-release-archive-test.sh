@@ -250,4 +250,51 @@ pack x86_64-unknown-linux-gnu skilltest 1.2.3
 expect_red "it was called without a version" "usage: verify-release-archive.sh" \
   "$work/x86_64-unknown-linux-gnu" x86_64-unknown-linux-gnu skilltest
 
-echo "verify-release-archive-test: the verifier passes good .tar.gz and Windows .zip archives and refuses each way one can be wrong"
+# The products aggregation publish.yml and release.yml run: a staged
+# release-products directory, one archive per declared platform.
+declared="$(python3 -c '
+import tomllib
+for p in tomllib.load(open("release-platforms.toml", "rb"))["platform"]:
+    print(p["target"], p["bin"])
+')" || fail "could not read release-platforms.toml; check that python3 (3.11+) is on PATH"
+stage_products() {
+  local target bin
+  rm -rf "$work/products" || fail "could not clear $work/products; check its permissions"
+  while read -r target bin; do
+    pack "$target" "$bin" 1.2.3
+    { mkdir -p "$work/products" && mv "$work/$target" "$work/products/$target"; } ||
+      fail "could not stage $target into $work/products; check that $work is writable"
+  done <<<"$declared"
+}
+aggregate() {
+  : >"$work/out" || fail "could not write $work/out; check that $work is writable"
+  "$BASH" scripts/verify-staged-archives.sh "$@" >"$work/out" 2>&1
+}
+expect_aggregate_red() {
+  local what="$1" says="$2"
+  shift 2
+  if aggregate "$@"; then fail "the aggregation passed products where $what; restore the check in scripts/verify-staged-archives.sh that refuses it"; fi
+  grep -Fq -- "$says" "$work/out" ||
+    fail "the aggregation refused products where $what, but not for that reason (expected it to say '$says')"
+}
+
+stage_products
+aggregate "$work/products" 1.2.3 ||
+  fail "the aggregation refused a complete staged products directory; fix scripts/verify-staged-archives.sh"
+grep -Fq "$(wc -l <<<"$declared" | tr -d ' ') declared archives verified" "$work/out" ||
+  fail "the aggregation did not verify every declared platform's archive; it must read every [[platform]] in release-platforms.toml"
+
+rm -rf "$work/products/aarch64-apple-darwin" || fail "could not remove a staged target; check $work's permissions"
+expect_aggregate_red "a declared platform was never staged" "has no aarch64-apple-darwin directory" "$work/products" 1.2.3
+
+stage_products
+printf 'tampered' >>"$work/products/aarch64-pc-windows-msvc/skilltest-aarch64-pc-windows-msvc.zip" ||
+  fail "could not tamper with the staged zip; check that $work is writable"
+expect_aggregate_red "a staged archive is corrupt" "checksum mismatch for skilltest-aarch64-pc-windows-msvc.zip" "$work/products" 1.2.3
+grep -Fq "staged aarch64-pc-windows-msvc archive failed verification" "$work/out" ||
+  fail "the aggregation did not name the target whose archive failed"
+
+stage_products
+expect_aggregate_red "it was called without a version" "usage: verify-staged-archives.sh" "$work/products"
+
+echo "verify-release-archive-test: the verifier passes good .tar.gz and Windows .zip archives and refuses each way one can be wrong; the products aggregation verifies every declared platform"
