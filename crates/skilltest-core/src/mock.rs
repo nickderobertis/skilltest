@@ -393,6 +393,8 @@ pub struct MockDecl {
     /// hatch, and the way to mock file reads (rewrite `file_path` to a
     /// fixture).
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Arbitrary JSON is needed because each harness owns its tool input shape;
+    /// mock semantic validation checks whether the supplied rewrite is supported.
     pub rewrite: Option<Value>,
 }
 

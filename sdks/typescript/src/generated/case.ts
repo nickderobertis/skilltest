@@ -1,4 +1,4 @@
-/* eslint-disable */
+/* eslint-disable -- Generated schema declarations are checked by tsc and contract drift; hand-written lint rewrites would violate the Rust contract. */
 /**
  * Generated from the golden JSON Schemas in schemas/ by `just gen-contract`.
  * DO NOT MODIFY BY HAND — change the Rust report types and regenerate; the
@@ -226,6 +226,8 @@ export interface MockDecl {
    * Substitute raw input fields (a JSON object) — the low-level escape
    * hatch, and the way to mock file reads (rewrite `file_path` to a
    * fixture).
+   * Arbitrary JSON is needed because each harness owns its tool input shape;
+   * mock semantic validation checks whether the supplied rewrite is supported.
    */
   rewrite?: {
     [k: string]: unknown;

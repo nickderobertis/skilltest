@@ -12,6 +12,9 @@ const CONFIG: &str = "\
 provider:
   kind: oneharness
   bin: oneharness
+  # Configuration/precedence: https://github.com/nickderobertis/skilltest/blob/main/docs/schema.md
+  # judge: {config: judge.oneharness.toml, args: [--schema-max-retries, '1']}
+  # simulated_user: {} # use independent oneharness defaults
   judge_harness: claude-code
 platforms:
   - claude-code

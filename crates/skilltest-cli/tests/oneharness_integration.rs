@@ -819,3 +819,258 @@ fn repo_oneharness_config_is_accepted_by_the_installed_binary() {
          override; source: {source}"
     );
 }
+
+#[test]
+#[ignore = "needs real oneharness; run via just test-oneharness"]
+fn role_configs_deliver_native_and_prompt_schemas_and_retry_settings() {
+    let scratch = Scratch::new("roles");
+    let log = scratch.0.join("boundary.jsonl");
+    let retry = scratch.0.join("retry");
+    let judge = scratch.0.join("judge.toml");
+    let user = scratch.0.join("user.toml");
+    let competing_schema = scratch.0.join("configured-schema.json");
+    std::fs::write(&competing_schema,
+        serde_json::json!({"type":"object","required":["configured_only"],"properties":{"configured_only":{"type":"string"}},"additionalProperties":false}).to_string()).unwrap();
+    std::fs::write(&judge, format!("harnesses = [\"claude-code\"]\nmodel = \"judge-native\"\nmode = \"bypass\"\ntimeout = 17\nschema_max_retries = 1\n[env]\nROLE_MARKER = \"judge\"\nSCHEMA_RETRY_MARKER = {:?}\n", retry.to_string_lossy())).unwrap();
+    let judge_config = std::fs::read_to_string(&judge).unwrap();
+    std::fs::write(
+        &judge,
+        judge_config.replace(
+            "[env]",
+            &format!(
+                "schema_file = {:?}\n[env]",
+                competing_schema.to_string_lossy()
+            ),
+        ),
+    )
+    .unwrap();
+    std::fs::write(&user, "harnesses = [\"goose\"]\nmodel = \"user-model\"\nmode = \"bypass\"\ntimeout = 23\n[env]\nROLE_MARKER = \"user\"\nGOOSE_MODEL = \"user-model\"\n").unwrap();
+    std::fs::create_dir(scratch.0.join("config")).unwrap();
+    let config = scratch.0.join("config/skilltest.json");
+    let settings = serde_json::json!({"provider":{"kind":"oneharness","bin":oneharness_bin(),"history":false,"judge":{"config":"judge.toml","args":["--schema-max-retries=1","--no-stream"]},"simulated_user":{"config":"user.toml","args":["--","tail with spaces","--model=literal tail"]}},"models":["responder-model"]});
+    std::fs::write(&config, settings.to_string()).unwrap();
+    let case = scratch.0.join("case.json");
+    std::fs::write(&case, serde_json::json!({"skill":fixtures().join("../skills/greeter"),"input":"hi","user":{"persona":"continue","max_turns":2},"evals":[{"type":"boolean","criterion":"greet"},{"type":"numeric","criterion":"greet","min":0,"max":10,"threshold":7}]}).to_string()).unwrap();
+    let invoke = |extra: &[&str]| {
+        Command::new(skilltest())
+            .current_dir(&scratch.0)
+            .arg("--config")
+            .arg(&config)
+            .args(["run", "--case-json"])
+            .arg(&case)
+            .args(["--format", "json"])
+            .args(extra)
+            .env("ONEHARNESS_BIN_CLAUDE_CODE", shim())
+            .env("ONEHARNESS_BIN_GOOSE", fixtures().join("fake-goose.sh"))
+            .env(
+                "ONEHARNESS_BIN_COPILOT",
+                scratch.0.join("unavailable-copilot"),
+            )
+            .env("SKILLTEST_BOUNDARY_LOG", &log)
+            .env("ONEHARNESS_STREAM", "true")
+            .output()
+            .unwrap()
+    };
+    let output = invoke(&[]);
+    let scored = report(&output);
+    assert_eq!(scored["passed"], true, "{scored}");
+    let observations: Vec<Value> = std::fs::read_to_string(&log)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let judges: Vec<_> = observations
+        .iter()
+        .filter(|row| row["role"] == "judge")
+        .collect();
+    assert_eq!(
+        judges.len(),
+        3,
+        "one retry plus boolean and numeric judges: {observations:?}"
+    );
+    assert!(judges.iter().all(|row| row["model"] == "judge-native"
+        && row["mode"] == "bypassPermissions"
+        && row["schema"].as_str().is_some_and(|s| !s.is_empty())));
+    for row in &judges {
+        let schema: Value = serde_json::from_str(row["schema"].as_str().unwrap()).unwrap();
+        assert!(schema["properties"]["value"].is_object(), "{schema}");
+        assert!(
+            schema["properties"].get("configured_only").is_none(),
+            "{schema}"
+        );
+    }
+    let users: Vec<_> = observations
+        .iter()
+        .filter(|row| row["role"] == "user")
+        .collect();
+    assert_eq!(users.len(), 1);
+    assert!(users[0]["argv"]
+        .as_array()
+        .unwrap()
+        .contains(&serde_json::json!("tail with spaces")));
+    assert!(users[0]["argv"]
+        .as_array()
+        .unwrap()
+        .contains(&serde_json::json!("--model=literal tail")));
+    assert_eq!(users[0]["model"], "user-model");
+    assert!(observations
+        .iter()
+        .filter(|row| row["role"] == "responder")
+        .all(|row| row["schema"] == "" && row["model"] == "responder-model"));
+    // Switch only the judge to a non-Claude prompt-schema harness, with a failed
+    // first fallback candidate. The simulated user keeps its separate config.
+    for mode in [vec!["--run-mode", "fallback"], vec!["--run-mode=fallback"]] {
+        std::fs::write(&log, "").unwrap();
+        let mut role_args = vec![
+            "--harness",
+            "copilot,goose",
+            "--model",
+            "prompt-judge",
+            "--schema-max-retries",
+            "0",
+            "--env",
+            "ROLE_MARKER=prompt-judge",
+        ];
+        role_args.extend(mode);
+        let assignment = format!("provider.judge={}", serde_json::json!({"args":role_args}));
+        let output = invoke(&["--set", &assignment]);
+        let scored = report(&output);
+        assert_eq!(scored["passed"], true, "{scored}");
+        let observations: Vec<Value> = std::fs::read_to_string(&log)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        let judges: Vec<_> = observations
+            .iter()
+            .filter(|row| row["role"] == "prompt-judge")
+            .collect();
+        assert_eq!(judges.len(), 2);
+        assert!(judges.iter().all(|row| row["prompt"]
+            .as_str()
+            .unwrap()
+            .contains("additionalProperties")));
+    }
+}
+
+#[test]
+#[ignore = "needs real oneharness; run via just test-oneharness"]
+fn role_inheritance_empty_defaults_named_overrides_and_deadlines() {
+    let scratch = Scratch::new("role-precedence");
+    let log = scratch.0.join("calls.jsonl");
+    std::fs::write(scratch.0.join("oneharness.toml"), "harnesses = [\"claude-code\"]\nmodel = \"ambient-default\"\n[env]\nROLE_MARKER = \"ambient\"\n").unwrap();
+    let config = scratch.0.join("config.json");
+    let case = scratch.0.join("case.json");
+    std::fs::write(&case, serde_json::json!({"skill":fixtures().join("../skills/greeter"),"input":"hello","user":{"persona":"continue","max_turns":2},"evals":[{"type":"boolean","criterion":"greet"}]}).to_string()).unwrap();
+    let mut settings = serde_json::json!({"provider":{"kind":"oneharness","bin":oneharness_bin(),"history":false,"judge":{"args":["--harness=claude-code","--model=role-model","--timeout=19","--env","ROLE_MARKER=role"]}},"models":["responder"]});
+    let invoke = |settings: &Value, flags: &[&str]| {
+        std::fs::write(&config, settings.to_string()).unwrap();
+        std::fs::write(&log, "").unwrap();
+        Command::new(skilltest())
+            .current_dir(&scratch.0)
+            .arg("--config")
+            .arg(&config)
+            .args(["run", "--case-json"])
+            .arg(&case)
+            .args(["--format", "json"])
+            .args(flags)
+            .env("ONEHARNESS_BIN_CLAUDE_CODE", shim())
+            .env("SKILLTEST_BOUNDARY_LOG", &log)
+            .output()
+            .unwrap()
+    };
+    let calls = || {
+        std::fs::read_to_string(&log)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(report(&invoke(&settings, &[]))["passed"], true);
+    assert!(calls()
+        .iter()
+        .any(|call| call["system"] == "" && call["schema"] == "" && call["model"] == "role-model"));
+    settings["provider"]["simulated_user"] = serde_json::json!({});
+    assert_eq!(report(&invoke(&settings, &[]))["passed"], true);
+    assert!(calls().iter().any(|call| call["system"] == ""
+        && call["schema"] == ""
+        && call["model"] == "ambient-default"));
+    settings["provider"]["simulated_user"] = settings["provider"]["judge"].clone();
+    assert_eq!(
+        report(&invoke(
+            &settings,
+            &[
+                "--judge-harness",
+                "claude-code",
+                "--judge-model",
+                "named",
+                "--timeout",
+                "21"
+            ]
+        ))["passed"],
+        true
+    );
+    assert!(calls()
+        .iter()
+        .filter(|call| call["system"] == "")
+        .all(|call| call["model"] == "named"));
+    assert_eq!(
+        report(&invoke(&settings, &["--judge-model", ""]))["passed"],
+        true
+    );
+    assert!(calls()
+        .iter()
+        .filter(|call| call["system"] == "")
+        .all(|call| call["model"] == "responder"));
+    // A role config timeout must govern the actual harness, rather than being
+    // replaced by skilltest's legacy 120-second deadline.
+    let role = scratch.0.join("deadline.toml");
+    std::fs::write(
+        &role,
+        "harnesses = [\"claude-code\"]\ntimeout = 1\n[env]\nROLE_SLEEP = \"3\"\n",
+    )
+    .unwrap();
+    settings["provider"]["judge"] = serde_json::json!({"config":role});
+    settings["provider"]["simulated_user"] = serde_json::json!({});
+    let output = invoke(&settings, &[]);
+    assert_eq!(output.status.code(), Some(3));
+    let error: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(error["kind"], "timeout", "{error}");
+}
+
+#[test]
+#[ignore = "requires the oneharness fixture host tools"]
+fn scripted_boundaries_explain_invalid_inputs() {
+    for flag in [
+        "--json-schema",
+        "--model",
+        "--permission-mode",
+        "--output-format",
+    ] {
+        let output = Command::new(shim()).arg(flag).output().unwrap();
+        assert_eq!(output.status.code(), Some(2));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(&format!("{flag} requires a value")),
+            "{stderr}"
+        );
+        assert!(stderr.contains("rerun"), "{stderr}");
+    }
+    let output = Command::new(fixtures().join("fake-goose.sh"))
+        .arg("-t")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("pass -t <prompt>"));
+    let output = Command::new(shim())
+        .env("ROLE_SLEEP", "invalid-duration")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("invalid ROLE_SLEEP 'invalid-duration'"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("set a valid sleep duration"), "{stderr}");
+}

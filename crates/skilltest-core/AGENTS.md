@@ -29,6 +29,9 @@ and the Rust types that are the single source of truth for the JSON contract
   the map forms of `stub`/`deny`/field predicates (the `Eval` enum wraps
   `deny_unknown_fields` structs in newtype variants because serde cannot deny on
   an internally tagged enum). A typo'd key must never silently apply a default.
+- `Config` and its nested types derive the full config schema. The core
+  resolver adapts schema-derived env paths and ordered assignments; provenance
+  is runtime-only. SDKs serialize rather than resolve configuration.
 - Changing a type that reaches `--format json` or the case input changes the
   contract: run `just gen-contract` and commit `schemas/` + the generated SDK
   models in the same change.
@@ -59,8 +62,9 @@ and the Rust types that are the single source of truth for the JSON contract
   `SKILLTEST_HISTORY_DIR` override it, `provider.history: false` disables it),
   whose echoed `history_file` becomes `CaseRun.history_command`. Judge and
   simulated-user calls are never recorded.
-- skilltest passes **no `--mode`**, so oneharness's own default approval mode
-  applies; users set `bypass` etc. through oneharness config (`ONEHARNESS_MODE`),
+- Responder calls pass **no `--mode`**, so oneharness's own default approval mode
+  applies; evaluator roles may pass their own mode. Users also set `bypass`
+  through oneharness config (`ONEHARNESS_MODE`),
   keeping approval policy in one place.
 - **Omit `--model`** when it is unspecified so the harness uses its own default,
   and fall back to a harness's **raw stdout** when oneharness reports no text
@@ -68,9 +72,12 @@ and the Rust types that are the single source of truth for the JSON contract
 - A streaming variant (`respond_streaming`, `oneharness run --stream`) forwards
   tool events live and, on a sink `ControlFlow::Break`, kills the oneharness
   child to short-circuit a bad run; the buffered `respond` (`--compact`) is the
-  default. Evals and the simulated user run on a fixed `judge_harness`,
-  independent of the harness under test. Verdict JSON is parsed tolerantly (real
-  models wrap it in prose/fences) and type-checked.
+  default. Evals and the simulated user use independent role config/argv
+  blocks (absent blocks retain `judge_harness` behavior). Judges receive a
+  temporary schema through oneharness native/prompt delivery and consume
+  validated structured verdicts, with the last complete typed text verdict as
+  a backstop. Fallback chains select the settled success; multiple successes
+  fail. `docs/schema.md` owns the evaluator precedence contract.
 - **`CommandProvider`.** A small JSON-lines protocol (one request object on
   stdin, one response on stdout, per op) — the bundled `skilltest-fake-provider`
   and any custom provider. Custom providers may emit `usage`, `session_id` and

@@ -339,7 +339,7 @@
           ]
         },
         "rewrite": {
-          "description": "Substitute raw input fields (a JSON object) — the low-level escape\nhatch, and the way to mock file reads (rewrite `file_path` to a\nfixture)."
+          "description": "Substitute raw input fields (a JSON object) — the low-level escape\nhatch, and the way to mock file reads (rewrite `file_path` to a\nfixture).\nArbitrary JSON is needed because each harness owns its tool input shape;\nmock semantic validation checks whether the supplied rewrite is supported."
         },
         "stub": {
           "description": "Fake a shell call's result: the real command never runs and the model\nreceives this output as the tool's genuine result.",

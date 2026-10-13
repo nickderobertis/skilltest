@@ -51,10 +51,26 @@ command -v jq >/dev/null 2>&1 || {
     exit 2
 }
 
-prompt=""; settings=""; system=""; resume=""
+emit() { # emit <jq args…> — one transcript record, or stop the run loudly
+    # llmlint: ignore[tool_output_is_signal] This stdout record is the Claude stream-json protocol consumed by real oneharness; each transcript event requires its own JSON record.
+    jq -cn "$@" || {
+        echo "fake-claude: jq could not write a transcript record (see its error above); fix the record's arguments and rerun" >&2
+        exit 1
+    }
+}
+
+
+prompt=""; settings=""; system=""; resume=""; schema=""; model=""; mode=""
 args=("$@")
 i=0
 while [ $i -lt ${#args[@]} ]; do
+    case "${args[$i]}" in
+        -p | --settings | --append-system-prompt | --json-schema | --model | --permission-mode | --output-format)
+            if [ "$((i + 1))" -ge "${#args[@]}" ]; then
+                echo "fake-claude: ${args[$i]} requires a value; pass ${args[$i]} <value> and rerun the integration test" >&2
+                exit 2
+            fi ;;
+    esac
     case "${args[$i]}" in
         -p) prompt="${args[$((i + 1))]}"; i=$((i + 2)) ;;
         --settings) settings="${args[$((i + 1))]}"; i=$((i + 2)) ;;
@@ -67,11 +83,28 @@ while [ $i -lt ${#args[@]} ]; do
             fi
             i=$((i + 2)) ;;
         # Value-carrying flags we accept and ignore.
-        --model | --permission-mode | --json-schema | --output-format)
+        --json-schema) schema="${args[$((i + 1))]}"; i=$((i + 2)) ;;
+        --model) model="${args[$((i + 1))]}"; i=$((i + 2)) ;;
+        --permission-mode) mode="${args[$((i + 1))]}"; i=$((i + 2)) ;;
+        --output-format)
             i=$((i + 2)) ;;
         *) i=$((i + 1)) ;;
     esac
 done
+
+if [ -n "${SKILLTEST_BOUNDARY_LOG:-}" ]; then
+    if ! jq -cn --arg schema "$schema" --arg model "$model" --arg mode "$mode" \
+        --arg role "${ROLE_MARKER:-responder}" --arg system "$system" --arg prompt "$prompt" \
+        --args '{schema:$schema,model:$model,mode:$mode,role:$role,system:$system,prompt:$prompt,argv:$ARGS.positional}' -- "${args[@]}" >> "$SKILLTEST_BOUNDARY_LOG"; then
+        echo "fake-claude: could not append boundary observations; fix SKILLTEST_BOUNDARY_LOG path/permissions and rerun the integration test" >&2
+        exit 2
+    fi
+fi
+
+if [ -n "${ROLE_SLEEP:-}" ] && ! sleep "$ROLE_SLEEP"; then
+    echo "fake-claude: invalid ROLE_SLEEP '$ROLE_SLEEP'; set a valid sleep duration and rerun the integration test" >&2
+    exit 2
+fi
 
 # A judge/user-simulation run (no skill => no --append-system-prompt): reply
 # with a passing verdict so judge-backed evals resolve deterministically.
@@ -82,12 +115,31 @@ if [ -z "$system" ]; then
         # skilltest must never deliver mocks to the judge; make it loud.
         text="JUDGE_SAW_SETTINGS"
     elif [ "$marker" = "verdict" ]; then
-        text='{"value": true, "reason": "fake-claude judge"}'
+        if [[ "$prompt" == *"Score how well"* ]]; then
+            text='{"value": 9, "reason": "fake-claude numeric judge"}'
+        else
+            text='{"value": true, "reason": "fake-claude judge"}'
+        fi
     else
         text="continue"
     fi
-    jq -cn --arg t "$text" \
-        '{type:"result", result:$t, session_id:"fake-claude-judge", usage:{input_tokens:3, output_tokens:1}}'
+    if [ -n "$schema" ]; then
+        structured="$text"
+        if [ -n "${SCHEMA_RETRY_MARKER:-}" ] && [ ! -f "$SCHEMA_RETRY_MARKER" ]; then
+            if ! touch "$SCHEMA_RETRY_MARKER"; then
+                echo "fake-claude: could not create retry marker; fix SCHEMA_RETRY_MARKER path/permissions and rerun the integration test" >&2
+                exit 2
+            fi
+            structured='{"value":"wrong type","reason":"retry me"}'
+        fi
+        # shellcheck disable=SC2016 # Single-quoted programs use jq variables, not shell expansions.
+        emit --arg t "$text" --argjson s "$structured" \
+            '{type:"result", result:$t, structured_output:$s, session_id:"fake-claude-judge", usage:{input_tokens:3, output_tokens:1}}'
+    else
+        # shellcheck disable=SC2016 # Single-quoted programs use jq variables, not shell expansions.
+        emit --arg t "$text" \
+            '{type:"result", result:$t, session_id:"fake-claude-judge", usage:{input_tokens:3, output_tokens:1}}'
+    fi
     exit 0
 fi
 
@@ -110,12 +162,6 @@ surfaced=""
 index=0
 
 # llmlint: ignore-block[tool_output_is_signal] These emit the records of Claude Code's `stream-json` transcript, which the real oneharness binary parses; its stdout is that protocol, one JSON record per transcript event, not human-facing output.
-emit() { # emit <jq args…> — one transcript record, or stop the run loudly
-    jq -cn "$@" || {
-        echo "fake-claude: jq could not write a transcript record (see its error above); fix the record's arguments and rerun" >&2
-        exit 1
-    }
-}
 
 # shellcheck disable=SC2016 # the single-quoted programs are jq's; their $ names are jq variables, not shell expansions
 emit_text() { # emit_text <text> — an assistant line of prose, as a real turn writes

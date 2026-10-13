@@ -6,10 +6,16 @@
 
 use std::path::Path;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 use crate::error::{Error, Result};
 use crate::mock::MockDecl;
+
+fn schema_oneharness_bin() -> String {
+    "oneharness".into()
+}
 
 /// Environment variable the SDKs set to the `oneharness` binary they bundle (the
 /// `oneharness-cli` PyPI/npm package installed alongside the SDK), so a run
@@ -46,13 +52,24 @@ fn default_true() -> bool {
 
 /// Settings for the default [`oneharness`](https://github.com/nickderobertis/oneharness)
 /// provider, which runs each prompt on a harness via `oneharness run`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OneharnessConfig {
+    /// Full oneharness invocation settings for the judge. Omitted settings belong to oneharness.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub judge: Option<OneharnessRoleConfig>,
+    /// Full simulated-user invocation settings; absent inherits `judge`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub simulated_user: Option<OneharnessRoleConfig>,
+    /// Resolved evaluator shorthand overrides; never part of the serialized contract.
+    #[serde(skip)]
+    pub evaluator_overrides: Box<EvaluatorOverrides>,
+
     /// The `oneharness` binary. When unset, defaults to `$SKILLTEST_ONEHARNESS_BIN`
     /// (the path the SDKs point at their bundled `oneharness-cli`), else
     /// `oneharness` resolved on `PATH`.
     #[serde(default = "default_oneharness_bin")]
+    #[schemars(default = "schema_oneharness_bin")]
     pub bin: String,
     /// The harness used for evals and the simulated user (kept independent of the
     /// harness under test, so the evaluator does not vary with the matrix).
@@ -79,6 +96,9 @@ pub struct OneharnessConfig {
 impl Default for OneharnessConfig {
     fn default() -> Self {
         Self {
+            judge: None,
+            simulated_user: None,
+            evaluator_overrides: Box::default(),
             bin: default_oneharness_bin(),
             judge_harness: default_judge_harness(),
             timeout_secs: default_timeout_secs(),
@@ -88,10 +108,35 @@ impl Default for OneharnessConfig {
     }
 }
 
+/// Literal argv/config pass-through for one buffered evaluator invocation.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct OneharnessRoleConfig {
+    /// oneharness config path, resolved from the invocation working directory.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config: Option<String>,
+    /// Raw oneharness run argv tokens; harness-tail tokens after `--` stay literal.
+    #[schemars(extend("x-skilltest-validate" = "oneharness-args"))]
+    pub args: Vec<String>,
+}
+
+/// Internal evaluator overrides computed from source/order provenance.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EvaluatorSettings {
+    pub(crate) harness: Option<String>,
+    pub(crate) model: Option<String>,
+    pub(crate) timeout: Option<u64>,
+}
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EvaluatorOverrides {
+    pub(crate) judge: EvaluatorSettings,
+    pub(crate) simulated_user: EvaluatorSettings,
+}
+
 /// Settings for a custom provider command speaking the JSON-lines protocol (see
 /// `docs/protocol.md`). Used by the bundled `skilltest-fake-provider` and any
 /// provider you write yourself.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CommandConfig {
     /// The provider command as an argv vector.
@@ -99,7 +144,7 @@ pub struct CommandConfig {
 }
 
 /// Which provider backs a run.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum ProviderConfig {
     /// Run skills through `oneharness` (the default).
@@ -115,7 +160,7 @@ impl Default for ProviderConfig {
 }
 
 /// Which model vendor's API the direct-API judge talks to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum ApiVendor {
     /// Anthropic Messages API (`POST /v1/messages`).
@@ -132,7 +177,7 @@ pub enum ApiVendor {
 /// The judge *model* is the run's `judge_model` (it must be a valid API model
 /// id for the chosen `vendor`, e.g. `claude-opus-4-8` or `gpt-4o`); only the
 /// transport is configured here.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ApiJudgeConfig {
     /// Which vendor's API to call.
@@ -164,17 +209,28 @@ pub struct ApiJudgeConfig {
 /// How evals and the simulated user are judged, independent of the provider that
 /// runs the skill. Absent (the default) means the run's provider judges too
 /// (e.g. the oneharness `judge_harness`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum JudgeConfig {
     /// Judge with a direct model API call (see [`ApiJudgeConfig`]).
     Api(ApiJudgeConfig),
 }
 
+/// Opaque resolution bookkeeping. Public only to retain struct-update syntax;
+/// callers cannot inspect or mutate internal source/order ranks.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ConfigProvenance {
+    pub(crate) sources: BTreeMap<String, u64>,
+}
+
 /// The full configuration for a run.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
+#[schemars(default = "schema_config_default")]
 pub struct Config {
+    /// Resolution order retained for evaluator shorthand precedence; runtime only.
+    #[serde(skip)]
+    pub provenance: ConfigProvenance,
     /// The provider that executes skills and evals.
     pub provider: ProviderConfig,
     /// Harness platforms a case runs on (e.g. `claude-code`, `codex`).
@@ -207,6 +263,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            provenance: ConfigProvenance::default(),
             provider: ProviderConfig::default(),
             platforms: vec!["claude-code".to_string()],
             models: vec!["claude-opus-4-8".to_string()],
@@ -217,6 +274,14 @@ impl Default for Config {
             spy: false,
         }
     }
+}
+
+fn schema_config_default() -> Config {
+    let mut config = Config::default();
+    if let ProviderConfig::Oneharness(oh) = &mut config.provider {
+        oh.bin = schema_oneharness_bin();
+    }
+    config
 }
 
 /// CLI-supplied overrides. `None`/empty fields leave the config value in place.
@@ -242,6 +307,10 @@ pub struct Overrides {
 }
 
 impl Config {
+    /// Full deterministic draft-07 run configuration contract.
+    pub fn schema() -> serde_json::Value {
+        crate::config_resolution::schema()
+    }
     /// Load configuration from `path`. The standard config filename is
     /// `skilltest.yaml`.
     ///
@@ -250,35 +319,22 @@ impl Config {
     /// parse, and [`Error::Invalid`] if it parses but is internally
     /// inconsistent (see [`Config::validate`]).
     pub fn load(path: &Path) -> Result<Self> {
-        let text = std::fs::read_to_string(path).map_err(|source| Error::Io {
-            path: path.to_path_buf(),
-            source,
-        })?;
-        let config: Config = serde_saphyr::from_str_with_options(&text, {
-            let mut options = serde_saphyr::Options::default();
-            options.strict_booleans = true;
-            options.merge_keys = serde_saphyr::MergeKeyPolicy::Error;
-            options.with_snippet = false;
-            options
-        })
-        .map_err(|source| Error::Yaml {
-            path: path.to_path_buf(),
-            message: source.to_string(),
-        })?;
-        config.validate()?;
-        Ok(config)
+        Self::resolve(Some(path), &[], Overrides::default())
     }
 
-    /// Load `path` if it exists, otherwise return [`Config::default`].
-    ///
-    /// # Errors
-    /// Same as [`Config::load`] when the file is present but invalid.
+    /// Load an optional file, then environment, ordered assignments and named overrides.
+    /// All surfaces share this resolver; SDKs only serialize assignments.
+    pub fn resolve(
+        path: Option<&Path>,
+        assignments: &[String],
+        overrides: Overrides,
+    ) -> Result<Self> {
+        crate::config_resolution::resolve(path, assignments, overrides)
+    }
+
+    /// Load `path` when present, otherwise use defaults and derived environment settings.
     pub fn load_or_default(path: &Path) -> Result<Self> {
-        if path.is_file() {
-            Self::load(path)
-        } else {
-            Ok(Self::default())
-        }
+        Self::resolve(path.is_file().then_some(path), &[], Overrides::default())
     }
 
     /// Apply CLI overrides in place, then re-validate.
@@ -286,6 +342,17 @@ impl Config {
     /// # Errors
     /// [`Error::Invalid`] if the merged configuration is inconsistent.
     pub fn apply_overrides(&mut self, overrides: Overrides) -> Result<()> {
+        let rank = self.provenance.sources.values().copied().max().unwrap_or(0) + 1;
+        for (path, present) in [
+            ("provider.judge_harness", overrides.judge_harness.is_some()),
+            ("provider.timeout_secs", overrides.timeout_secs.is_some()),
+            ("judge_model", overrides.judge_model.is_some()),
+        ] {
+            if present {
+                self.provenance.sources.insert(path.into(), rank);
+            }
+        }
+
         if let Some(command) = overrides.command_provider {
             self.provider = ProviderConfig::Command(CommandConfig { command });
         } else if let ProviderConfig::Oneharness(oh) = &mut self.provider {
@@ -319,6 +386,7 @@ impl Config {
             self.mocks = mocks;
         }
         self.spy = self.spy || overrides.spy;
+        crate::config_resolution::resolve_evaluators(self);
         self.validate()
     }
 
@@ -341,6 +409,14 @@ impl Config {
     pub fn validate(&self) -> Result<()> {
         match &self.provider {
             ProviderConfig::Oneharness(oh) => {
+                for (name, role) in [("judge", &oh.judge), ("simulated_user", &oh.simulated_user)] {
+                    if let Some(role) = role {
+                        crate::config_resolution::validate_role_args(
+                            &format!("provider.{name}.args"),
+                            &role.args,
+                        )?;
+                    }
+                }
                 if oh.bin.trim().is_empty() {
                     return Err(Error::Invalid(
                         "config `provider.bin` must name the oneharness binary".into(),
