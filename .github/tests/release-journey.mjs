@@ -309,6 +309,8 @@ for (const [mutation, message] of [
   ["payload", /wheel binary differs/],
   ["provider", /wheel contains fake provider/],
   ["tags", /invalid wheel tags/],
+  ["module", /wheel module differs from source: skilltest_sdk\/runner\.py/],
+  ["extra", /unexpected wheel members: extra \['skilltest_sdk\/injected\.py'\]/],
 ]) {
   const changed = spawnSync(
     "python3",
@@ -331,11 +333,15 @@ else:
                 data = b"Name: wrong\\nVersion: 0.0.0\\n"
             if mutation == "payload" and "/_bin/" in name:
                 data = b"wrong binary"
+            if mutation == "module" and name == "skilltest_sdk/runner.py":
+                data = data + b"\\nraise SystemExit('altered')\\n"
             if mutation == "tags" and name.endswith(".dist-info/WHEEL"):
                 data = b"Wheel-Version: 1.0\\nRoot-Is-Purelib: true\\nTag: py3-none-any\\n"
             out.writestr(name, data)
         if mutation == "duplicate":
             out.writestr(entries[0][0], entries[0][1])
+        if mutation == "extra":
+            out.writestr("skilltest_sdk/injected.py", b"print('injected')\\n")
         if mutation == "provider":
             out.writestr("skilltest_sdk/_bin/skilltest-fake-provider", b"fake")
 `,

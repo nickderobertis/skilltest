@@ -21,7 +21,7 @@ fail() {
   echo "install-test: $1" >&2
   if [ -s "$work/out" ]; then
     echo "  what the installer said:" >&2
-    cat "$work/out" >&2
+    cat "$work/out" >&2 || echo "  (unreadable: $work/out; rerun sh scripts/install.sh by hand with the doubled PATH to see it)" >&2
   fi
   exit 1
 }

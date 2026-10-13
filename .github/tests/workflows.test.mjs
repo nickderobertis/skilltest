@@ -1078,6 +1078,28 @@ test("release and policy tools exit 2 for invalid invocation and 1 for failures"
       ["bash", ["scripts/verify-staged-archives.sh", "missing-products"]],
       ["bash", ["scripts/verify-staged-archives.sh", ".github", "1.2.3"]],
     ],
+    [
+      [
+        "bash",
+        [
+          "scripts/verify-release-archive.sh",
+          ".github",
+          "x86_64-unknown-linux-gnu",
+          "skilltest",
+          "v1",
+        ],
+      ],
+      [
+        "bash",
+        [
+          "scripts/verify-release-archive.sh",
+          ".github",
+          "x86_64-unknown-linux-gnu",
+          "skilltest",
+          "1.2.3",
+        ],
+      ],
+    ],
   ]) {
     assert.equal(status(...usage), 2, usage.flat().join(" "));
     assert.equal(status(...failure), 1, failure.flat().join(" "));

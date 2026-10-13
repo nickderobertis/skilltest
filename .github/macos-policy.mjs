@@ -143,6 +143,7 @@ function mainCLI() {
       seen.add(token.name);
     }
   const args = parsed.values;
+  // `const` keeps the flag names literal so they index the parsed values' type.
   for (const flag of /** @type {const} */ (["event", "base", "head"]))
     if (typeof args[flag] !== "string") throw new UsageError(`missing --${flag}`);
   let event;

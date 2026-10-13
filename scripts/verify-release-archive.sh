@@ -9,7 +9,8 @@
 #   <dir> holds skilltest-<target>.<tar.gz|zip> and its .sha256; <bin> is
 #   skilltest or skilltest.exe (a .exe ships as a .zip); <version> is X.Y.Z.
 #
-# Quiet on success, one line.
+# Quiet on success, one line. Exit codes: 0 verified; 1 the archive is
+# missing, wrong or does not run; 2 invalid invocation.
 set -euo pipefail
 
 err() {
@@ -18,14 +19,18 @@ err() {
 }
 
 usage="usage: verify-release-archive.sh <dir> <target> <bin> <version>; pass the download directory, a target triple, skilltest or skilltest.exe, and the release version X.Y.Z"
-{ [ "$#" -eq 4 ] || { [ "$#" -eq 5 ] && [ "$5" = --contents-only ]; }; } && [ -d "$1" ] || err "$usage"
+usage_err() {
+  echo "verify-release-archive: $1" >&2
+  exit 2
+}
+{ [ "$#" -eq 4 ] || { [ "$#" -eq 5 ] && [ "$5" = --contents-only ]; }; } && [ -d "$1" ] || usage_err "$usage"
 dir="$1" target="$2" bin="$3" version="$4"
-[[ "$target" =~ ^[A-Za-z0-9_]+(-[A-Za-z0-9_]+)+$ ]] || err "target '$target' is not a target triple; $usage"
-[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]] || err "version '$version' is not X.Y.Z; $usage"
+[[ "$target" =~ ^[A-Za-z0-9_]+(-[A-Za-z0-9_]+)+$ ]] || usage_err "target '$target' is not a target triple; $usage"
+[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]] || usage_err "version '$version' is not X.Y.Z; $usage"
 case "$bin" in
   skilltest.exe) asset="skilltest-$target.zip" ;;
   skilltest) asset="skilltest-$target.tar.gz" ;;
-  *) err "bin '$bin' is neither skilltest nor skilltest.exe; $usage" ;;
+  *) usage_err "bin '$bin' is neither skilltest nor skilltest.exe; $usage" ;;
 esac
 [ -f "$dir/$asset" ] || err "$dir has no $asset; check release.yml's archive name and that the upload step ran"
 [ -f "$dir/$asset.sha256" ] || err "$dir has no $asset.sha256; check release.yml's checksum setting"

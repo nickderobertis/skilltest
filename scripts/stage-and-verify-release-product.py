@@ -4,9 +4,12 @@ Exit codes: 0 verified; 1 a product, package or payload failed verification;
 2 invalid invocation.
 """
 
+import base64
+import csv
 from dataclasses import asdict, dataclass
 from email.parser import Parser
 import hashlib
+import io
 import json
 from pathlib import Path
 import re
@@ -186,6 +189,77 @@ def require_wheel_tags(wheel: zipfile.ZipFile, platform: Platform) -> None:
     )
 
 
+SDK_SOURCE = Path("sdks/python/skilltest_sdk")
+
+
+def require_wheel_payload(
+    wheel: zipfile.ZipFile, platform: Platform, version: Version
+) -> None:
+    """A platform wheel holds exactly the SDK's source files, byte for byte, its
+    one binary and its three dist-info files, each matching its RECORD hash."""
+    infos = wheel.infolist()
+    names = [info.filename for info in infos]
+    require(len(names) == len(set(names)), "duplicate wheel member")
+    require(not any(info.is_dir() for info in infos), "wheel holds a directory entry")
+    sources = {
+        f"skilltest_sdk/{path.relative_to(SDK_SOURCE).as_posix()}": path
+        for path in SDK_SOURCE.rglob("*")
+        if path.is_file()
+        and "__pycache__" not in path.parts
+        and "_bin" not in path.parts
+    }
+    dist_info = f"skilltest_sdk-{version}.dist-info"
+    expected = {
+        *sources,
+        f"skilltest_sdk/_bin/{platform.bin}",
+        f"{dist_info}/METADATA",
+        f"{dist_info}/WHEEL",
+        f"{dist_info}/RECORD",
+    }
+    extra = sorted(set(names) - expected)
+    missing = sorted(expected - set(names))
+    require(
+        not extra and not missing,
+        f"unexpected wheel members: extra {extra}, missing {missing}",
+    )
+    # Windows runners check sources out with CRLF line endings, so the Windows
+    # wheels carry them; compare content with line endings normalized.
+    for name, path in sources.items():
+        require(
+            wheel.read(name).replace(b"\r\n", b"\n")
+            == path.read_bytes().replace(b"\r\n", b"\n"),
+            f"wheel module differs from source: {name}",
+        )
+    recorded = {}
+    for row in csv.reader(io.StringIO(wheel.read(f"{dist_info}/RECORD").decode())):
+        require(len(row) == 3, "invalid wheel RECORD row")
+        recorded[row[0]] = (row[1], row[2])
+    require(
+        set(recorded) == set(names), "wheel RECORD does not list exactly its members"
+    )
+    for name in names:
+        if name == f"{dist_info}/RECORD":
+            continue
+        data = wheel.read(name)
+        hashed = base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b"=")
+        require(
+            recorded[name] == (f"sha256={hashed.decode()}", str(len(data))),
+            f"wheel RECORD hash differs: {name}",
+        )
+
+
+def require_npm_members(packed: tarfile.TarFile, platform: Platform) -> None:
+    """An npm carrier holds exactly its manifest and binary, once each, as files."""
+    members = packed.getmembers()
+    names = [member.name for member in members]
+    require(
+        len(names) == len(set(names))
+        and set(names) == {"package/package.json", f"package/bin/{platform.bin}"}
+        and all(member.isfile() for member in members),
+        "unexpected npm contents",
+    )
+
+
 def require_source_manifest(packed: bytes, source: Path) -> None:
     """A packed carrier manifest is its checked-in source, field for field."""
     require(
@@ -208,15 +282,7 @@ def check_carriers(platforms: list[Platform], products: Path) -> None:
         expected_carriers.add(carriers[0])
         binary_data = staged_binary(platform, directory)
         with tarfile.open(carriers[0]) as packed:
-            members = packed.getmembers()
-            names = [member.name for member in members]
-            require(
-                len(names) == len(set(names))
-                and set(names)
-                == {"package/package.json", f"package/bin/{platform.bin}"}
-                and all(member.isfile() for member in members),
-                "unexpected npm contents",
-            )
+            require_npm_members(packed, platform)
             manifest_stream = packed.extractfile("package/package.json")
             payload = packed.extractfile(f"package/bin/{platform.bin}")
             if manifest_stream is None or payload is None:
@@ -300,6 +366,7 @@ def main() -> None:
                     and headers.get_all("Version", []) == [version],
                     f"invalid staged wheel identity: {expected}",
                 )
+                require_wheel_payload(archive, platform, version)
         require(
             set(Path(sys.argv[2]).rglob("*.whl")) == expected_wheels,
             "unexpected staged wheel",
@@ -362,9 +429,11 @@ def main() -> None:
             headers.get_all("Name", []) == ["skilltest-sdk"], "wrong wheel identity"
         )
         require_wheel_tags(z, platform)
+        require_wheel_payload(z, platform, version)
 
     (packed,) = out.glob("skill-test-cli-*.tgz")
     with tarfile.open(packed) as t:
+        require_npm_members(t, platform)
         payload = t.extractfile(f"package/bin/{platform.bin}")
         if payload is None:
             raise ValueError("npm binary missing")
@@ -387,11 +456,6 @@ def main() -> None:
         expected = npm_platform(platform.target)
         require(manifest.cpu == expected.cpu, "wrong npm architecture")
         require(manifest.os == expected.os, "wrong npm OS")
-        require(
-            set(t.getnames())
-            == {"package/package.json", f"package/bin/{platform.bin}"},
-            "unexpected npm contents",
-        )
     asset = asset_name(platform)
     archive = out / asset
     if asset.endswith(".zip"):

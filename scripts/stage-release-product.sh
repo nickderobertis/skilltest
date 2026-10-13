@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 # Stage all shipped forms from one compiled binary; never publish here.
+#
+# Usage: stage-release-product.sh <target> <binary> <output-dir>
+# Exit codes: 0 staged and verified; 1 a build, pack or payload check failed;
+# 2 invalid invocation.
 set -euo pipefail
 if [ "$#" -ne 3 ] || [ ! -f "$2" ]; then
   echo 'stage-release-product: usage: <target> <binary> <output-dir>; build the CLI first' >&2
