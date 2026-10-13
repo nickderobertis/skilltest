@@ -857,8 +857,14 @@ def violations(
             bad.append(f"{feat.label}: with advisory ci.yml:{advisory} failing, the release does not run")
 
     # The one manual lever: a person may release main's head by hand.
-    if not _ran(simulate(wfs, dispatch(WorkflowFile("semantic-release.yml"))), "semantic-release.yml"):
+    lever = WorkflowFile("semantic-release.yml")
+    if not _ran(simulate(wfs, dispatch(lever)), lever):
         bad.append("workflow_dispatch semantic-release.yml: the manual release lever does not run on main")
+    elsewhere = Event(
+        f"workflow_dispatch {lever} on a feature branch", "workflow_dispatch", "refs/heads/topic", dispatch=lever
+    )
+    if _ran(simulate(wfs, elsewhere), lever):
+        bad.append(f"{elsewhere.label}: the manual release lever runs off main")
 
     # The release commit: nothing gated again; the tag still fires the builds.
     rel = push_main("chore(release): 0.13.0 [bot]")
@@ -918,6 +924,12 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
         "the release waiting on the advisory copilot suite",
         lambda d: _jobs(d, "ci.yml")["release"]["needs"].append("live-copilot"),
+    ),
+    Mutation(
+        "the manual release lever without its main-branch guard",
+        lambda d: _jobs(d, "semantic-release.yml")["release"].update(
+            {"if": _jobs(d, "semantic-release.yml")["release"]["if"].replace("github.ref == 'refs/heads/main' &&", "")}
+        ),
     ),
     Mutation(
         "semantic-release.yml without its manual lever",
