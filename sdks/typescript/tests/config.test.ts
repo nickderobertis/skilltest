@@ -91,6 +91,8 @@ process.exit(result.status ?? 3);
       literals.push(
         `const example${literals.length}: ConfigOverrides = ${JSON.stringify(payload)};`,
       );
+      // The payload comes from Config schema specimens; generated object literals
+      // below type-check this same payload, and the real CLI validates it at runtime.
       expect(
         (await runSkill(casePath, { bin: wrapper, configOverrides: payload as ConfigOverrides }))
           .passed,

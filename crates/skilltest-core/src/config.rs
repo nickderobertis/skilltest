@@ -13,14 +13,14 @@ use std::collections::BTreeMap;
 use crate::error::{Error, Result};
 use crate::mock::MockDecl;
 
-/// Environment variable the SDKs set to the `oneharness` binary they bundle (the
-/// `oneharness-cli` PyPI/npm package installed alongside the SDK), so a run
-/// resolves oneharness with no `PATH` setup. It is only a *default*: an explicit
-/// config `provider.bin` (or the `--oneharness-bin` flag) still wins.
 fn schema_oneharness_bin() -> String {
     "oneharness".into()
 }
 
+/// Environment variable the SDKs set to the `oneharness` binary they bundle (the
+/// `oneharness-cli` PyPI/npm package installed alongside the SDK), so a run
+/// resolves oneharness with no `PATH` setup. It is only a *default*: an explicit
+/// config `provider.bin` (or the `--oneharness-bin` flag) still wins.
 pub const ONEHARNESS_BIN_ENV: &str = "SKILLTEST_ONEHARNESS_BIN";
 
 fn default_oneharness_bin() -> String {

@@ -65,7 +65,7 @@ i=0
 while [ $i -lt ${#args[@]} ]; do
     case "${args[$i]}" in
         -p | --settings | --append-system-prompt | --json-schema | --model | --permission-mode | --output-format)
-            if [ $((i + 1)) -ge ${#args[@]} ]; then
+            if [ "$((i + 1))" -ge "${#args[@]}" ]; then
                 echo "fake-claude: ${args[$i]} requires a value; pass ${args[$i]} <value> and rerun the integration test" >&2
                 exit 2
             fi ;;

@@ -70,11 +70,18 @@ python3 schemas/config_overrides_schema.py "$stage/schemas/config.schema.json" "
 # Python: pydantic models via datamodel-code-generator (pinned in uv.lock).
 # Run from sdks/python so the ruff formatter it invokes picks up that project's
 # config and the output matches the repo's formatting.
+enter_python_sdk() {
+  if ! cd sdks/python; then
+    echo "could not enter sdks/python; restore the SDK directory in this checkout and run just gen-contract again" >&2
+    exit 1
+  fi
+}
+
 gen_python() {
   local name="$1"
   local extra=()
   if [[ "$name" == "config" ]]; then extra=(--use-field-description --strict-nullable); fi
-  (cd sdks/python && PYTHONWARNINGS=ignore uv run --quiet datamodel-codegen \
+  (enter_python_sdk && PYTHONWARNINGS=ignore uv run --quiet datamodel-codegen \
     --input "$stage/schemas/$name.schema.json" \
     --input-file-type jsonschema \
     --output "$stage/sdks/python/skilltest_sdk/_$name.py" \
@@ -91,13 +98,13 @@ gen_python() {
     --formatters ruff-format)
 }
 gen_python config
-(cd sdks/python && PYTHONWARNINGS=ignore uv run --quiet datamodel-codegen \
+(enter_python_sdk && PYTHONWARNINGS=ignore uv run --quiet datamodel-codegen \
   --input "$stage/schemas/config_overrides.schema.json" --input-file-type jsonschema \
   --output "$stage/sdks/python/skilltest_sdk/_config_overrides.py" \
   --output-model-type typing.TypedDict --target-python-version 3.12 \
   --enum-field-as-literal all --use-union-operator --use-double-quotes \
   --disable-timestamp --collapse-root-models --use-title-as-name --use-field-description --formatters ruff-format)
-(cd sdks/python && uv run --quiet ruff check --select I --fix "$stage/sdks/python/skilltest_sdk/_config.py" "$stage/sdks/python/skilltest_sdk/_config_overrides.py" --quiet)
+(enter_python_sdk && uv run --quiet ruff check --select I --fix "$stage/sdks/python/skilltest_sdk/_config.py" "$stage/sdks/python/skilltest_sdk/_config_overrides.py" --quiet)
 gen_python report
 gen_python validation
 gen_python case
