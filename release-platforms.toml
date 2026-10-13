@@ -2,15 +2,16 @@
 #
 # Every list that builds, bundles, publishes or smokes a per-platform artifact
 # restates part of this set, because a GitHub Actions matrix or a shell `case`
-# cannot read a file: publish.yml's native matrix and Apple Silicon Darwin job, release.yml's archive
-# transport loop, scripts/build-python-dist.sh's targets, scripts/build-python-wheel.sh's
+# cannot read a file: publish.yml's native matrix and Apple Silicon Darwin job,
+# scripts/build-python-dist.sh's targets, scripts/build-python-wheel.sh's
 # wheel-tag map, the npm job's `for target in` loop, scripts/stage-npm-binary.sh,
 # the `@skill-test/cli-*` platform packages, release-targets.toml's `covers`, the
 # SDK's optionalDependencies, .releaserc.json's assets, scripts/set-version.sh,
 # windows-build.yml's matrix and bundle-smoke.yml's matrix.
 # scripts/check-release-targets.sh holds each of them to this file in `just
 # check`, so adding or dropping a platform starts here and the gate names every
-# list that still has to move.
+# list that still has to move. The staged-archive checks before publishing and
+# uploading (scripts/verify-staged-archives.sh) read this file directly.
 #
 # Fields, all required:
 #   target       the Rust target triple `cargo build --target` takes
