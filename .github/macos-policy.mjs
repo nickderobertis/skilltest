@@ -14,7 +14,8 @@ if (
   !policy.releaseBranchPrefix.startsWith("release-plz-")
 )
   throw new Error("invalid release branch policy");
-const version = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
+// Release-version grammar; github-workflows:test holds every release script to it.
+export const releaseVersion = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
 const toml = new Set([
   "Cargo.toml",
   "Cargo.lock",
@@ -36,7 +37,7 @@ function semantic(path, content) {
     );
   if (jsonManifest.test(path)) {
     const doc = object(JSON.parse(content), path);
-    if (!version.test(string(doc.version, "manifest version")))
+    if (!releaseVersion.test(string(doc.version, "manifest version")))
       throw new Error(`invalid version in ${path}`);
     doc.version = "<version>";
     return doc;

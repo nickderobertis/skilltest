@@ -53,6 +53,54 @@ function stringMap(value, where) {
     Object.entries(object(value, where)).map(([key, v]) => [key, string(v, where)]),
   );
 }
+// Fields the resolver models, or that cannot change which runner a job requests
+// or how its outcome is reported. Anything else is refused rather than dropped.
+const jobFields = new Set([
+  "name",
+  "uses",
+  "if",
+  "needs",
+  "runs-on",
+  "strategy",
+  "steps",
+  "with",
+  "secrets",
+  "outputs",
+  "permissions",
+  "environment",
+  "env",
+  "defaults",
+  "container",
+  "concurrency",
+  "timeout-minutes",
+]);
+const stepFields = new Set(["name", "id", "uses", "run", "with", "env", "if", "shell"]);
+const strategyFields = new Set(["matrix", "fail-fast", "max-parallel"]);
+/** @param {Record<string,unknown>} raw @param {Set<string>} allowed @param {string} where */
+function onlyFields(raw, allowed, where) {
+  for (const key of Object.keys(raw))
+    if (!allowed.has(key)) throw new Error(`${where}: unsupported field ${key}`);
+}
+/** The workload every telemetry recording must cover: event classes × diff classes × PR ownership. */
+export const workload = {
+  eventClasses: [
+    "pr-opened",
+    "pr-synchronize",
+    "pr-reopened",
+    "base-push",
+    "release-pr-merge",
+    "release-tag",
+    "release-published",
+    "downstream",
+    "dispatch",
+    "schedule",
+    "manual-default",
+    "manual-opt-in",
+  ],
+  diffs: ["source", "version-only", "dependency"],
+  ownerships: ["same-repository", "fork"],
+  optionalPublish: ["crates", "pypi", "npm"],
+};
 /** @param {unknown} value @returns {import('./models.js').Workflow} */
 export function workflow(value) {
   const doc = object(value, "workflow");
@@ -99,12 +147,14 @@ export function workflow(value) {
   for (const [id, raw] of Object.entries(object(doc.jobs, "workflow.jobs"))) {
     const job = object(raw, `jobs.${id}`);
     if ("continue-on-error" in job) throw new Error("unresolved continue-on-error outcome");
+    onlyFields(job, jobFields, `jobs.${id}`);
     const needs = typeof job.needs === "string" ? job.needs : optionalStrings(job.needs, "needs");
     const runner =
       typeof job["runs-on"] === "string"
         ? job["runs-on"]
         : optionalStrings(job["runs-on"], "runner");
     const rawStrategy = optionalObject(job.strategy, "strategy");
+    if (rawStrategy) onlyFields(rawStrategy, strategyFields, `jobs.${id}.strategy`);
     const strategy = rawStrategy
       ? { ...rawStrategy, matrix: optionalObject(rawStrategy.matrix, "matrix") }
       : undefined;
@@ -115,6 +165,7 @@ export function workflow(value) {
             const step = object(rawStep, "step");
             if ("continue-on-error" in step || "timeout-minutes" in step)
               throw new Error("unresolved step outcome control");
+            onlyFields(step, stepFields, `jobs.${id} step`);
             return {
               run: optionalString(step.run, "step.run"),
               uses: optionalString(step.uses, "step.uses"),
@@ -169,9 +220,31 @@ export function telemetry(value) {
   });
   const ids = new Set(runs.map((run) => run.id));
   if (!runs.length || ids.size !== runs.length) throw new Error("empty or duplicate run telemetry");
+  const scenarios = array(doc.scenarios, "scenarios").map((raw) => {
+    const scenario = object(raw, "scenario");
+    const classification = object(scenario.classification, "scenario classification");
+    return {
+      label: string(scenario.label, "scenario.label"),
+      classification: {
+        isReleaseOnly: boolean(classification.isReleaseOnly, "isReleaseOnly"),
+        macosRequired: boolean(classification.macosRequired, "macosRequired"),
+        reason: string(classification.reason, "reason"),
+      },
+    };
+  });
+  const labels = new Set(scenarios.map((scenario) => scenario.label));
+  if (labels.size !== scenarios.length) throw new Error("duplicate scenario telemetry");
+  for (const eventClass of workload.eventClasses)
+    for (const diff of workload.diffs)
+      for (const ownership of workload.ownerships)
+        if (!labels.has(`${eventClass}/${diff}/${ownership}`))
+          throw new Error(`incomplete workload: missing ${eventClass}/${diff}/${ownership}`);
+  for (const run of runs)
+    if (!labels.has(run.scenario)) throw new Error(`run ${run.id} names no recorded scenario`);
   const lifecycles = array(doc.lifecycles, "lifecycles").map((raw) => {
     const lifecycle = object(raw, "lifecycle");
     const references = strings(lifecycle.runs, "lifecycle.runs");
+    if (!references.length) throw new Error("lifecycle references no runs");
     if (new Set(references).size !== references.length)
       throw new Error("duplicate lifecycle run references");
     for (const id of references) {
@@ -188,10 +261,27 @@ export function telemetry(value) {
     return { id: string(lifecycle.id, "lifecycle.id"), runs: references, optionalPublish };
   });
   if (!lifecycles.length) throw new Error("empty lifecycle telemetry");
+  for (const diff of workload.diffs)
+    for (const ownership of workload.ownerships)
+      for (let combination = 0; combination < 2 ** workload.optionalPublish.length; combination++) {
+        const options = Object.fromEntries(
+          workload.optionalPublish.map((name, bit) => [name, Boolean(combination & (1 << bit))]),
+        );
+        if (
+          !lifecycles.some(
+            (l) =>
+              l.id.startsWith(`${diff}/${ownership}/`) &&
+              workload.optionalPublish.every((name) => l.optionalPublish[name] === options[name]),
+          )
+        )
+          throw new Error(
+            `incomplete workload: no ${diff}/${ownership} lifecycle for ${JSON.stringify(options)}`,
+          );
+      }
   return {
     schema_version: 1,
     sourceDigest: string(doc.sourceDigest, "sourceDigest"),
-    scenarios: array(doc.scenarios, "scenarios"),
+    scenarios,
     runs,
     lifecycles,
   };

@@ -163,3 +163,41 @@ test("classifier rejects empty and added/deleted/renamed release histories", (t)
   git("commit", "--quiet", "-m", "renamed");
   assert.equal(classifyCLI(h, event(), git("rev-parse", "HEAD")).macosRequired, true);
 });
+
+// llmlint: ignore[shell_test_tiers_stay_split] The task requires these real Git/classifier journeys inside the integrated deterministic recording target, without external-service or model probes.
+test("unparseable or unsupported release manifests require Mac coverage", (t) => {
+  const h = history(t);
+  const git = (...args) => execFileSync("git", args, { cwd: h.dir, encoding: "utf8" }).trim();
+  const valid = {
+    "sdks/typescript/package.json": JSON.stringify({ name: "@skill-test/sdk", version: "0.1.0" }),
+    "Cargo.toml":
+      '[workspace.package]\nversion="0.1.0"\n[workspace.dependencies]\nskilltest-core={path="crates/skilltest-core",version="0.1.0"}\n',
+    "pnpm-lock.yaml": "lockfileVersion: '9.0'\nimporters: {}\n",
+  };
+  git("checkout", "--quiet", h.release);
+  for (const [path, src] of Object.entries(valid)) {
+    mkdirSync(join(h.dir, path, ".."), { recursive: true });
+    writeFileSync(join(h.dir, path), src);
+  }
+  git("add", ".");
+  git("commit", "--quiet", "-m", "valid manifests");
+  const base = git("rev-parse", "HEAD");
+  for (const [path, src, reason] of [
+    ["sdks/typescript/package.json", "{", /unreadable release classification/],
+    ["sdks/typescript/package.json", JSON.stringify({ version: "next" }), /invalid version/],
+    ["Cargo.toml", "[workspace.package\nversion=", /unreadable release classification/],
+    ["Cargo.toml", '[workspace.package]\nversion="0.2"\n', /invalid or missing version/],
+    ["pnpm-lock.yaml", "lockfileVersion: [\n", /unreadable release classification/],
+    ["pnpm-lock.yaml", "lockfileVersion: '6.0'\nimporters: {}\n", /unsupported pnpm lockfile/],
+  ]) {
+    git("checkout", "--quiet", base);
+    writeFileSync(join(h.dir, path), src);
+    git("add", ".");
+    git("commit", "--quiet", "-m", `malformed ${path}`);
+    h.base = base;
+    const result = classifyCLI(h, event(), git("rev-parse", "HEAD"));
+    assert.equal(result.macosRequired, true, path);
+    assert.equal(result.isReleaseOnly, false, path);
+    assert.match(result.reason, reason, path);
+  }
+});

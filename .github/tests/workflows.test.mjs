@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import test from "node:test";
 import YAML from "yaml";
-import { workflow as validateWorkflow } from "../validation.mjs";
+import { join, resolve } from "node:path";
+import { releaseVersion } from "../macos-policy.mjs";
+import { workflow as validateWorkflow, workload } from "../validation.mjs";
 import {
   loadGraph,
   matrixRows,
@@ -29,6 +31,11 @@ const classes = [
   ["manual-default", "workflow_dispatch"],
   ["manual-opt-in", "workflow_dispatch"],
 ];
+// The recorded workload is the one telemetry validation requires.
+assert.deepEqual(
+  classes.map(([label]) => label),
+  workload.eventClasses,
+);
 function scenario(label, name, action, diff, ownership) {
   const e = event({
     label: `${label}/${diff}/${ownership}`,
@@ -562,22 +569,190 @@ test("SDK budget analysis alone judges an induced matrix expansion", () => {
   const within = spawnSync(process.execPath, [".github/check-budgets.mjs"], { encoding: "utf8" });
   assert.equal(within.status, 0, within.stderr);
   assert.match(within.stdout, /within/);
-  const malformed = structuredClone(original);
-  malformed.lifecycles[0].runs.push("missing-run");
-  writeFileSync(".github/.telemetry/malformed.json", JSON.stringify(malformed));
-  const invalid = spawnSync(
-    process.execPath,
+  const manual = original.runs.find((r) => r.manual).id;
+  for (const [mutate, message] of [
+    [(t) => t.lifecycles[0].runs.push("missing-run"), /unresolved lifecycle run/],
     [
-      ".github/macos-budget.mjs",
-      "--metric",
-      "jobs-per-run",
-      "--telemetry",
-      ".github/.telemetry/malformed.json",
+      (t) => {
+        t.runs = [];
+      },
+      /empty or duplicate run telemetry/,
     ],
-    { encoding: "utf8" },
+    [(t) => t.runs.push(structuredClone(t.runs[0])), /empty or duplicate run telemetry/],
+    [(t) => t.lifecycles[0].runs.push(t.lifecycles[0].runs[0]), /duplicate lifecycle run/],
+    [
+      (t) => {
+        t.lifecycles[0].runs = [];
+      },
+      /references no runs/,
+    ],
+    [(t) => t.lifecycles[0].runs.push(manual), /manual diagnostic in automatic lifecycle/],
+    [(t) => t.scenarios.pop(), /incomplete workload: missing/],
+    [(t) => t.scenarios.push(structuredClone(t.scenarios[0])), /duplicate scenario/],
+    [
+      (t) => {
+        t.lifecycles = t.lifecycles.slice(1);
+      },
+      /incomplete workload: no/,
+    ],
+    [
+      (t) => {
+        t.runs[0].scenario = "unrecorded";
+      },
+      /names no recorded scenario/,
+    ],
+  ]) {
+    const malformed = structuredClone(original);
+    mutate(malformed);
+    writeFileSync(".github/.telemetry/malformed.json", JSON.stringify(malformed));
+    const invalid = spawnSync(
+      process.execPath,
+      [
+        ".github/macos-budget.mjs",
+        "--metric",
+        "jobs-per-run",
+        "--telemetry",
+        ".github/.telemetry/malformed.json",
+      ],
+      { encoding: "utf8" },
+    );
+    assert.notEqual(invalid.status, 0, String(message));
+    assert.match(invalid.stderr, message);
+  }
+});
+
+test("workflow decoder refuses fields it does not model instead of dropping them", () => {
+  for (const [mutate, message] of [
+    [
+      (w) => {
+        w.jobs["mac-check"]["continue-on-error"] = true;
+      },
+      /continue-on-error/,
+    ],
+    [
+      (w) => {
+        w.jobs["mac-check"]["runner-group"] = "mac";
+      },
+      /unsupported field runner-group/,
+    ],
+    [
+      (w) => {
+        w.jobs["mac-check"].steps[0].retry = 3;
+      },
+      /unsupported field retry/,
+    ],
+    [
+      (w) => {
+        w.jobs["mac-check"].strategy = { matrix: {}, retries: 2 };
+      },
+      /unsupported field retries/,
+    ],
+  ]) {
+    const raw = YAML.parse(readFileSync(".github/workflows/ci.yml", "utf8"));
+    mutate(raw);
+    assert.throws(() => validateWorkflow(raw), message);
+  }
+});
+
+// llmlint: ignore[shell_test_tiers_stay_split] Each release script's version grammar is exercised through its own interpreter, which is the drift this test exists to catch; no network, service or model is reached.
+test("every release script accepts exactly the classifier's version grammar", () => {
+  const samples = [
+    "0.12.2",
+    "10.0.0",
+    "1.2.3-rc.1",
+    "1.2.3+build.5",
+    "1.2.3-alpha-1",
+    "1.2",
+    "1.2.3.4",
+    "v1.2.3",
+    "1.2.3-",
+    "1.2.3-rc+b",
+    "1.2.3-rc_1",
+    "1.2.3 ",
+    "",
+  ];
+  const python = (path) =>
+    JSON.parse(
+      execFileSync(
+        "python3",
+        [
+          "-c",
+          `import importlib.util,json,sys
+spec=importlib.util.spec_from_file_location("m",sys.argv[1]);m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+print(json.dumps([bool(m.VERSION.fullmatch(v)) for v in json.loads(sys.argv[2])]))`,
+          path,
+          JSON.stringify(samples),
+        ],
+        { encoding: "utf8" },
+      ),
+    );
+  const sha = "a".repeat(40);
+  const shell = samples.map(
+    (v) =>
+      spawnSync("bash", ["scripts/check-release-identity.sh", `v${v}`, v, sha, sha], {
+        encoding: "utf8",
+      }).status === 0,
   );
-  assert.notEqual(invalid.status, 0);
-  assert.match(invalid.stderr, /unresolved lifecycle run/);
+  const expected = samples.map((v) => releaseVersion.test(v));
+  assert.ok(expected.some(Boolean) && !expected.every(Boolean));
+  assert.deepEqual(python(".github/semantic-version-diff.py"), expected);
+  assert.deepEqual(python("scripts/stage-and-verify-release-product.py"), expected);
+  assert.deepEqual(shell, expected);
+});
+
+// llmlint: ignore[shell_test_tiers_stay_split] loadGraph reads the lock and fixture relative to its working directory, so each corruption runs it in a scratch copy; no network, service or model is reached.
+test("locked reusable workflow bytes, digest and annotations refuse corruption", (t) => {
+  const root = mkdtempSync(
+    join(process.env.ONEPIPELINE_NODE_SCRATCH_DIR ?? "/tmp", "reusable-lock-"),
+  );
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const lock = JSON.parse(readFileSync(".github/reusable-workflows.json", "utf8"));
+  const [entry] = Object.values(lock);
+  const fixture = readFileSync(entry.path, "utf8");
+  const [annotation] = entry.annotations;
+  const indent = annotation.before.slice(
+    0,
+    annotation.before.length - annotation.before.trimStart().length,
+  );
+  const marker = `${indent}# llmlint: ignore[comments_earn_their_place] ${annotation.reason}\n`;
+  const load = (fixtureText, lockDoc) => {
+    const dir = mkdtempSync(join(root, "case-"));
+    mkdirSync(join(dir, ".github/workflows"), { recursive: true });
+    mkdirSync(join(dir, entry.path, ".."), { recursive: true });
+    writeFileSync(join(dir, entry.path), fixtureText);
+    writeFileSync(join(dir, ".github/reusable-workflows.json"), JSON.stringify(lockDoc));
+    return spawnSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `import { loadGraph } from ${JSON.stringify(resolve(".github/workflow-graph.mjs"))}; loadGraph();`,
+      ],
+      { cwd: dir, encoding: "utf8" },
+    );
+  };
+  assert.equal(load(fixture, lock).status, 0);
+  for (const [text, lockDoc, message] of [
+    [`${fixture}\n# drifted\n`, lock, /digest mismatch/],
+    [fixture.replace(marker, ""), lock, /annotation moved, duplicated or missing/],
+    [
+      fixture.replace(
+        `${marker}${annotation.before}`,
+        `${marker}${annotation.before}\n${marker}${annotation.before}`,
+      ),
+      lock,
+      /annotation moved, duplicated or missing/,
+    ],
+    [
+      fixture,
+      { ...lock, [Object.keys(lock)[0]]: { ...entry, sha256: "0".repeat(64) } },
+      /digest mismatch/,
+    ],
+  ]) {
+    const result = load(text, lockDoc);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, message);
+  }
 });
 
 test("workflow decoder rejects unsupported step controls and policy output drift", () => {
