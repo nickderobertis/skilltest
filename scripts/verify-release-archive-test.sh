@@ -275,7 +275,7 @@ expect_aggregate_red() {
   shift 2
   if aggregate "$@"; then fail "the aggregation passed products where $what; restore the check in scripts/verify-staged-archives.sh that refuses it"; fi
   grep -Fq -- "$says" "$work/out" ||
-    fail "the aggregation refused products where $what, but not for that reason (expected it to say '$says')"
+    fail "the aggregation refused products where $what, but not for that reason (expected it to say '$says'); fix the branch of scripts/verify-staged-archives.sh that now reports it, or this case if it no longer produces that fault"
 }
 
 stage_products
