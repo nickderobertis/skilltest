@@ -10,9 +10,15 @@ import struct
 import sys
 import tarfile
 import tomllib
+from typing import NamedTuple, NewType
 import zipfile
 
 VERSION = re.compile(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
+
+# A declared Rust target triple, a lockstep release version and a hex SHA-256.
+Target = NewType("Target", str)
+Version = NewType("Version", str)
+Sha256 = NewType("Sha256", str)
 
 
 def require(condition: bool, reason: str) -> None:
@@ -34,7 +40,7 @@ def string_array(value: object, where: str) -> tuple[str, ...]:
 
 @dataclass(frozen=True)
 class Platform:
-    target: str
+    target: Target
     runner: str
     bin: str
     wheel_tag: str
@@ -52,13 +58,16 @@ class Platform:
             all(isinstance(v, str) and v for v in values), "missing platform fields"
         )
         require(set(raw) == set(names), "unexpected platform fields")
-        return cls(**{key: text(raw.get(key), key) for key in names})
+        return cls(
+            Target(text(raw.get("target"), "target")),
+            *(text(raw.get(key), key) for key in names[1:]),
+        )
 
 
 @dataclass(frozen=True)
 class NpmIdentity:
     name: str
-    version: str
+    version: Version
     cpu: tuple[str, ...]
     os: tuple[str, ...]
 
@@ -74,31 +83,38 @@ class NpmIdentity:
         require(bool(VERSION.fullmatch(version)), "invalid npm version")
         require(cpu in (("x64",), ("arm64",)), "invalid npm CPU")
         require(os in (("linux",), ("darwin",), ("win32",)), "invalid npm OS")
-        return cls(name, version, tuple(cpu), tuple(os))
+        return cls(name, Version(version), tuple(cpu), tuple(os))
+
+
+@dataclass(frozen=True)
+class PayloadDigests:
+    archive: Sha256
+    wheel: Sha256
+    npm: Sha256
 
 
 @dataclass(frozen=True)
 class PayloadEvidence:
-    target: str
-    version: str
-    binary_sha256: str
-    payload_sha256: dict[str, str]
+    target: Target
+    version: Version
+    binary_sha256: Sha256
+    payload_sha256: PayloadDigests
     archive: str
     wheel: str
     npm: str
 
 
-def digest(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
+def digest(data: bytes) -> Sha256:
+    return Sha256(hashlib.sha256(data).hexdigest())
 
 
-def release_version() -> str:
+def release_version() -> Version:
     value = tomllib.loads(Path("Cargo.toml").read_text())["workspace"]["package"][
         "version"
     ]
     version = text(value, "manifest version")
     require(bool(VERSION.fullmatch(version)), "invalid manifest version")
-    return version
+    return Version(version)
 
 
 def asset_name(platform: Platform) -> str:
@@ -107,16 +123,21 @@ def asset_name(platform: Platform) -> str:
     )
 
 
-def npm_platform(target: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """The (cpu, os) an npm carrier for a declared target must state."""
+class NpmPlatform(NamedTuple):
+    cpu: tuple[str, ...]
+    os: tuple[str, ...]
+
+
+def npm_platform(target: Target) -> NpmPlatform:
+    """The cpu and os fields an npm carrier for a declared target must state."""
     cpu = ("x64" if target.startswith("x86_64") else "arm64",)
     match target.split("-"):
         case [_, "apple", "darwin"]:
-            return cpu, ("darwin",)
+            return NpmPlatform(cpu, ("darwin",))
         case [_, "pc", "windows", "msvc"]:
-            return cpu, ("win32",)
+            return NpmPlatform(cpu, ("win32",))
         case [_, "unknown", "linux", "gnu"]:
-            return cpu, ("linux",)
+            return NpmPlatform(cpu, ("linux",))
         case _:
             raise ValueError("unsupported npm target")
 
@@ -178,7 +199,11 @@ def check_carriers(platforms: list[Platform], products: Path) -> None:
                 raise ValueError("npm carrier member missing")
             manifest = NpmIdentity.parse(json.load(manifest_stream))
             require(
-                (manifest.name, manifest.version, (manifest.cpu, manifest.os))
+                (
+                    manifest.name,
+                    manifest.version,
+                    NpmPlatform(manifest.cpu, manifest.os),
+                )
                 == (platform.npm_package, version, npm_platform(platform.target)),
                 f"packed carrier identity differs from declared target/version: {carriers[0]}",
             )
@@ -324,9 +349,9 @@ def main() -> None:
             manifest.name == platform.npm_package and manifest.version == version,
             "wrong npm identity/version",
         )
-        expected_cpu, expected_os = npm_platform(target)
-        require(manifest.cpu == expected_cpu, "wrong npm architecture")
-        require(manifest.os == expected_os, "wrong npm OS")
+        expected = npm_platform(platform.target)
+        require(manifest.cpu == expected.cpu, "wrong npm architecture")
+        require(manifest.os == expected.os, "wrong npm OS")
         require(
             set(t.getnames())
             == {"package/package.json", f"package/bin/{platform.bin}"},
@@ -350,14 +375,14 @@ def main() -> None:
     require(archive_data == data, "archive binary differs")
     (out / (asset + ".sha256")).write_text(f"{digest(archive.read_bytes())}  {asset}\n")
     evidence = PayloadEvidence(
-        target,
+        platform.target,
         version,
         digest(data),
-        {
-            "archive": digest(archive_data),
-            "wheel": digest(wheel_data),
-            "npm": digest(npm_data),
-        },
+        PayloadDigests(
+            archive=digest(archive_data),
+            wheel=digest(wheel_data),
+            npm=digest(npm_data),
+        ),
         asset,
         wheel.name,
         packed.name,

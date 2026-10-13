@@ -115,6 +115,7 @@ if command=='gh':
     record()
     if args[:2]==['release','view']:sys.exit(0 if os.environ.get('EXISTING_RELEASE')=='1' else 1)
     if args[:2]==['release','upload']:
+        if os.environ.get('UPLOAD_FAILS')=='1':sys.exit(1)
         for path in args[2:]:
             if path.startswith('products/'):assert pathlib.Path(path).is_file()
     sys.exit(0)
@@ -258,6 +259,22 @@ const existingCalls = readFileSync(existingLog, "utf8")
   .map((line) => JSON.parse(line));
 assert.ok(existingCalls.some((c) => c.command === "gh" && c.args[1] === "upload"));
 assert.ok(!existingCalls.some((c) => c.command === "gh" && c.args[1] === "create"));
+// A refused forge upload must fail the production upload command, not vanish inside find.
+const failedUploadLog = join(work, "failed-upload.jsonl");
+writeFileSync(failedUploadLog, "");
+result = spawnSync("bash", ["-c", archive], {
+  cwd: fixture,
+  encoding: "utf8",
+  env: { ...env, PUBLISHED_FLAGS: "0", UPLOAD_FAILS: "1", TRANSPORT_LOG: failedUploadLog },
+});
+assert.notEqual(result.status, 0);
+assert.ok(
+  readFileSync(failedUploadLog, "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line))
+    .some((c) => c.command === "gh" && c.args[1] === "upload"),
+);
 const wheelDir = join(fixture, "products", platforms[0].target);
 const wheelFile = join(
   wheelDir,

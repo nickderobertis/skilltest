@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 
 const scratch = process.env.ONEPIPELINE_NODE_SCRATCH_DIR ?? process.env.TMPDIR ?? "/tmp";
 const script = resolve(".github/macos-policy.mjs");
+// llmlint: ignore[shell_test_tiers_stay_split] The classifier contract is defined over real Git histories, so github-workflows:test generates them with the host's git in a scratch repository; no network, service or model is reached.
 export function history(t) {
   const dir = mkdtempSync(join(scratch, "macos-classifier-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
