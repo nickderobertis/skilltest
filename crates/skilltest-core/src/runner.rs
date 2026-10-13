@@ -949,7 +949,7 @@ mod tests {
     #[test]
     fn mocked_case_scores_call_evals_deterministically() {
         let mut case = boolean_case(temp_skill("mocked"));
-        case.mocks = serde_yaml::from_str(
+        case.mocks = serde_saphyr::from_str(
             r#"
 - name: push
   match: { tool: bash, pattern: "git push( --force)?\\b" }
@@ -963,9 +963,9 @@ mod tests {
         )
         .unwrap();
         case.evals = vec![
-            serde_yaml::from_str("type: called\nmock: push\ntimes: 1\n").unwrap(),
-            serde_yaml::from_str("type: not_called\nmock: danger\n").unwrap(),
-            serde_yaml::from_str(
+            serde_saphyr::from_str("type: called\nmock: push\ntimes: 1\n").unwrap(),
+            serde_saphyr::from_str("type: not_called\nmock: danger\n").unwrap(),
+            serde_saphyr::from_str(
                 "type: called\nmock: git\nwhere: { command: { contains: status } }\n",
             )
             .unwrap(),
@@ -999,11 +999,11 @@ mod tests {
     #[test]
     fn failing_not_called_eval_reports_the_observed_calls() {
         let mut case = boolean_case(temp_skill("mock-violate"));
-        case.mocks = serde_yaml::from_str(
+        case.mocks = serde_saphyr::from_str(
             "- name: danger\n  match: { contains: \"rm -rf\" }\n  deny: blocked\n",
         )
         .unwrap();
-        case.evals = vec![serde_yaml::from_str("type: not_called\nmock: danger\n").unwrap()];
+        case.evals = vec![serde_saphyr::from_str("type: not_called\nmock: danger\n").unwrap()];
         let provider = MockingProvider {
             records: vec![mock_record("bash", "rm -rf /", "deny", Some(0))],
             seen_rules: RefCell::new(Vec::new()),
@@ -1028,7 +1028,7 @@ mod tests {
         // A `not_called` eval on a case with no mocks/spy: there is no
         // observation channel, so the run must error, not pass on zero records.
         let mut case = boolean_case(temp_skill("mock-nochannel"));
-        case.evals = vec![serde_yaml::from_str("type: not_called\nmock: danger\n").unwrap()];
+        case.evals = vec![serde_saphyr::from_str("type: not_called\nmock: danger\n").unwrap()];
         let provider = ScriptedProvider {
             assistant: vec![AssistantTurn {
                 message: "hi".into(),

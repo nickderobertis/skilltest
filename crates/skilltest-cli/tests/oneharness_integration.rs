@@ -383,7 +383,7 @@ fn concurrent_runs_count_their_own_stub_sequences_through_the_real_hook() {
 fn one_item_stub_sequence_is_a_plain_stub_through_the_real_hook() {
     // A one-item list compiles to oneharness's own stub: every call gets that
     // response and its exit code, and the hook itself logs `stub`.
-    let decls: Vec<skilltest_core::MockDecl> = serde_yaml::from_str(
+    let decls: Vec<skilltest_core::MockDecl> = serde_saphyr::from_str(
         "- name: status\n  match: { contains: jobctl }\n  stub: [{ output: steady, exit_code: 2 }]\n",
     )
     .unwrap();

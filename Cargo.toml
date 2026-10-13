@@ -13,7 +13,7 @@ members = [
 [workspace.package]
 version = "0.12.2"
 edition = "2021"
-rust-version = "1.82"
+rust-version = "1.89"
 license = "MIT"
 repository = "https://github.com/nickderobertis/skilltest"
 authors = ["Nick DeRobertis"]
@@ -23,7 +23,7 @@ skilltest-core = { path = "crates/skilltest-core", version = "0.12.2" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 schemars = "1"
-serde_yaml = "0.9"
+serde-saphyr = "1.3"
 thiserror = "2"
 # Mock-rule `pattern` matchers. The linear-time RE2-style engine, so a
 # user-supplied pattern can never hang a run; mirrors the crate oneharness

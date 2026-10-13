@@ -1,0 +1,92 @@
+# Synthetic: one case exercising every internally tagged (`type:`) and
+# untagged enum variant the case schema has, and each newtype variant wrapping
+# a `deny_unknown_fields` struct.
+name: every_variant
+skill: ../skills/deployer
+input: |
+  Deploy the app.
+  Then report.
+user:
+  persona: >
+    You are an operator
+    who folds lines.
+  done_when: the deploy is reported
+  max_turns: 4
+spy: true
+mocks:
+  - name: text_stub
+    match: { tool: bash, contains: "git push" }
+    stub: Everything up-to-date
+  - name: full_stub
+    match: { tool: bash, pattern: "^make\\b" }
+    stub: { output: "make: done", exit_code: 2 }
+  - name: seq_stub
+    match: { contains: "jobctl" }
+    stub:
+      - "queued"
+      - { output: "failed", exit_code: 1 }
+      - { output: "passed" }
+  - name: text_deny
+    match: { contains: "rm -rf" }
+    deny: destructive commands are blocked
+  - name: full_deny
+    match:
+      tool: bash
+      input:
+        command: git push --force
+    deny: { message: "force-push blocked" }
+  - name: rw
+    match:
+      tool: read
+      input:
+        file_path: { equals: /etc/hosts }
+        mode: { pattern: "^r" }
+        other: { contains: x }
+    rewrite:
+      file_path: fixtures/hosts
+      zeta: 1
+      alpha: [true, null, 1.5, "s"]
+      nested: { b: 2, a: { c: [] } }
+  - match: { tool: bash }
+evals:
+  - type: boolean
+    name: b
+    criterion: the deploy finished
+    expected: false
+  - type: numeric
+    name: n1
+    criterion: how concise
+    min: 0
+    max: 10
+    threshold: 7
+    comparator: ">="
+  - type: numeric
+    criterion: how warm
+    min: -1.5
+    max: 1.5
+    threshold: 0.5
+    comparator: lt
+  - type: numeric
+    criterion: alias gt
+    min: 0
+    max: 1
+    threshold: 0.5
+    comparator: ">"
+  - type: numeric
+    criterion: word lte
+    min: 0
+    max: 1
+    threshold: 0.5
+    comparator: lte
+  - type: called
+    name: pushed
+    mock: text_stub
+    times: 1
+    where: { command: "git push" }
+  - type: called
+    mock: rw
+    where: { file_path: { contains: hosts } }
+  - type: not_called
+    name: never
+    mock: text_deny
+    where: { command: { pattern: "rm\\s+-rf" } }

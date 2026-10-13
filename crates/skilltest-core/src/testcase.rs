@@ -76,9 +76,16 @@ impl TestCase {
             path: path.to_path_buf(),
             source,
         })?;
-        let mut case: TestCase = serde_yaml::from_str(&text).map_err(|source| Error::Yaml {
+        let mut case: TestCase = serde_saphyr::from_str_with_options(&text, {
+            let mut options = serde_saphyr::Options::default();
+            options.strict_booleans = true;
+            options.merge_keys = serde_saphyr::MergeKeyPolicy::Error;
+            options.with_snippet = false;
+            options
+        })
+        .map_err(|source| Error::Yaml {
             path: path.to_path_buf(),
-            source,
+            message: source.to_string(),
         })?;
         let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("case");
         let base = path.parent().unwrap_or_else(|| Path::new(""));
@@ -238,7 +245,7 @@ evals:
   - type: boolean
     criterion: "greets Dr. Smith by name"
 "#;
-        let case: TestCase = serde_yaml::from_str(yaml).unwrap();
+        let case: TestCase = serde_saphyr::from_str(yaml).unwrap();
         assert!(!case.is_multi_turn());
         assert_eq!(case.evals.len(), 1);
         assert!(matches!(case.evals[0], Eval::Boolean(BooleanEval { .. })));
@@ -261,7 +268,7 @@ evals:
     max: 10
     threshold: 7
 "#;
-        let case: TestCase = serde_yaml::from_str(yaml).unwrap();
+        let case: TestCase = serde_saphyr::from_str(yaml).unwrap();
         assert!(case.is_multi_turn());
         assert_eq!(case.user.as_ref().unwrap().max_turns, Some(5));
         case.validate().unwrap();
@@ -270,14 +277,14 @@ evals:
     #[test]
     fn empty_evals_is_invalid() {
         let yaml = "skill: ./x\ninput: hi\nevals: []\n";
-        let case: TestCase = serde_yaml::from_str(yaml).unwrap();
+        let case: TestCase = serde_saphyr::from_str(yaml).unwrap();
         assert!(case.validate().is_err());
     }
 
     #[test]
     fn unknown_field_is_rejected() {
         let yaml = "skill: ./x\ninput: hi\nbogus: 1\nevals: []\n";
-        assert!(serde_yaml::from_str::<TestCase>(yaml).is_err());
+        assert!(serde_saphyr::from_str::<TestCase>(yaml).is_err());
     }
 
     #[test]
@@ -286,7 +293,7 @@ evals:
         // field — never a silently-applied default, which could invert the
         // eval's intent into a vacuous pass.
         let yaml = "skill: ./x\ninput: hi\nevals:\n  - type: boolean\n    criterion: c\n    expcted: false\n";
-        let err = serde_yaml::from_str::<TestCase>(yaml).unwrap_err();
+        let err = serde_saphyr::from_str::<TestCase>(yaml).unwrap_err();
         assert!(
             err.to_string().contains("expcted"),
             "error names the unknown field: {err}"
@@ -301,7 +308,7 @@ evals:
     #[test]
     fn unknown_user_field_is_rejected() {
         let yaml = "skill: ./x\ninput: hi\nuser:\n  persona: p\n  don_when: x\nevals:\n  - type: boolean\n    criterion: c\n";
-        let err = serde_yaml::from_str::<TestCase>(yaml).unwrap_err();
+        let err = serde_saphyr::from_str::<TestCase>(yaml).unwrap_err();
         assert!(err.to_string().contains("don_when"), "{err}");
     }
 

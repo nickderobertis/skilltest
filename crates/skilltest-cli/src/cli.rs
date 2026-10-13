@@ -323,7 +323,14 @@ fn load_mocks_file(path: &Path) -> Result<Vec<skilltest_core::MockDecl>> {
             path.display()
         ))
     })?;
-    serde_yaml::from_str(&text).map_err(|e| {
+    serde_saphyr::from_str_with_options(&text, {
+        let mut options = serde_saphyr::Options::default();
+        options.strict_booleans = true;
+        options.merge_keys = serde_saphyr::MergeKeyPolicy::Error;
+        options.with_snippet = false;
+        options
+    })
+    .map_err(|e| {
         Error::Invalid(format!(
             "--mocks file `{}` is not a valid mock declaration list: {e}",
             path.display()
@@ -495,3 +502,7 @@ fn emit_json_stream_error(error: &ReportError) {
     let stdout = std::io::stdout();
     let _ = write_ndjson(&stdout, &line);
 }
+
+#[cfg(test)]
+#[path = "yaml_tests.rs"]
+mod yaml_tests;
