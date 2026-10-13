@@ -254,9 +254,16 @@ impl Config {
             path: path.to_path_buf(),
             source,
         })?;
-        let config: Config = serde_yaml::from_str(&text).map_err(|source| Error::Yaml {
+        let config: Config = serde_saphyr::from_str_with_options(&text, {
+            let mut options = serde_saphyr::Options::default();
+            options.strict_booleans = true;
+            options.merge_keys = serde_saphyr::MergeKeyPolicy::Error;
+            options.with_snippet = false;
+            options
+        })
+        .map_err(|source| Error::Yaml {
             path: path.to_path_buf(),
-            source,
+            message: source.to_string(),
         })?;
         config.validate()?;
         Ok(config)
@@ -443,7 +450,7 @@ mod tests {
         // its own process, so this env write does not leak to other tests.)
         std::env::set_var(ONEHARNESS_BIN_ENV, "/opt/bundled/oneharness");
         let yaml = "provider:\n  kind: oneharness\n  judge_harness: codex\n";
-        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        let config: Config = serde_saphyr::from_str(yaml).unwrap();
         let ProviderConfig::Oneharness(oh) = &config.provider else {
             panic!("expected oneharness provider");
         };
@@ -457,7 +464,7 @@ mod tests {
         // env-aware default — the user's choice is honored over the bundled one.
         std::env::set_var(ONEHARNESS_BIN_ENV, "/opt/bundled/oneharness");
         let yaml = "provider:\n  kind: oneharness\n  bin: /custom/oneharness\n";
-        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        let config: Config = serde_saphyr::from_str(yaml).unwrap();
         let ProviderConfig::Oneharness(oh) = &config.provider else {
             panic!("expected oneharness provider");
         };
@@ -469,7 +476,7 @@ mod tests {
     fn oneharness_bin_defaults_to_path_name_without_env() {
         std::env::remove_var(ONEHARNESS_BIN_ENV);
         let yaml = "provider:\n  kind: oneharness\n";
-        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        let config: Config = serde_saphyr::from_str(yaml).unwrap();
         let ProviderConfig::Oneharness(oh) = &config.provider else {
             panic!("expected oneharness provider");
         };
@@ -479,7 +486,7 @@ mod tests {
     #[test]
     fn parses_command_provider_yaml() {
         let yaml = "provider:\n  kind: command\n  command: [\"prov\", \"--flag\"]\n";
-        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        let config: Config = serde_saphyr::from_str(yaml).unwrap();
         assert_eq!(
             config.provider,
             ProviderConfig::Command(CommandConfig {
@@ -491,7 +498,7 @@ mod tests {
     #[test]
     fn parses_oneharness_provider_yaml() {
         let yaml = "provider:\n  kind: oneharness\n  bin: oh\n  judge_harness: codex\n";
-        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        let config: Config = serde_saphyr::from_str(yaml).unwrap();
         let ProviderConfig::Oneharness(oh) = &config.provider else {
             panic!("expected oneharness provider");
         };
@@ -508,7 +515,7 @@ mod tests {
     fn parses_oneharness_history_overrides() {
         let yaml =
             "provider:\n  kind: oneharness\n  history: false\n  history_dir: /shared/history\n";
-        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        let config: Config = serde_saphyr::from_str(yaml).unwrap();
         let ProviderConfig::Oneharness(oh) = &config.provider else {
             panic!("expected oneharness provider");
         };
@@ -534,7 +541,7 @@ mod tests {
     fn parses_api_judge_config() {
         let yaml = "\
 provider:\n  kind: oneharness\njudge:\n  kind: api\n  vendor: anthropic\n  timeout_secs: 30\n";
-        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        let config: Config = serde_saphyr::from_str(yaml).unwrap();
         let Some(JudgeConfig::Api(api)) = &config.judge else {
             panic!("expected an api judge");
         };
@@ -550,7 +557,7 @@ provider:\n  kind: oneharness\njudge:\n  kind: api\n  vendor: anthropic\n  timeo
     #[test]
     fn api_judge_zero_timeout_is_invalid() {
         let yaml = "judge:\n  kind: api\n  vendor: openai\n  timeout_secs: 0\n";
-        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        let config: Config = serde_saphyr::from_str(yaml).unwrap();
         assert!(config.validate().is_err());
     }
 
@@ -693,7 +700,7 @@ provider:\n  kind: oneharness\njudge:\n  kind: api\n  vendor: anthropic\n  timeo
     #[test]
     fn validate_rejects_blank_api_judge_curl_bin() {
         let yaml = "judge:\n  kind: api\n  vendor: anthropic\n  curl_bin: \"  \"\n";
-        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        let config: Config = serde_saphyr::from_str(yaml).unwrap();
         assert!(config.validate().is_err());
     }
 
@@ -710,8 +717,8 @@ provider:\n  kind: oneharness\njudge:\n  kind: api\n  vendor: anthropic\n  timeo
             })),
             ..Config::default()
         };
-        let yaml = serde_yaml::to_string(&config).unwrap();
-        let parsed: Config = serde_yaml::from_str(&yaml).unwrap();
+        let yaml = serde_saphyr::to_string(&config).unwrap();
+        let parsed: Config = serde_saphyr::from_str(&yaml).unwrap();
         assert_eq!(parsed, config);
     }
 }

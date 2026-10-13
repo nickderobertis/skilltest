@@ -526,9 +526,9 @@ mod tests {
 
     #[test]
     fn comparator_parses_from_symbol() {
-        let c: Comparator = serde_yaml::from_str("\">=\"").unwrap();
+        let c: Comparator = serde_saphyr::from_str("\">=\"").unwrap();
         assert_eq!(c, Comparator::Gte);
-        let c: Comparator = serde_yaml::from_str("lt").unwrap();
+        let c: Comparator = serde_saphyr::from_str("lt").unwrap();
         assert_eq!(c, Comparator::Lt);
     }
 
@@ -640,7 +640,7 @@ mod tests {
 
     #[test]
     fn called_and_not_called_parse_from_yaml() {
-        let called: Eval = serde_yaml::from_str(
+        let called: Eval = serde_saphyr::from_str(
             "type: called\nmock: push\ntimes: 1\nwhere: { command: { contains: \"--force\" } }\n",
         )
         .unwrap();
@@ -651,23 +651,23 @@ mod tests {
         assert_eq!(called.label(), "called: push");
         assert!(called.criterion().is_none());
 
-        let not_called: Eval = serde_yaml::from_str("type: not_called\nmock: danger\n").unwrap();
+        let not_called: Eval = serde_saphyr::from_str("type: not_called\nmock: danger\n").unwrap();
         not_called.validate().unwrap();
         assert_eq!(not_called.label(), "not_called: danger");
 
         let named: Eval =
-            serde_yaml::from_str("type: called\nmock: push\nname: pushed once\n").unwrap();
+            serde_saphyr::from_str("type: called\nmock: push\nname: pushed once\n").unwrap();
         assert_eq!(named.label(), "pushed once");
     }
 
     #[test]
     fn call_eval_validation_is_loud() {
-        let empty_mock: Eval = serde_yaml::from_str("type: called\nmock: \"\"\n").unwrap();
+        let empty_mock: Eval = serde_saphyr::from_str("type: called\nmock: \"\"\n").unwrap();
         assert!(empty_mock.validate().is_err());
-        let zero_times: Eval = serde_yaml::from_str("type: called\nmock: m\ntimes: 0\n").unwrap();
+        let zero_times: Eval = serde_saphyr::from_str("type: called\nmock: m\ntimes: 0\n").unwrap();
         let err = zero_times.validate().unwrap_err();
         assert!(err.to_string().contains("not_called"), "{err}");
-        let bad_where: Eval = serde_yaml::from_str(
+        let bad_where: Eval = serde_saphyr::from_str(
             "type: not_called\nmock: m\nwhere: { command: { pattern: \"(\" } }\n",
         )
         .unwrap();
@@ -676,7 +676,7 @@ mod tests {
 
     #[test]
     fn outcome_for_calls_covers_every_expectation() {
-        let at_least_once: Eval = serde_yaml::from_str("type: called\nmock: push\n").unwrap();
+        let at_least_once: Eval = serde_saphyr::from_str("type: called\nmock: push\n").unwrap();
         assert!(at_least_once.outcome_for_calls(2, "").unwrap().passed);
         let failed = at_least_once.outcome_for_calls(0, "bash(ls)").unwrap();
         assert!(!failed.passed);
@@ -696,11 +696,11 @@ mod tests {
             }
         ));
 
-        let exactly: Eval = serde_yaml::from_str("type: called\nmock: push\ntimes: 2\n").unwrap();
+        let exactly: Eval = serde_saphyr::from_str("type: called\nmock: push\ntimes: 2\n").unwrap();
         assert!(exactly.outcome_for_calls(2, "").unwrap().passed);
         assert!(!exactly.outcome_for_calls(1, "").unwrap().passed);
 
-        let never: Eval = serde_yaml::from_str("type: not_called\nmock: danger\n").unwrap();
+        let never: Eval = serde_saphyr::from_str("type: not_called\nmock: danger\n").unwrap();
         assert!(never.outcome_for_calls(0, "").unwrap().passed);
         let violated = never.outcome_for_calls(1, "bash(rm -rf /)").unwrap();
         assert!(!violated.passed);
@@ -710,7 +710,7 @@ mod tests {
         ));
 
         // Routing a judge eval here is a loud bug, not a vacuous score.
-        let judge: Eval = serde_yaml::from_str("type: boolean\ncriterion: x\n").unwrap();
+        let judge: Eval = serde_saphyr::from_str("type: boolean\ncriterion: x\n").unwrap();
         assert!(judge.outcome_for_calls(0, "").is_err());
     }
 

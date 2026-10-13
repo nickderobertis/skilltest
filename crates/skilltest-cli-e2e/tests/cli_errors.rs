@@ -422,3 +422,191 @@ fn api_judge_without_key_is_a_classified_auth_error() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("credentials"), "auth hint: {stderr}");
 }
+
+#[test]
+fn yaml_input_errors_name_the_file_and_problem() {
+    let dir = temp_dir("yaml-inputs");
+    for (source, text, problem) in [
+        ("config", "platfoms: [demo]\n", "platfoms"),
+        (
+            "case",
+            "skill: ./x\ninput: hi\nevals: [{type: boolean, criterion: c, expcted: false}]\n",
+            "expcted",
+        ),
+        ("mocks", "- match: {tool: bash}\n  stubb: x\n", "stubb"),
+        ("config", "spy: no\n", "invalid boolean"),
+        (
+            "case",
+            "skill: ./x\ninput: hi\nspy: no\nevals: [{type: boolean, criterion: c}]\n",
+            "invalid boolean",
+        ),
+        ("config", "<<: {}\n", "merge"),
+        ("case", "<<: {}\n", "merge"),
+        ("mocks", "- <<: {}\n", "merge"),
+        ("config", "[", "line"),
+        ("case", "[", "line"),
+        ("mocks", "[", "line"),
+    ] {
+        let path = dir.join(format!("{source}.yaml"));
+        std::fs::write(&path, text).unwrap();
+        let mut cmd = Command::new(skilltest());
+        if source == "config" {
+            cmd.arg("--config").arg(&path);
+        }
+        cmd.arg("run");
+        if source == "case" {
+            cmd.arg(&path);
+        } else {
+            cmd.arg(fixtures().join("cases/greet_pass.yaml"));
+        }
+        if source == "mocks" {
+            cmd.arg("--mocks").arg(&path);
+        }
+        let out = cmd.args(["--format", "json"]).output().unwrap();
+        assert_eq!(out.status.code(), Some(2), "{source}: {out:?}");
+        let error: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(error["code"], "usage");
+        let message = error["message"].as_str().unwrap();
+        assert!(message.contains(path.to_str().unwrap()), "{message}");
+        assert!(message.contains(problem), "{message}");
+        assert!(!message.contains('\n'), "snippet suppressed: {message}");
+        if problem == "line" {
+            assert!(message.contains("column"), "{message}");
+        } else if !matches!(problem, "invalid boolean" | "merge") {
+            assert!(message.contains("unknown field"), "{message}");
+        } else {
+            assert!(
+                message.contains("line") && message.contains("column"),
+                "{message}"
+            );
+        }
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn yaml_no_remains_text_in_mock_actions_through_each_loader() {
+    let dir = temp_dir("strict-booleans");
+    let mocks = "- match: {tool: bash}\n  deny: no\n";
+    let config = dir.join("skilltest.yaml");
+    std::fs::write(
+        &config,
+        format!(
+            "mocks:\n{}",
+            mocks
+                .lines()
+                .map(|line| format!("  {line}\n"))
+                .collect::<String>()
+        ),
+    )
+    .unwrap();
+    let case = dir.join("case.yaml");
+    std::fs::write(
+        &case,
+        format!(
+            "skill: {}\ninput: hi\nevals: [{{type: boolean, criterion: '`Hello`'}}]\nmocks:\n{}",
+            fixtures().join("skills/greeter").display(),
+            mocks
+                .lines()
+                .map(|line| format!("  {line}\n"))
+                .collect::<String>()
+        ),
+    )
+    .unwrap();
+    let mocks_file = dir.join("mocks.yaml");
+    std::fs::write(&mocks_file, mocks).unwrap();
+    for source in ["config", "case", "mocks"] {
+        let mut cmd = Command::new(skilltest());
+        if source == "config" {
+            cmd.arg("--config").arg(&config);
+        }
+        cmd.arg("run").arg(if source == "case" {
+            case.clone()
+        } else {
+            fixtures().join("cases/greet_pass.yaml")
+        });
+        if source == "mocks" {
+            cmd.arg("--mocks").arg(&mocks_file);
+        }
+        let out = cmd
+            .arg("--provider")
+            .arg(fake_provider())
+            .args(["--platform", "demo", "--model", "fake", "--format", "json"])
+            .output()
+            .unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{source}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(report["summary"]["failed"], 0, "{report}");
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn skill_frontmatter_uses_the_same_yaml_policies() {
+    let dir = temp_dir("frontmatter-policies");
+    let skill = dir.join("no");
+    std::fs::create_dir(&skill).unwrap();
+    let path = skill.join("SKILL.md");
+    std::fs::write(
+        &path,
+        "---\nname: no\ndescription: on\n---\nInstructions.\n",
+    )
+    .unwrap();
+    let loaded = skilltest_core::load_skill(&skill).unwrap();
+    assert_eq!(loaded.name, "no");
+    assert_eq!(loaded.description, "on");
+    std::fs::write(
+        &path,
+        "---\nname: no\ndescription: A useful description of this skill.\n---\nInstructions.\n",
+    )
+    .unwrap();
+    let out = Command::new(skilltest())
+        .arg("validate")
+        .arg(&skill)
+        .args(["--format", "json"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    for frontmatter in ["name: [", "<<: {}\nname: no"] {
+        std::fs::write(&path, format!("---\n{frontmatter}\n---\nInstructions.\n")).unwrap();
+        let error = skilltest_core::load_skill(&skill).unwrap_err().to_string();
+        assert!(error.contains(path.to_str().unwrap()), "{error}");
+        assert!(
+            error.contains("line") && error.contains("column"),
+            "{error}"
+        );
+        assert!(!error.contains('\n'), "{error}");
+        let out = Command::new(skilltest())
+            .arg("validate")
+            .arg(&skill)
+            .args(["--format", "json"])
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(1));
+        let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+        let finding = report["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|finding| {
+                finding["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("frontmatter is not valid YAML")
+            })
+            .unwrap();
+        let message = finding["message"].as_str().unwrap();
+        assert!(
+            message.contains("line") && message.contains("column"),
+            "{finding}"
+        );
+        assert!(!message.contains('\n'), "{finding}");
+        assert_eq!(finding["skill"], skill.to_str().unwrap());
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+}
