@@ -51,6 +51,14 @@ command -v jq >/dev/null 2>&1 || {
     exit 2
 }
 
+emit() { # emit <jq args…> — one transcript record, or stop the run loudly
+    jq -cn "$@" || {
+        echo "fake-claude: jq could not write a transcript record (see its error above); fix the record's arguments and rerun" >&2
+        exit 1
+    }
+}
+
+
 prompt=""; settings=""; system=""; resume=""; schema=""; model=""; mode=""
 args=("$@")
 i=0
@@ -77,9 +85,12 @@ while [ $i -lt ${#args[@]} ]; do
 done
 
 if [ -n "${SKILLTEST_BOUNDARY_LOG:-}" ]; then
-    jq -cn --arg schema "$schema" --arg model "$model" --arg mode "$mode" \
+    if ! jq -cn --arg schema "$schema" --arg model "$model" --arg mode "$mode" \
         --arg role "${ROLE_MARKER:-responder}" --arg system "$system" --arg prompt "$prompt" \
-        --args '{schema:$schema,model:$model,mode:$mode,role:$role,system:$system,prompt:$prompt,argv:$ARGS.positional}' -- "${args[@]}" >> "$SKILLTEST_BOUNDARY_LOG"
+        --args '{schema:$schema,model:$model,mode:$mode,role:$role,system:$system,prompt:$prompt,argv:$ARGS.positional}' -- "${args[@]}" >> "$SKILLTEST_BOUNDARY_LOG"; then
+        echo "fake-claude: could not append boundary observations; fix SKILLTEST_BOUNDARY_LOG path/permissions and rerun the integration test" >&2
+        exit 2
+    fi
 fi
 
 if [ -n "${ROLE_SLEEP:-}" ]; then sleep "$ROLE_SLEEP"; fi
@@ -104,13 +115,16 @@ if [ -z "$system" ]; then
     if [ -n "$schema" ]; then
         structured="$text"
         if [ -n "${SCHEMA_RETRY_MARKER:-}" ] && [ ! -f "$SCHEMA_RETRY_MARKER" ]; then
-            touch "$SCHEMA_RETRY_MARKER"
+            if ! touch "$SCHEMA_RETRY_MARKER"; then
+                echo "fake-claude: could not create retry marker; fix SCHEMA_RETRY_MARKER path/permissions and rerun the integration test" >&2
+                exit 2
+            fi
             structured='{"value":"wrong type","reason":"retry me"}'
         fi
-        jq -cn --arg t "$text" --argjson s "$structured" \
+        emit --arg t "$text" --argjson s "$structured" \
             '{type:"result", result:$t, structured_output:$s, session_id:"fake-claude-judge", usage:{input_tokens:3, output_tokens:1}}'
     else
-        jq -cn --arg t "$text" \
+        emit --arg t "$text" \
             '{type:"result", result:$t, session_id:"fake-claude-judge", usage:{input_tokens:3, output_tokens:1}}'
     fi
     exit 0
@@ -135,12 +149,6 @@ surfaced=""
 index=0
 
 # llmlint: ignore-block[tool_output_is_signal] These emit the records of Claude Code's `stream-json` transcript, which the real oneharness binary parses; its stdout is that protocol, one JSON record per transcript event, not human-facing output.
-emit() { # emit <jq args…> — one transcript record, or stop the run loudly
-    jq -cn "$@" || {
-        echo "fake-claude: jq could not write a transcript record (see its error above); fix the record's arguments and rerun" >&2
-        exit 1
-    }
-}
 
 # shellcheck disable=SC2016 # the single-quoted programs are jq's; their $ names are jq variables, not shell expansions
 emit_text() { # emit_text <text> — an assistant line of prose, as a real turn writes

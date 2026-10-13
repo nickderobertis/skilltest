@@ -81,6 +81,7 @@ def test_sdk_spy_only_observes_through_real_oneharness(oneharness_env: Path) -> 
     shell.where(command=contains("rm -rf")).assert_called_once()
 
 
+# llmlint: ignore[shell_test_tiers_stay_split] Dispatch requires this existing SDK host-tool edge.
 def test_config_overrides_control_history_and_role_models(
     oneharness_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

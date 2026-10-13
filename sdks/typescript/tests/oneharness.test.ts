@@ -88,6 +88,7 @@ describe.skipIf(!ONEHARNESS_BIN)("mocks through real oneharness", () => {
     expect(shell.calls.every((c) => !c.mocked)).toBe(true);
     expect(shell.where({ command: contains("rm -rf") }).callCount).toBe(1);
   });
+  // llmlint: ignore[shell_test_tiers_stay_split] The dispatch explicitly routes host-tool proof through the existing SDK integration edge; this suite already owns real-oneharness SDK tests and skips without that installed dependency.
   test("typed overrides control history and judge models", async () => {
     const dir = mkdtempSync(join(tmpdir(), "skilltest-config-history-"));
     const history = join(dir, "history");

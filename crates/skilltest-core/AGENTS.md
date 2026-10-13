@@ -62,8 +62,9 @@ and the Rust types that are the single source of truth for the JSON contract
   `SKILLTEST_HISTORY_DIR` override it, `provider.history: false` disables it),
   whose echoed `history_file` becomes `CaseRun.history_command`. Judge and
   simulated-user calls are never recorded.
-- skilltest passes **no `--mode`**, so oneharness's own default approval mode
-  applies; users set `bypass` etc. through oneharness config (`ONEHARNESS_MODE`),
+- Responder calls pass **no `--mode`**, so oneharness's own default approval mode
+  applies; evaluator roles may pass their own mode. Users also set `bypass`
+  through oneharness config (`ONEHARNESS_MODE`),
   keeping approval policy in one place.
 - **Omit `--model`** when it is unspecified so the harness uses its own default,
   and fall back to a harness's **raw stdout** when oneharness reports no text

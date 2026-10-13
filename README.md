@@ -345,6 +345,7 @@ test framework means one new package under `plugins/`.
 
 MIT — see [`LICENSE`](LICENSE).
 
+<!-- llmlint: ignore[no_redundant_instruction_pointers] Goal 4 requires consumer docs to link to the single tested configuration statement; SDK users do not inherit agent instruction context. -->
 Full run settings are available through YAML, derived environment variables,
 CLI `--set`, and generated SDK config overrides. See the
 [configuration contract](docs/schema.md#config-file-skilltestyaml) for precedence,

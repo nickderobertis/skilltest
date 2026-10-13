@@ -1,16 +1,17 @@
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import ts from "typescript";
 import { expect, it } from "vitest";
 import { type ConfigOverrides, SkilltestUsageError, runSkill, streamSkill } from "../src/index.js";
-import { FAKE_PROVIDER, FIXTURES, REPO_ROOT, caseFile } from "./helpers.js";
+import { FAKE_PROVIDER, FIXTURES, REPO_ROOT, SKILLTEST_BIN, caseFile } from "./helpers.js";
 
 it("reaches every schema leaf through generated partial types and the public SDK", async () => {
   const scratch = mkdtempSync(join(tmpdir(), "skilltest-config-ts-"));
   const oldProvider = process.env.SKILLTEST_PROVIDER;
+  const oldOneharness = process.env.SKILLTEST_ONEHARNESS_BIN;
   Reflect.deleteProperty(process.env, "SKILLTEST_PROVIDER");
   try {
     const boundary = join(scratch, "oneharness");
@@ -19,6 +20,23 @@ it("reaches every schema leaf through generated partial types and the public SDK
       `#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{"results":[{"status":"ok","text":"hello"}]}'\n`,
     );
     chmodSync(boundary, 0o755);
+    const capture = join(scratch, "argv.json");
+    const wrapper = join(scratch, "capture-cli");
+    writeFileSync(
+      wrapper,
+      `#!/usr/bin/env node
+const fs = require("node:fs");
+const child = require("node:child_process");
+fs.writeFileSync(process.env.SDK_CAPTURE_PATH, JSON.stringify(process.argv.slice(2)));
+const result = child.spawnSync(process.env.SDK_REAL_CLI, process.argv.slice(2), {stdio:"inherit"});
+process.exit(result.status ?? 3);
+`,
+    );
+    chmodSync(wrapper, 0o755);
+    process.env.SDK_CAPTURE_PATH = capture;
+    process.env.SDK_REAL_CLI = SKILLTEST_BIN;
+    process.env.SKILLTEST_ONEHARNESS_BIN = boundary;
+
     const casePath = join(scratch, "case.json");
     writeFileSync(
       casePath,
@@ -42,6 +60,8 @@ it("reaches every schema leaf through generated partial types and the public SDK
     const literals: string[] = [];
     for (const [path, specimen, contexts] of rows) {
       let value = specimen;
+      // Schema fixtures guarantee an object provider and nonempty property paths.
+      // Each cursor is initialized as an object before the assertions below.
       const payload: Record<string, unknown> = {
         provider: { kind: "oneharness", bin: boundary, history: false },
       };
@@ -72,9 +92,22 @@ it("reaches every schema leaf through generated partial types and the public SDK
         `const example${literals.length}: ConfigOverrides = ${JSON.stringify(payload)};`,
       );
       expect(
-        (await runSkill(casePath, { configOverrides: payload as ConfigOverrides })).passed,
+        (await runSkill(casePath, { bin: wrapper, configOverrides: payload as ConfigOverrides }))
+          .passed,
         path,
       ).toBe(true);
+      const captured: string[] = JSON.parse(readFileSync(capture, "utf8"));
+      const delivered: Record<string, unknown> = {};
+      for (let index = 0; index < captured.length; index++) {
+        if (captured[index] !== "--set") continue;
+        const assignment = captured[index + 1];
+        if (!assignment) throw new Error("--set has no value");
+        const boundary = assignment.indexOf("=");
+        delivered[assignment.slice(0, boundary)] = JSON.parse(assignment.slice(boundary + 1));
+      }
+      expect(delivered, path).toEqual(payload);
+      // The wrapper executes the actual CLI with unchanged stdio. Combined with
+      // core's applied-value suite, this catches omission of any SDK setting.
     }
     // Compile real object literals, so a missing generated leaf fails the test
     // even though TypeScript types disappear at runtime.
@@ -98,6 +131,10 @@ it("reaches every schema leaf through generated partial types and the public SDK
     ).toEqual([]);
   } finally {
     if (oldProvider !== undefined) process.env.SKILLTEST_PROVIDER = oldProvider;
+    Reflect.deleteProperty(process.env, "SDK_CAPTURE_PATH");
+    Reflect.deleteProperty(process.env, "SDK_REAL_CLI");
+    if (oldOneharness !== undefined) process.env.SKILLTEST_ONEHARNESS_BIN = oldOneharness;
+    else Reflect.deleteProperty(process.env, "SKILLTEST_ONEHARNESS_BIN");
     rmSync(scratch, { recursive: true, force: true });
   }
 });
@@ -107,7 +144,7 @@ it("shares overrides across buffered and streaming calls and retains zero", asyn
   expect((await runSkill(caseFile("greet_pass.yaml"), { configOverrides })).passed).toBe(true);
   const stream = streamSkill(caseFile("greet_pass.yaml"), { configOverrides });
   for await (const _event of stream) {
-    /* consume through the real CLI */
+    /* The terminal report arrives only after this event stream drains. */
   }
   expect(stream.report?.passed).toBe(true);
   await expect(
@@ -163,7 +200,7 @@ it("routes API judge overrides through HTTP in both run modes", async () => {
     expect(report.runs[0]?.usage?.input_tokens).toBe(22);
     const stream = streamSkill(caseFile("greet_pass.yaml"), { configOverrides });
     for await (const _event of stream) {
-      /* consume through CLI */
+      /* The terminal report arrives only after this event stream drains. */
     }
     expect(stream.report?.passed).toBe(true);
     expect(requests).toHaveLength(4);
@@ -172,6 +209,16 @@ it("routes API judge overrides through HTTP in both run modes", async () => {
         (request) => request.model === "ts-api-model" && request.response_format === undefined,
       ),
     ).toBe(true);
+    const fallback = await runSkill(caseFile("greet_pass.yaml"), {
+      configOverrides,
+      models: ["fallback-model"],
+      judgeModel: "",
+    });
+    expect(fallback.passed).toBe(true);
+    expect(requests.slice(4).map((request) => request.model)).toEqual([
+      "fallback-model",
+      "fallback-model",
+    ]);
   } finally {
     Reflect.deleteProperty(process.env, "CONFIG_TEST_API_KEY");
     await new Promise<void>((resolve, reject) =>

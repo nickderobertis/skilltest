@@ -54,12 +54,12 @@ class JudgeConfig1(BaseModel):
     Override the API endpoint (e.g. a proxy or an OpenAI-compatible gateway).
     Defaults to the vendor's standard endpoint.
     """
-    curl_bin: str | None = "curl"
+    curl_bin: str = "curl"
     """
     The `curl` binary (resolved on `PATH`).
     """
     kind: Literal["api"]
-    strict_json: bool | None = True
+    strict_json: bool = True
     """
     Constrain the judge's verdict to the `{value, reason}` JSON schema via the
     vendor's structured-outputs feature (Anthropic `output_config.format`,
@@ -67,7 +67,7 @@ class JudgeConfig1(BaseModel):
     of judge-parse fragility. Turn it off for a model/endpoint that doesn't
     support structured outputs (the tolerant `{…}` extraction still applies).
     """
-    timeout_secs: int | None = Field(60, ge=0)
+    timeout_secs: int = Field(60, ge=0)
     """
     Per-call timeout in seconds, passed to `curl --max-time`.
     """
@@ -94,7 +94,7 @@ class OneharnessRoleConfig(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    args: list[str] | None = []
+    args: list[str] = []
     """
     Raw oneharness run argv tokens; harness-tail tokens after `--` stay literal.
     """
@@ -112,13 +112,13 @@ class ProviderConfig1(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    bin: str | None = "oneharness"
+    bin: str = "oneharness"
     """
     The `oneharness` binary. When unset, defaults to `$SKILLTEST_ONEHARNESS_BIN`
     (the path the SDKs point at their bundled `oneharness-cli`), else
     `oneharness` resolved on `PATH`.
     """
-    history: bool | None = True
+    history: bool = True
     """
     Record each skill run to oneharness's run history (`oneharness run
     --history`), so a past run can be reviewed later with `oneharness
@@ -137,7 +137,7 @@ class ProviderConfig1(BaseModel):
     """
     Full oneharness invocation settings for the judge. Omitted settings belong to oneharness.
     """
-    judge_harness: str | None = "claude-code"
+    judge_harness: str = "claude-code"
     """
     The harness used for evals and the simulated user (kept independent of the
     harness under test, so the evaluator does not vary with the matrix).
@@ -147,7 +147,7 @@ class ProviderConfig1(BaseModel):
     """
     Full simulated-user invocation settings; absent inherits `judge`.
     """
-    timeout_secs: int | None = Field(120, ge=0)
+    timeout_secs: int = Field(120, ge=0)
     """
     Per-call timeout passed through to `oneharness run --timeout`.
     """
@@ -176,7 +176,7 @@ class StubOutput(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    exit_code: int | None = 0
+    exit_code: int = 0
     """
     Non-zero fakes a failing command. Default 0.
     """
@@ -252,6 +252,8 @@ class MockDecl(BaseModel):
     Substitute raw input fields (a JSON object) — the low-level escape
     hatch, and the way to mock file reads (rewrite `file_path` to a
     fixture).
+    Arbitrary JSON is needed because each harness owns its tool input shape;
+    mock semantic validation checks whether the supplied rewrite is supported.
     """
     stub: str | StubOutput | StubSpec1 | None = None
     """
@@ -274,32 +276,32 @@ class Config(BaseModel):
     scored, independent of the skill-running provider. When `None`, the
     provider judges (e.g. the oneharness `judge_harness`).
     """
-    judge_model: str | None = ""
+    judge_model: str = ""
     """
     Model used for natural-language evals and the simulated user. Falls back
     to the first entry of `models` when empty.
     """
-    max_turns: int | None = Field(8, ge=0)
+    max_turns: int = Field(8, ge=0)
     """
     Default cap on assistant turns for multi-turn cases. A case may lower it.
     """
-    mocks: list[MockDecl] | None = Field([], validate_default=True)
+    mocks: list[MockDecl] = Field([], validate_default=True)
     """
     Shared mock/spy declarations, prepended to every case's own `mocks`
     (first match wins, so these shadow the case's). Populated by the CLI's
     `--mocks <file>` — how the SDKs deliver code-level mocks — or written
     here directly for suite-wide rules.
     """
-    models: list[str] | None = ["claude-opus-4-8"]
+    models: list[str] = ["claude-opus-4-8"]
     """
     Models a case runs on (must be valid for the chosen harness, e.g.
     `sonnet`/`haiku` for `claude-code`).
     """
-    platforms: list[str] | None = ["claude-code"]
+    platforms: list[str] = ["claude-code"]
     """
     Harness platforms a case runs on (e.g. `claude-code`, `codex`).
     """
-    provider: ProviderConfig1 | ProviderConfig2 | None = Field(
+    provider: ProviderConfig1 | ProviderConfig2 = Field(
         {
             "bin": "oneharness",
             "history": True,
@@ -312,7 +314,7 @@ class Config(BaseModel):
     """
     The provider that executes skills and evals.
     """
-    spy: bool | None = False
+    spy: bool = False
     """
     Force the mock/spy observation channel on for every run, even for cases
     that declare no `mocks` (the CLI's `--spy`; how SDK spies get records).

@@ -49,4 +49,3 @@ contract into Pydantic models. No framework code — pytest support lives in
 
 `Config` and `ConfigOverrides` are generated from the full Rust config schema.
 Both run APIs serialize overrides through CLI `--set`; resolution stays in core.
-See `docs/schema.md` for the shared precedence and value grammar.

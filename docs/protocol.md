@@ -31,7 +31,7 @@ into the runner:
   are dropped, so `index` stays ordered but may skip numbers. Empty for
   harnesses that expose no machine-readable transcript.
 - **Normalized `usage`** — `{input_tokens, output_tokens, cost_usd}` is parsed
-  off each result and aggregated into the [report](schema.md) so cross-model
+  off each result and aggregated into the [report and configuration contract](schema.md) so cross-model
   cost reporting is portable instead of harness-specific.
 - **Normalized `failure_kind`** — when a run fails with a classified reason
   (`auth`, `rate_limit`, `model_not_found`, `quota`), skilltest maps it to a
@@ -81,9 +81,7 @@ requires `status == "ok"` and consumes `text`, `structured`, `schema_valid`,
 `failure_kind` when set and otherwise from the `status` (`timeout` →
 `ProviderErrorKind::Timeout`); see [structured errors](schema.md#structured-errors).
 
-Evaluator role settings and all configuration/precedence rules are documented
-in [the configuration contract](schema.md#config-file-skilltestyaml). Judges
-receive `--schema` via oneharness native or prompt delivery, retained throughout
+Judges receive `--schema` via oneharness native or prompt delivery, retained throughout
 oneharness retries and cleaned up afterward. Only `schema_valid: true` with a
 usable verdict authorizes structured data; the text backstop selects the last
 complete verdict object of the requested kind.

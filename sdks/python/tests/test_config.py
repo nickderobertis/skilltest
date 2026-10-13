@@ -33,6 +33,22 @@ def test_schema_leaves_reach_yaml_set_environment_and_typed_overrides(
         'printf \'%s\\n\' \'{"results":[{"status":"ok","text":"hello"}]}\'\n'
     )
     boundary.chmod(0o755)
+    capture = tmp_path / "argv.json"
+    wrapper = tmp_path / "capture-cli"
+    wrapper.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, os, sys\n"
+        "with open(os.environ['SDK_CAPTURE_PATH'], 'w') as output:\n"
+        "    json.dump(sys.argv[1:], output)\n"
+        "binary = os.environ['SDK_REAL_CLI']\n"
+        "os.execv(binary, [binary, *sys.argv[1:]])\n"
+    )
+    wrapper.chmod(0o755)
+    monkeypatch.setenv("SDK_CAPTURE_PATH", str(capture))
+    monkeypatch.setenv("SDK_REAL_CLI", os.environ["SKILLTEST_BIN"])
+    # The wrapper only observes argv, then replaces itself with the real CLI.
+    # Even an induced serialization bug stays on this scripted provider boundary.
+    monkeypatch.setenv("SKILLTEST_ONEHARNESS_BIN", str(boundary))
     case = tmp_path / "case.json"
     case.write_text(
         json.dumps(
@@ -82,8 +98,17 @@ def test_schema_leaves_reach_yaml_set_environment_and_typed_overrides(
         assert full.model_dump(exclude_unset=True)
         report = run_skill(case, config=config)
         assert report.passed, path
-        report = run_skill(case, config_overrides=typed)
+        report = run_skill(case, bin=wrapper, config_overrides=typed)
         assert report.passed, path
+        captured = json.loads(capture.read_text())
+        delivered = {}
+        for index, token in enumerate(captured):
+            if token == "--set":
+                key, encoded = captured[index + 1].split("=", 1)
+                delivered[key] = json.loads(encoded)
+        assert delivered == payload, path
+        # Core's schema-leaf suite asserts the applied values; this real-process
+        # edge proves the SDK delivers every leaf without bypassing that resolver.
         # Use the file as variant context, replacing only the derived leaf.
         argv = [
             os.environ["SKILLTEST_BIN"],
@@ -130,9 +155,7 @@ def test_buffered_and_streaming_overrides_keep_explicit_values(cases: Path) -> N
         run_skill(cases / "greet_pass.yaml", config_overrides={"max_turns": 0})
 
 
-def test_documented_config_and_scaffold_agree_with_generated_contract(
-    fixtures: Path, tmp_path: Path
-) -> None:
+def test_documented_config_loads_through_the_cli(fixtures: Path, tmp_path: Path) -> None:
     import re
 
     root = fixtures.parents[1]
@@ -225,3 +248,32 @@ def test_api_judge_overrides_reach_http_for_buffered_and_streaming(
         server.shutdown()
         thread.join()
         server.server_close()
+
+
+def test_generated_config_model_omits_unset_defaults_at_the_real_cli(
+    cases: Path, tmp_path: Path
+) -> None:
+    from typing import cast
+
+    from pydantic import ValidationError
+
+    config = tmp_path / "inherited.yaml"
+    config.write_text("platforms: [inherited-platform]\nmodels: [inherited-model]\n")
+    model = Config.model_validate({"spy": False, "mocks": [], "judge": None})
+    assert model.model_dump(mode="json", exclude_unset=True) == {
+        "spy": False,
+        "mocks": [],
+        "judge": None,
+    }
+    # The serializer accepts generated BaseModel payloads as well as typed
+    # partial dictionaries; both have precisely the Config property names.
+    report = run_skill(
+        cases / "greet_pass.yaml",
+        config=config,
+        config_overrides=cast("ConfigOverrides", model),
+    )
+    assert report.passed
+    assert report.runs[0].platform == "inherited-platform"
+    assert report.runs[0].model == "inherited-model"
+    with pytest.raises(ValidationError):
+        Config.model_validate({"max_turns": None})

@@ -9,7 +9,7 @@ source every SDK's models are generated from:
   classified `ProviderErrorKind`);
 - the **configuration contract** — full Rust `Config`, plus mechanically derived
   recursive partial SDK types (array elements remain full replacements), generated
-  by `scripts/gen-contract.sh` and `scripts/config-overrides-schema.py`. Runtime
+  by `scripts/gen-contract.sh` and `schemas/config_overrides_schema.py`. Runtime
   provenance is excluded; schema defaults must not embed host-specific paths.
 - the **input contract** — `case`, the test-case shape (`--case-json`/YAML),
   additionally pinned by the kitchen-sink golden

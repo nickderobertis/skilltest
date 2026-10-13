@@ -831,7 +831,7 @@ fn role_configs_deliver_native_and_prompt_schemas_and_retry_settings() {
     std::fs::write(&judge, format!("harnesses = [\"claude-code\"]\nmodel = \"judge-native\"\nmode = \"bypass\"\ntimeout = 17\nschema_max_retries = 1\n[env]\nROLE_MARKER = \"judge\"\nSCHEMA_RETRY_MARKER = {:?}\n", retry.to_string_lossy())).unwrap();
     std::fs::write(&user, "harnesses = [\"goose\"]\nmodel = \"user-model\"\nmode = \"bypass\"\ntimeout = 23\n[env]\nROLE_MARKER = \"user\"\nGOOSE_MODEL = \"user-model\"\n").unwrap();
     let config = scratch.0.join("skilltest.json");
-    let settings = serde_json::json!({"provider":{"kind":"oneharness","bin":oneharness_bin(),"history":false,"judge":{"config":judge,"args":["--schema-max-retries=1"]},"simulated_user":{"config":user,"args":["--","tail with spaces","--model=literal tail"]}},"models":["responder-model"]});
+    let settings = serde_json::json!({"provider":{"kind":"oneharness","bin":oneharness_bin(),"history":false,"judge":{"config":judge,"args":["--schema-max-retries=1","--no-stream"]},"simulated_user":{"config":user,"args":["--","tail with spaces","--model=literal tail"]}},"models":["responder-model"]});
     std::fs::write(&config, settings.to_string()).unwrap();
     let case = scratch.0.join("case.json");
     std::fs::write(&case, serde_json::json!({"skill":fixtures().join("../skills/greeter"),"input":"hi","user":{"persona":"continue","max_turns":2},"evals":[{"type":"boolean","criterion":"greet"},{"type":"numeric","criterion":"greet","min":0,"max":10,"threshold":7}]}).to_string()).unwrap();
@@ -845,7 +845,12 @@ fn role_configs_deliver_native_and_prompt_schemas_and_retry_settings() {
             .args(extra)
             .env("ONEHARNESS_BIN_CLAUDE_CODE", shim())
             .env("ONEHARNESS_BIN_GOOSE", fixtures().join("fake-goose.sh"))
+            .env(
+                "ONEHARNESS_BIN_COPILOT",
+                scratch.0.join("unavailable-copilot"),
+            )
             .env("SKILLTEST_BOUNDARY_LOG", &log)
+            .env("ONEHARNESS_STREAM", "true")
             .output()
             .unwrap()
     };
@@ -970,6 +975,14 @@ fn role_inheritance_empty_defaults_named_overrides_and_deadlines() {
         .iter()
         .filter(|call| call["system"] == "")
         .all(|call| call["model"] == "named"));
+    assert_eq!(
+        report(&invoke(&settings, &["--judge-model", ""]))["passed"],
+        true
+    );
+    assert!(calls()
+        .iter()
+        .filter(|call| call["system"] == "")
+        .all(|call| call["model"] == "responder"));
     // A role config timeout must govern the actual harness, rather than being
     // replaced by skilltest's legacy 120-second deadline.
     let role = scratch.0.join("deadline.toml");

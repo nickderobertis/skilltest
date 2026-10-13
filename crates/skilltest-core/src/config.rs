@@ -113,22 +113,24 @@ impl Default for OneharnessConfig {
 #[serde(default, deny_unknown_fields)]
 pub struct OneharnessRoleConfig {
     /// oneharness config path, resolved from the invocation working directory.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub config: Option<String>,
     /// Raw oneharness run argv tokens; harness-tail tokens after `--` stay literal.
+    #[schemars(extend("x-skilltest-validate" = "oneharness-args"))]
     pub args: Vec<String>,
 }
 
 /// Internal evaluator overrides computed from source/order provenance.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct EvaluatorSettings {
-    pub harness: Option<String>,
-    pub model: Option<String>,
-    pub timeout: Option<u64>,
+    pub(crate) harness: Option<String>,
+    pub(crate) model: Option<String>,
+    pub(crate) timeout: Option<u64>,
 }
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct EvaluatorOverrides {
-    pub judge: EvaluatorSettings,
-    pub simulated_user: EvaluatorSettings,
+    pub(crate) judge: EvaluatorSettings,
+    pub(crate) simulated_user: EvaluatorSettings,
 }
 
 /// Settings for a custom provider command speaking the JSON-lines protocol (see
@@ -214,6 +216,13 @@ pub enum JudgeConfig {
     Api(ApiJudgeConfig),
 }
 
+/// Opaque resolution bookkeeping. Public only to retain struct-update syntax;
+/// callers cannot inspect or mutate internal source/order ranks.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ConfigProvenance {
+    pub(crate) sources: BTreeMap<String, u64>,
+}
+
 /// The full configuration for a run.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
@@ -221,7 +230,7 @@ pub enum JudgeConfig {
 pub struct Config {
     /// Resolution order retained for evaluator shorthand precedence; runtime only.
     #[serde(skip)]
-    pub provenance: BTreeMap<String, u64>,
+    pub provenance: ConfigProvenance,
     /// The provider that executes skills and evals.
     pub provider: ProviderConfig,
     /// Harness platforms a case runs on (e.g. `claude-code`, `codex`).
@@ -254,7 +263,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            provenance: BTreeMap::new(),
+            provenance: ConfigProvenance::default(),
             provider: ProviderConfig::default(),
             platforms: vec!["claude-code".to_string()],
             models: vec!["claude-opus-4-8".to_string()],
@@ -333,14 +342,14 @@ impl Config {
     /// # Errors
     /// [`Error::Invalid`] if the merged configuration is inconsistent.
     pub fn apply_overrides(&mut self, overrides: Overrides) -> Result<()> {
-        let rank = self.provenance.values().copied().max().unwrap_or(0) + 1;
+        let rank = self.provenance.sources.values().copied().max().unwrap_or(0) + 1;
         for (path, present) in [
             ("provider.judge_harness", overrides.judge_harness.is_some()),
             ("provider.timeout_secs", overrides.timeout_secs.is_some()),
             ("judge_model", overrides.judge_model.is_some()),
         ] {
             if present {
-                self.provenance.insert(path.into(), rank);
+                self.provenance.sources.insert(path.into(), rank);
             }
         }
 
@@ -402,7 +411,10 @@ impl Config {
             ProviderConfig::Oneharness(oh) => {
                 for (name, role) in [("judge", &oh.judge), ("simulated_user", &oh.simulated_user)] {
                     if let Some(role) = role {
-                        crate::config_resolution::validate_role_args(name, &role.args)?;
+                        crate::config_resolution::validate_role_args(
+                            &format!("provider.{name}.args"),
+                            &role.args,
+                        )?;
                     }
                 }
                 if oh.bin.trim().is_empty() {

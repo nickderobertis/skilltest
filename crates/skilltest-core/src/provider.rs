@@ -630,15 +630,16 @@ impl Provider for CommandProvider {
 ///   ready-to-run `oneharness history show …` command on the assistant turn. The
 ///   judge and simulated-user calls are deliberately never recorded.
 ///
-/// Note on approval mode: skilltest deliberately passes **no `--mode`** flag, so
+/// Note on approval mode: responder calls pass **no `--mode`** flag, so
 /// oneharness applies its own default (v0.3.0+ normalized approval modes). Users
 /// who need a different mode — e.g. `bypass` to let the skill take every action
 /// without prompting — configure it through oneharness's own config
 /// (`ONEHARNESS_MODE` / its config file), keeping approval policy in one place.
 ///
-/// Evals and the simulated user always run on the configured `judge_harness`,
-/// independent of the harness under test, so the evaluator does not drift with
-/// the matrix.
+/// Evaluators use independent oneharness role configurations. Absent blocks
+/// retain `judge_harness` behavior; an absent simulated-user block inherits the
+/// judge role. Config resolution computes only explicit higher-layer shorthand
+/// overrides, leaving omitted role defaults to oneharness.
 pub struct OneharnessProvider {
     judge_role: Option<crate::config::OneharnessRoleConfig>,
     user_role: Option<crate::config::OneharnessRoleConfig>,

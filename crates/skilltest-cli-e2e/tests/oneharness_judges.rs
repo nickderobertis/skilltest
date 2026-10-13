@@ -1,4 +1,4 @@
-//! Report-boundary journeys for metadata combinations a third-party producer may emit.
+//! Built-CLI journeys for oneharness reports, configuration layers, and literal argv transport.
 #![cfg(unix)]
 mod common;
 use serde_json::{json, Value};
@@ -357,4 +357,164 @@ fn fallback_reports_choose_settled_success_and_reject_multiple_verdicts() {
         );
         assert_eq!(output.status.code(), Some(0));
     }
+    let (_, output) = journey(
+        json!({"status":"ok","schema_valid":true,"structured":{"value":false,"reason":"criterion failed"},"text":"{\"value\":true,\"reason\":\"contradiction\"}"}),
+        false,
+        0,
+    );
+    assert_eq!(output.status.code(), Some(1));
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["passed"], false);
+}
+
+#[test]
+fn transport_failures_and_invalid_patch_contents_cannot_be_hidden() {
+    let (_, output) = journey(
+        json!({"status":"ok","schema_valid":true,"structured":{"value":true,"reason":"transport failed"}}),
+        false,
+        1,
+    );
+    assert_eq!(output.status.code(), Some(3));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("exited with"));
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/cases/greet_pass.yaml");
+    for assignment in [
+        "provider={\"unknown\":1}",
+        "mocks=[{\"match\":{\"tool\":2}}]",
+        "provider.judge.args=[false]",
+        "max_turns=-1",
+        "max_turns=4294967296",
+        "provider.judge.args=[\"--stream\"]",
+        "mocks=[{\"match\":{\"tool\":\"x\"},\"stub\":[]}]",
+    ] {
+        let output = Command::new(common::built_bin("skilltest"))
+            .arg("run")
+            .arg(&fixture)
+            .args([
+                "--set",
+                assignment,
+                "--set",
+                "provider={\"kind\":\"command\",\"command\":[\"unused\"]}",
+                "--set",
+                "max_turns=3",
+                "--set",
+                "mocks=[]",
+            ])
+            .output()
+            .unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "{assignment}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stderr).contains("config setting"));
+    }
+    // Unrelated non-Unicode environment entries must not crash the resolver.
+    use std::os::unix::ffi::OsStringExt;
+    let output = Command::new(common::built_bin("skilltest"))
+        .arg("run")
+        .arg(fixture)
+        .arg("--provider")
+        .arg(common::built_bin("skilltest-fake-provider"))
+        .env(
+            "UNRELATED_BINARY_ENV",
+            std::ffi::OsString::from_vec(vec![0xff]),
+        )
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let output = Command::new(common::built_bin("skilltest"))
+        .arg("run")
+        .arg("--provider")
+        .arg(common::built_bin("skilltest-fake-provider"))
+        .env(
+            "SKILLTEST_JUDGE_MODEL",
+            std::ffi::OsString::from_vec(vec![0xff]),
+        )
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("SKILLTEST_JUDGE_MODEL"));
+}
+
+#[test]
+fn provider_variant_transitions_drop_old_fields_and_arrays_replace() {
+    let scratch = Scratch::new();
+    let config = scratch.0.join("config.json");
+    let fake = common::built_bin("skilltest-fake-provider");
+    std::fs::write(&config,json!({"provider":{"kind":"command","command":["unavailable"]},"platforms":["old-one","old-two"],"models":["old-one","old-two"]}).to_string()).unwrap();
+    let fixtures = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures");
+    let output = Command::new(common::built_bin("skilltest"))
+        .arg("--config")
+        .arg(&config)
+        .arg("run")
+        .arg(fixtures.join("cases/greet_pass.yaml"))
+        .args([
+            "--set",
+            "provider={\"kind\":\"oneharness\",\"history\":false}",
+        ])
+        .arg("--set")
+        .arg(format!(
+            "provider={}",
+            json!({"kind":"command","command":[fake]})
+        ))
+        .args([
+            "--set",
+            "platforms=[\"replacement\"]",
+            "--set",
+            "models=[\"replacement\"]",
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["runs"].as_array().unwrap().len(), 1);
+    assert_eq!(report["runs"][0]["platform"], "replacement");
+    assert_eq!(report["runs"][0]["model"], "replacement");
+}
+
+#[test]
+fn generic_command_argv_preserves_spaces_empty_tokens_and_literal_shell_text() {
+    let scratch = Scratch::new();
+    let wrapper = scratch.0.join("provider with spaces");
+    std::fs::write(&wrapper,r#"#!/bin/sh
+if [ "$#" -ne 3 ] || [ "$1" != 'value with spaces' ] || [ "$2" != 'literal=$not-shell' ] || [ -n "$3" ]; then
+  echo 'argv tokens were changed; preserve each JSON command array element' >&2
+  exit 1
+fi
+exec "$CONFIG_FAKE_PROVIDER"
+"#).unwrap();
+    let provider = json!({"kind":"command","command":["/bin/sh",wrapper,"value with spaces","literal=$not-shell",""]});
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/cases/greet_pass.yaml");
+    let output = Command::new(common::built_bin("skilltest"))
+        .arg("run")
+        .arg(fixture)
+        .arg("--set")
+        .arg(format!("provider={provider}"))
+        .env(
+            "CONFIG_FAKE_PROVIDER",
+            common::built_bin("skilltest-fake-provider"),
+        )
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
