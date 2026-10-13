@@ -366,9 +366,7 @@ test("release artifact authority retains every platform and enforces pre-publica
   // drives it over staged products).
   for (const job of [graph["release.yml"].jobs.upload, publish.products])
     assert.ok(
-      job.steps.some((s) =>
-        /bash scripts\/verify-staged-archives\.sh products /.test(s.run ?? ""),
-      ),
+      job.steps.some((s) => /bash scripts\/verify-staged-archives\.sh products /.test(s.run ?? "")),
     );
   for (const script of [
     "stage-release-product.sh",
