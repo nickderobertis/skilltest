@@ -22,8 +22,10 @@ the deterministic reference provider the e2e suites drive.
 - `run` ingests cases from positional YAML `PATH`s **or** `--case-json <FILE>` —
   a JSON case object/array, the delivery channel for a case built in an SDK
   (`skill` then resolves relative to the CWD, not to a file).
-- `skilltest schema <report|validation|case|error>` emits the contract's JSON
-  Schemas; `scripts/gen-contract.sh` (project `skilltest-contract`) runs it.
+- Schema generation belongs to `skilltest-contract`; run configuration is
+  derived from core types, with runtime provenance excluded.
+- `run --set` and derived config environment leaves delegate to the core
+  resolver; adapters must not become a second resolution authority.
 - Library errors become exit codes **here**, never in the core: 0 success, 1 a
   case/skill failed, 2 bad input, 3 provider failure (`skilltest_core::ExitCode`).
   On failure, print the exact problem plus a suggested action on stderr; with

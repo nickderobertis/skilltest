@@ -203,7 +203,7 @@ class MockDecl(BaseModel):
     )
     rewrite: Any | None = Field(
         None,
-        description="Substitute raw input fields (a JSON object) — the low-level escape\nhatch, and the way to mock file reads (rewrite `file_path` to a\nfixture).",
+        description="Substitute raw input fields (a JSON object) — the low-level escape\nhatch, and the way to mock file reads (rewrite `file_path` to a\nfixture).\nArbitrary JSON is needed because each harness owns its tool input shape;\nmock semantic validation checks whether the supplied rewrite is supported.",
     )
     stub: str | StubOutput | StubSpec1 | None = Field(
         None,

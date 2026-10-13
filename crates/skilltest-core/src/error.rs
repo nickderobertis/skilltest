@@ -107,12 +107,8 @@ pub enum Error {
     },
 
     /// A YAML document (config or test case) failed to parse.
-    #[error("invalid YAML in {path}: {source}")]
-    Yaml {
-        path: PathBuf,
-        #[source]
-        source: serde_yaml::Error,
-    },
+    #[error("invalid YAML in {path}: {message}")]
+    Yaml { path: PathBuf, message: String },
 
     /// A test case or config was syntactically valid YAML but semantically
     /// wrong (e.g. a numeric eval with `min > max`).

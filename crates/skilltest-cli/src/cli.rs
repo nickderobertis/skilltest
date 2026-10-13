@@ -47,6 +47,9 @@ enum Command {
 
 #[derive(Args)]
 struct RunArgs {
+    /// Ordered config patches: dotted.path=<JSON-value> (repeatable).
+    #[arg(long = "set", value_name = "PATH=JSON")]
+    settings: Vec<String>,
     /// Test-case YAML files, or directories containing them.
     #[arg(value_name = "PATH")]
     paths: Vec<PathBuf>,
@@ -136,6 +139,8 @@ struct SchemaArgs {
 
 #[derive(Clone, Copy, ValueEnum)]
 enum SchemaTarget {
+    /// Full run configuration, shared by YAML, environment and SDK overrides.
+    Config,
     /// The `skilltest run --format json` report.
     Report,
     /// The `skilltest validate --format json` report.
@@ -207,33 +212,37 @@ where
 }
 
 fn cmd_run(config_path: Option<&Path>, args: &RunArgs) -> Result<ExitCode> {
-    let mut config = match config_path {
-        Some(path) => Config::load(path)?,
-        None => Config::load_or_default(Path::new("skilltest.yaml"))?,
-    };
-
     let command_provider = args
         .provider
         .as_ref()
         .map(|s| s.split_whitespace().map(String::from).collect::<Vec<_>>());
 
-    config.apply_overrides(Overrides {
-        command_provider,
-        oneharness_bin: args.oneharness_bin.clone(),
-        judge_harness: args.judge_harness.clone(),
-        timeout_secs: args.timeout,
-        platforms: args.platforms.clone(),
-        models: args.models.clone(),
-        judge_model: args.judge_model.clone(),
-        max_turns: args.max_turns,
-        mocks: args
-            .mocks
-            .as_deref()
-            .map(load_mocks_file)
-            .transpose()?
-            .unwrap_or_default(),
-        spy: args.spy,
-    })?;
+    let path = config_path.or_else(|| {
+        Path::new("skilltest.yaml")
+            .is_file()
+            .then_some(Path::new("skilltest.yaml"))
+    });
+    let config = Config::resolve(
+        path,
+        &args.settings,
+        Overrides {
+            command_provider,
+            oneharness_bin: args.oneharness_bin.clone(),
+            judge_harness: args.judge_harness.clone(),
+            timeout_secs: args.timeout,
+            platforms: args.platforms.clone(),
+            models: args.models.clone(),
+            judge_model: args.judge_model.clone(),
+            max_turns: args.max_turns,
+            mocks: args
+                .mocks
+                .as_deref()
+                .map(load_mocks_file)
+                .transpose()?
+                .unwrap_or_default(),
+            spy: args.spy,
+        },
+    )?;
 
     let provider = build_provider(&config)?;
 
@@ -323,7 +332,14 @@ fn load_mocks_file(path: &Path) -> Result<Vec<skilltest_core::MockDecl>> {
             path.display()
         ))
     })?;
-    serde_yaml::from_str(&text).map_err(|e| {
+    serde_saphyr::from_str_with_options(&text, {
+        let mut options = serde_saphyr::Options::default();
+        options.strict_booleans = true;
+        options.merge_keys = serde_saphyr::MergeKeyPolicy::Error;
+        options.with_snippet = false;
+        options
+    })
+    .map_err(|e| {
         Error::Invalid(format!(
             "--mocks file `{}` is not a valid mock declaration list: {e}",
             path.display()
@@ -429,8 +445,17 @@ fn cmd_init(args: &InitArgs) -> Result<ExitCode> {
 fn cmd_schema(args: &SchemaArgs) -> Result<ExitCode> {
     // Draft-07 on purpose: it is the dialect the SDK model generators
     // (datamodel-code-generator, json-schema-to-typescript) digest reliably.
+    if matches!(args.target, SchemaTarget::Config) {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&Config::schema())
+                .map_err(|e| Error::Invalid(e.to_string()))?
+        );
+        return Ok(ExitCode::Success);
+    }
     let generator = schemars::generate::SchemaSettings::draft07().into_generator();
     let schema = match args.target {
+        SchemaTarget::Config => generator.into_root_schema_for::<Config>(),
         SchemaTarget::Report => generator.into_root_schema_for::<Report>(),
         SchemaTarget::Validation => generator.into_root_schema_for::<ValidationReport>(),
         SchemaTarget::Case => generator.into_root_schema_for::<TestCase>(),
@@ -495,3 +520,7 @@ fn emit_json_stream_error(error: &ReportError) {
     let stdout = std::io::stdout();
     let _ = write_ndjson(&stdout, &line);
 }
+
+#[cfg(test)]
+#[path = "yaml_tests.rs"]
+mod yaml_tests;

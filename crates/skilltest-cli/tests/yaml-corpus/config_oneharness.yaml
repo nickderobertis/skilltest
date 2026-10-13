@@ -1,0 +1,9 @@
+# Synthetic: explicit oneharness provider settings and the openai judge.
+provider:
+  kind: oneharness
+  bin: /opt/oneharness
+  judge_harness: codex
+  timeout_secs: 300
+judge:
+  kind: api
+  vendor: openai

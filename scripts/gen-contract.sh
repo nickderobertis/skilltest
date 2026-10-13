@@ -14,12 +14,17 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-mode=write
+mode="write"
 if [[ "${1:-}" == "--check" ]]; then
   mode=check
 fi
 
 artifacts=(
+  "schemas/config.schema.json"
+  "sdks/python/skilltest_sdk/_config.py"
+  "sdks/python/skilltest_sdk/_config_overrides.py"
+  "sdks/typescript/src/generated/config.ts"
+  "sdks/typescript/src/generated/config_overrides.ts"
   "schemas/report.schema.json"
   "schemas/validation.schema.json"
   "schemas/case.schema.json"
@@ -56,12 +61,27 @@ cargo build -p skilltest-cli --quiet
 # branch on a typed `kind` instead of parsing the message string.
 ./target/debug/skilltest schema error > "$stage/schemas/error.schema.json"
 
+if ! ./target/debug/skilltest schema config > "$stage/schemas/config.schema.json"; then
+  echo "could not write Config schema; check staging directory permissions and run just gen-contract again" >&2
+  exit 1
+fi
+python3 schemas/config_overrides_schema.py "$stage/schemas/config.schema.json" "$stage/schemas/config_overrides.schema.json"
+
 # Python: pydantic models via datamodel-code-generator (pinned in uv.lock).
 # Run from sdks/python so the ruff formatter it invokes picks up that project's
 # config and the output matches the repo's formatting.
+enter_python_sdk() {
+  if ! cd sdks/python; then
+    echo "could not enter sdks/python; restore the SDK directory in this checkout and run just gen-contract again" >&2
+    exit 1
+  fi
+}
+
 gen_python() {
   local name="$1"
-  (cd sdks/python && PYTHONWARNINGS=ignore uv run --quiet datamodel-codegen \
+  local extra=()
+  if [[ "$name" == "config" ]]; then extra=(--use-field-description --strict-nullable); fi
+  (enter_python_sdk && PYTHONWARNINGS=ignore uv run --quiet datamodel-codegen \
     --input "$stage/schemas/$name.schema.json" \
     --input-file-type jsonschema \
     --output "$stage/sdks/python/skilltest_sdk/_$name.py" \
@@ -74,9 +94,17 @@ gen_python() {
     --disable-timestamp \
     --collapse-root-models \
     --use-title-as-name \
-    --field-constraints \
+    --field-constraints "${extra[@]}" \
     --formatters ruff-format)
 }
+gen_python config
+(enter_python_sdk && PYTHONWARNINGS=ignore uv run --quiet datamodel-codegen \
+  --input "$stage/schemas/config_overrides.schema.json" --input-file-type jsonschema \
+  --output "$stage/sdks/python/skilltest_sdk/_config_overrides.py" \
+  --output-model-type typing.TypedDict --target-python-version 3.12 \
+  --enum-field-as-literal all --use-union-operator --use-double-quotes \
+  --disable-timestamp --collapse-root-models --use-title-as-name --use-field-description --formatters ruff-format)
+(enter_python_sdk && uv run --quiet ruff check --select I --fix "$stage/sdks/python/skilltest_sdk/_config.py" "$stage/sdks/python/skilltest_sdk/_config_overrides.py" --quiet)
 gen_python report
 gen_python validation
 gen_python case
@@ -85,12 +113,16 @@ gen_python error
 # TypeScript: type declarations via json-schema-to-typescript (pinned in
 # pnpm-lock.yaml). Types only by design — the drift gate is what guarantees
 # the shape, so the SDK does not re-validate it at runtime.
-ts_banner='/* eslint-disable */
+ts_banner=$(cat <<'BANNER'
+/* eslint-disable -- Generated schema declarations are checked by tsc and contract drift; hand-written lint rewrites would violate the Rust contract. */
 /**
  * Generated from the golden JSON Schemas in schemas/ by `just gen-contract`.
  * DO NOT MODIFY BY HAND — change the Rust report types and regenerate; the
  * contract drift gate fails while this file is stale.
- */'
+ */
+BANNER
+)
+
 gen_typescript() {
   local name="$1"
   pnpm --filter @skill-test/sdk --silent exec json2ts \
@@ -99,6 +131,8 @@ gen_typescript() {
     --additionalProperties false \
     --bannerComment "$ts_banner"
 }
+gen_typescript config
+gen_typescript config_overrides
 gen_typescript report
 gen_typescript validation
 gen_typescript case

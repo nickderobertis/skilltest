@@ -393,6 +393,8 @@ pub struct MockDecl {
     /// hatch, and the way to mock file reads (rewrite `file_path` to a
     /// fixture).
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Arbitrary JSON is needed because each harness owns its tool input shape;
+    /// mock semantic validation checks whether the supplied rewrite is supported.
     pub rewrite: Option<Value>,
 }
 
@@ -1089,7 +1091,11 @@ mod tests {
     use super::*;
 
     fn decl(yaml: &str) -> MockDecl {
-        serde_yaml::from_str(yaml).expect("test decl must parse")
+        let mut options = serde_saphyr::Options::default();
+        options.strict_booleans = true;
+        options.merge_keys = serde_saphyr::MergeKeyPolicy::Error;
+        options.with_snippet = false;
+        serde_saphyr::from_str_with_options(yaml, options).expect("test decl must parse")
     }
 
     #[test]
@@ -1124,15 +1130,15 @@ mod tests {
         // The map forms of `stub`/`deny` and a field predicate deny unknown
         // keys: a typo must not silently degrade to a default (e.g. a stub
         // whose `exit_cod: 2` quietly ran with exit 0).
-        assert!(serde_yaml::from_str::<MockDecl>(
+        assert!(serde_saphyr::from_str::<MockDecl>(
             "match: { tool: bash }\nstub: { output: boom, exit_cod: 2 }\n"
         )
         .is_err());
-        assert!(serde_yaml::from_str::<MockDecl>(
+        assert!(serde_saphyr::from_str::<MockDecl>(
             "match: { tool: bash }\ndeny: { mesage: nope }\n"
         )
         .is_err());
-        assert!(serde_yaml::from_str::<MockDecl>(
+        assert!(serde_saphyr::from_str::<MockDecl>(
             "match: { input: { command: { contians: origin } } }\nstub: ok\n"
         )
         .is_err());
@@ -1181,11 +1187,11 @@ mod tests {
             .validate("m")
             .is_err());
         // Unknown fields are rejected (a typo must never become a spy).
-        assert!(serde_yaml::from_str::<MockDecl>("match: { tool: bash }\nstubb: x\n").is_err());
+        assert!(serde_saphyr::from_str::<MockDecl>("match: { tool: bash }\nstubb: x\n").is_err());
     }
 
     fn set(yaml: &str) -> MockSet {
-        let decls: Vec<MockDecl> = serde_yaml::from_str(yaml).expect("decl list must parse");
+        let decls: Vec<MockDecl> = serde_saphyr::from_str(yaml).expect("decl list must parse");
         MockSet::build(&[], &decls, false).expect("set must build")
     }
 
@@ -1253,9 +1259,9 @@ mod tests {
     #[test]
     fn build_rejects_duplicate_names_across_shared_and_case() {
         let shared: Vec<MockDecl> =
-            serde_yaml::from_str("- name: push\n  match: { tool: bash }\n  stub: x\n").unwrap();
+            serde_saphyr::from_str("- name: push\n  match: { tool: bash }\n  stub: x\n").unwrap();
         let case: Vec<MockDecl> =
-            serde_yaml::from_str("- name: push\n  match: { tool: bash }\n").unwrap();
+            serde_saphyr::from_str("- name: push\n  match: { tool: bash }\n").unwrap();
         let err = MockSet::build(&shared, &case, false).unwrap_err();
         assert!(err.to_string().contains("duplicate mock name"), "{err}");
     }
@@ -1362,7 +1368,7 @@ mod tests {
     #[test]
     fn where_matches_field_predicates() {
         let clause: BTreeMap<String, FieldPredicate> =
-            serde_yaml::from_str("command: { contains: \"--force\" }\n").unwrap();
+            serde_saphyr::from_str("command: { contains: \"--force\" }\n").unwrap();
         assert!(where_matches(
             &clause,
             Some(&json!({ "command": "git push --force" }))
@@ -1374,7 +1380,7 @@ mod tests {
         assert!(!where_matches(&clause, None));
         // Bare-string predicate = exact equality.
         let exact: BTreeMap<String, FieldPredicate> =
-            serde_yaml::from_str("command: git status\n").unwrap();
+            serde_saphyr::from_str("command: git status\n").unwrap();
         assert!(where_matches(
             &exact,
             Some(&json!({ "command": "git status" }))
@@ -1413,7 +1419,7 @@ mod tests {
     #[test]
     fn field_predicate_spec_forms_all_hold_locally() {
         // equals + contains + pattern in one Spec — every form must hold.
-        let clause: BTreeMap<String, FieldPredicate> = serde_yaml::from_str(
+        let clause: BTreeMap<String, FieldPredicate> = serde_saphyr::from_str(
             "command: { equals: \"git push\", contains: push, pattern: \"^git\" }\n",
         )
         .unwrap();
@@ -1427,7 +1433,7 @@ mod tests {
             Some(&json!({ "command": "git pushx" }))
         ));
         let pat_only: BTreeMap<String, FieldPredicate> =
-            serde_yaml::from_str("command: { pattern: \"^git\" }\n").unwrap();
+            serde_saphyr::from_str("command: { pattern: \"^git\" }\n").unwrap();
         assert!(!where_matches(
             &pat_only,
             Some(&json!({ "command": "use git" }))
@@ -1436,7 +1442,7 @@ mod tests {
 
     #[test]
     fn matches_call_contains_matches_over_event_haystack() {
-        let matcher: MockMatch = serde_yaml::from_str("contains: \"git push\"\n").unwrap();
+        let matcher: MockMatch = serde_saphyr::from_str("contains: \"git push\"\n").unwrap();
         assert!(matcher.matches_call(Some("Bash"), Some(&json!({ "command": "git push" }))));
         assert!(!matcher.matches_call(Some("Bash"), Some(&json!({ "command": "ls" }))));
     }
@@ -1445,7 +1451,7 @@ mod tests {
     fn unnamed_decls_get_positional_labels_and_empty_set_reports_none() {
         // Unnamed action decl -> mock_<i>; unnamed spy -> spy_<i>.
         let decls: Vec<MockDecl> =
-            serde_yaml::from_str("- match: { tool: bash }\n  stub: x\n- match: { tool: read }\n")
+            serde_saphyr::from_str("- match: { tool: bash }\n  stub: x\n- match: { tool: read }\n")
                 .unwrap();
         let set = MockSet::build(&[], &decls, false).unwrap();
         let records = set.resolve(vec![call("bash", "ls", "stub", Some(0))]);
@@ -1540,12 +1546,12 @@ mod tests {
             "{err}"
         );
         // A typo'd key inside an item is a parse error, never a default.
-        assert!(serde_yaml::from_str::<MockDecl>(
+        assert!(serde_saphyr::from_str::<MockDecl>(
             "match: { tool: bash }\nstub:\n  - a\n  - { output: b, exit_cod: 2 }\n"
         )
         .is_err());
         let decls: Vec<MockDecl> =
-            serde_yaml::from_str("- match: { tool: bash }\n  stub: []\n").unwrap();
+            serde_saphyr::from_str("- match: { tool: bash }\n  stub: []\n").unwrap();
         assert!(MockSet::build(&[], &decls, false).is_err());
     }
 
@@ -1661,7 +1667,7 @@ mod tests {
 
     #[test]
     fn matches_call_composes_all_criteria() {
-        let matcher: MockMatch = serde_yaml::from_str(
+        let matcher: MockMatch = serde_saphyr::from_str(
             "tool: bash\npattern: \"git (status|diff)\"\ninput: { command: { contains: git } }\n",
         )
         .unwrap();

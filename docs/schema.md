@@ -2,42 +2,111 @@
 
 ## Config file (`skilltest.yaml`)
 
-Loaded from `skilltest.yaml` in the working directory by default, or from
-`--config <path>`. Every field has a default, and CLI flags
-(`--provider`, `--platform`, `--model`, `--judge-model`, `--max-turns`) override
-the file.
+The Rust `Config` type is the authority for every setting. `skilltest schema
+config` emits its draft-07 schema, checked in as `schemas/config.schema.json`.
+Both SDKs export generated `Config` and recursive `ConfigOverrides` types.
+The core resolver is shared by configuration loading and CLI runs; SDKs only
+serialize overrides into the CLI's repeatable `--set` transport.
 
-```yaml
-# The provider (see docs/protocol.md). The default runs skills through
-# oneharness; `kind: command` runs a custom JSON-lines provider instead.
-provider:
-  kind: oneharness          # or: command
-  bin: oneharness           # oneharness binary, resolved on PATH
-  judge_harness: claude-code # harness used for evals + the simulated user
-  timeout_secs: 120         # passed to `oneharness run --timeout`
-  # For kind: command instead:
-  #   kind: command
-  #   command: ["skilltest-fake-provider"]
+| Priority (low → high) | Surface |
+| --- | --- |
+| 1 | Built-ins, including existing binary/history environment defaults |
+| 2 | YAML/JSON file: `skilltest.yaml`, or `--config FILE` |
+| 3 | Derived `SKILLTEST_` configuration environment variables |
+| 4 | `run --set dotted.path=<JSON-value>`, in command order |
+| 5 | Existing named CLI flags and SDK shorthand options; explicit mocks prepend and spy enables |
 
-# Harness platforms a case runs on; a run fans out over platforms × models.
-# Platforms are oneharness harness ids.
-platforms: ["claude-code"]
+Objects merge recursively. Arrays replace as whole values, including role args,
+mocks, models and platforms; there is no array-index path syntax. Explicit
+`false`, `0`, empty arrays and `null` are values, subject to the setting's
+validation. `null` clears only nullable strings/blocks; it does not clear a
+required number, boolean, string or array. Changing `provider.kind` or
+`judge.kind` discards the previous variant's fields before merging the new
+variant. Unknown properties, wrong types and invalid combinations fail.
 
-# Models a case runs on (must be valid for the chosen harness).
-models: ["sonnet"]
+`--set` splits on the first `=` and requires a JSON value, preserving the
+string and argv token contents. For example:
 
-# Model used for natural-language evals and the simulated user.
-# Defaults to the first entry of `models` when omitted.
-judge_model: "haiku"
-
-# Default cap on assistant turns for multi-turn cases (a case may lower it).
-max_turns: 8
+```sh
+skilltest run cases/ --set 'provider.history=false' \
+  --set 'provider.judge.args=["--harness","goose","--env","ROLE=judge with spaces"]'
 ```
 
-CLI flags override the file: `--provider "<argv>"` switches to a command
-provider; `--oneharness-bin`, `--judge-harness`, and `--timeout` tune the
-oneharness provider; `--platform`, `--model`, `--judge-model`, and `--max-turns`
-override the rest.
+Environment names follow property paths: uppercase each segment and join with
+`__` after `SKILLTEST_`, such as `SKILLTEST_PROVIDER__JUDGE__CONFIG` and
+`SKILLTEST_PROVIDER__JUDGE__ARGS`. String/enum leaves accept bare text or
+JSON-quoted strings; everything else requires JSON. Unquoted `null` clears a
+nullable setting, while `"null"` is literal string text. Nullable blocks are
+clearable at their own path (`SKILLTEST_JUDGE=null`); arrays require a whole
+JSON array. The existing operational `SKILLTEST_BIN`, `SKILLTEST_PROVIDER`,
+`SKILLTEST_ONEHARNESS_BIN` and `SKILLTEST_HISTORY_DIR` retain their meanings.
+SDK `bin`/`cwd` control process placement and are outside the run-config schema.
+
+```yaml
+provider:
+  kind: oneharness
+  bin: oneharness
+  judge_harness: claude-code
+  timeout_secs: 120
+  history: true
+  history_dir: null
+  # Full invocation configuration: omitted settings belong to oneharness.
+  judge:
+    config: judge.oneharness.toml
+    args: ["--schema-max-retries", "1", "--env", "ROLE=judge"]
+  simulated_user:
+    config: user.oneharness.toml
+    args: ["--harness", "goose"]
+platforms: ["claude-code"]
+models: ["sonnet"]
+judge_model: "haiku"
+max_turns: 8
+mocks: []
+spy: false
+# Independent API routing remains available: judge: {kind: api, vendor: openai}.
+judge: null
+```
+
+`provider.judge` is separate from the top-level API `judge` block. An absent
+`provider.simulated_user` inherits `provider.judge`; an explicit `{}` opts into
+oneharness defaults independently. With both role blocks absent, the legacy
+`judge_harness`, effective `judge_model` (falling back to the first `models`
+entry) and `timeout_secs` behavior is preserved. Role config paths, cwd settings
+and raw argv resolve from the invocation working directory, not the YAML file.
+
+Evaluator shorthands are layer-aware. A higher-layer `judge_harness`,
+`judge_model` or provider `timeout_secs` overrides that corresponding setting
+of a lower-layer role block. A same/higher-layer role block owns its omitted
+settings; built-in/fallback model values are never explicit overrides.
+For example, the role blocks in the YAML above own their settings despite the
+same-file `judge_model: haiku`. `SKILLTEST_JUDGE_MODEL=sonnet` overrides their
+model; an environment role block would own same-layer omitted defaults.
+Within `--set`, a later role-block assignment owns defaults over an earlier
+shorthand, and a later shorthand overrides an earlier role assignment. Named
+`--judge-harness`, `--judge-model` and `--timeout` always win for both role
+calls, removing only matching role option tokens (including `--flag=value`).
+Tokens after `--` remain literal harness argv. oneharness owns the precedence
+between its CLI args and its config file.
+
+Role invocations must produce a single buffered verdict. Compatible settings
+include oneharness config paths, schema retry count, timeouts, cwd, env, approval
+mode, harness/model selection, fallback chains and harness-tail argv. Parallel
+fan-out, batch/prompt replacement, streaming, report-format overrides and an
+explicit role-args `--schema` are incompatible. Multiple successful results
+fail rather than silently becoming one verdict. The judge receives a temporary
+schema through oneharness's native/prompt delivery; it overrides a role config's
+schema. Responder and simulated-user calls receive no skilltest-generated
+schema; their user-owned oneharness schema settings remain oneharness's concern.
+Schema validation/retries belong to oneharness, so a retry setting of N can cost
+up to 1 + N model invocations. A validated structured verdict takes priority;
+otherwise skilltest uses the last complete correctly typed verdict in text,
+ignoring trailing prose or an incomplete reconsideration.
+
+Python `run_skill`/`stream_skill` accept `config_overrides=...`; TypeScript
+`runSkill`/`streamSkill` accept `configOverrides`. Their keys match this schema's
+YAML/JSON spelling; existing shorthand parameter casing remains unchanged.
+Python model serialization excludes unset fields so defaults do not become
+explicit overrides. Arrays in partial types remain complete replacements.
 
 ## Test case (`*.yaml`, or `*.skilltest.yaml` for plugin auto-collection)
 

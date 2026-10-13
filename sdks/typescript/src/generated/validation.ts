@@ -1,4 +1,4 @@
-/* eslint-disable */
+/* eslint-disable -- Generated schema declarations are checked by tsc and contract drift; hand-written lint rewrites would violate the Rust contract. */
 /**
  * Generated from the golden JSON Schemas in schemas/ by `just gen-contract`.
  * DO NOT MODIFY BY HAND — change the Rust report types and regenerate; the

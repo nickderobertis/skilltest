@@ -630,16 +630,20 @@ impl Provider for CommandProvider {
 ///   ready-to-run `oneharness history show …` command on the assistant turn. The
 ///   judge and simulated-user calls are deliberately never recorded.
 ///
-/// Note on approval mode: skilltest deliberately passes **no `--mode`** flag, so
+/// Note on approval mode: responder calls pass **no `--mode`** flag, so
 /// oneharness applies its own default (v0.3.0+ normalized approval modes). Users
 /// who need a different mode — e.g. `bypass` to let the skill take every action
 /// without prompting — configure it through oneharness's own config
 /// (`ONEHARNESS_MODE` / its config file), keeping approval policy in one place.
 ///
-/// Evals and the simulated user always run on the configured `judge_harness`,
-/// independent of the harness under test, so the evaluator does not drift with
-/// the matrix.
+/// Evaluators use independent oneharness role configurations. Absent blocks
+/// retain `judge_harness` behavior; an absent simulated-user block inherits the
+/// judge role. Config resolution computes only explicit higher-layer shorthand
+/// overrides, leaving omitted role defaults to oneharness.
 pub struct OneharnessProvider {
+    judge_role: Option<crate::config::OneharnessRoleConfig>,
+    user_role: Option<crate::config::OneharnessRoleConfig>,
+    evaluator_overrides: Box<crate::config::EvaluatorOverrides>,
     bin: String,
     judge_harness: String,
     timeout_secs: u64,
@@ -665,6 +669,10 @@ struct OhEnvelope {
 
 #[derive(Deserialize)]
 struct OhResult {
+    #[serde(default)]
+    structured: Option<serde_json::Value>,
+    #[serde(default)]
+    schema_valid: Option<bool>,
     status: String,
     #[serde(default)]
     text: Option<String>,
@@ -694,6 +702,9 @@ struct OhResult {
 
 /// Parameters for one `oneharness run` invocation.
 struct RunArgs<'a> {
+    schema: Option<&'a Path>,
+    role: Option<&'a crate::config::OneharnessRoleConfig>,
+    evaluator: Option<&'a crate::config::EvaluatorSettings>,
     harness: &'a str,
     model: &'a str,
     prompt: &'a str,
@@ -726,6 +737,9 @@ impl<'a> RunArgs<'a> {
     /// The common mock-less, history-less shape (judge / simulated-user calls).
     fn plain(harness: &'a str, model: &'a str, prompt: &'a str) -> Self {
         RunArgs {
+            schema: None,
+            role: None,
+            evaluator: None,
             harness,
             model,
             prompt,
@@ -739,6 +753,8 @@ impl<'a> RunArgs<'a> {
 
 /// What we get back from one `oneharness run`.
 struct RunOutcome {
+    structured: Option<serde_json::Value>,
+    schema_valid: Option<bool>,
     text: String,
     session_id: Option<String>,
     usage: Option<Usage>,
@@ -749,6 +765,45 @@ struct RunOutcome {
     /// The absolute path oneharness recorded this run's history to, when history
     /// was on and the run was recorded; `None` otherwise.
     history_file: Option<String>,
+}
+
+/// A uniquely owned schema file, retained while oneharness executes its retries.
+struct SchemaFile {
+    path: PathBuf,
+}
+impl SchemaFile {
+    fn prepare(kind: JudgeKind) -> Result<Self> {
+        use std::fs::OpenOptions;
+        let path = std::env::temp_dir().join(format!(
+            "skilltest-schema-{}-{}.json",
+            std::process::id(),
+            curl_config_nonce()
+        ));
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .map_err(|e| {
+                Error::provider(
+                    "oneharness:judge",
+                    format!("could not create verdict schema: {e}"),
+                )
+            })?;
+        let owned = Self { path };
+        file.write_all(verdict_schema(kind).to_string().as_bytes())
+            .map_err(|e| {
+                Error::provider(
+                    "oneharness:judge",
+                    format!("could not write verdict schema: {e}"),
+                )
+            })?;
+        Ok(owned)
+    }
+}
+impl Drop for SchemaFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
 }
 
 /// The per-run temp files a mock plan needs: the rules JSON `--mock-rules`
@@ -861,6 +916,12 @@ impl OneharnessProvider {
     #[must_use]
     pub fn new(config: &OneharnessConfig) -> Self {
         Self {
+            judge_role: config.judge.clone(),
+            user_role: config
+                .simulated_user
+                .clone()
+                .or_else(|| config.judge.clone()),
+            evaluator_overrides: config.evaluator_overrides.clone(),
             bin: config.bin.clone(),
             judge_harness: config.judge_harness.clone(),
             timeout_secs: config.timeout_secs,
@@ -916,27 +977,67 @@ impl OneharnessProvider {
         //
         // No `--mode`: oneharness applies its own default approval mode; users
         // tune it (e.g. `bypass`) via oneharness config, not from here.
-        cmd.args([
-            "run",
-            "--harness",
-            args.harness,
-            // Not cosmetic: since oneharness 0.16 stdout is text unless `--compact`
-            // (or `--format json`) is given, so this is what selects the JSON
-            // report parsed below.
-            "--compact",
-            "--events",
-            "--timeout",
-            &timeout,
-            "--prompt-file",
-            "-",
-        ]);
-        // An empty model means "unspecified" — omit `--model` so the harness uses
-        // its own default (cursor/crush/copilot) or an env-selected model (qwen
-        // via OPENAI_MODEL, goose via GOOSE_MODEL), exactly as oneharness's own
-        // smoke scripts do. Forwarding `--model ""` would push a broken empty
-        // model flag to the harness CLI.
-        if !args.model.is_empty() {
-            cmd.args(["--model", args.model]);
+        cmd.args(["run", "--compact", "--events", "--prompt-file", "-"]);
+        let mut tail = &[][..];
+        if !args.role.is_some_and(|role| {
+            role.args
+                .iter()
+                .take_while(|token| token.as_str() != "--")
+                .any(|token| token == "--no-stream")
+        }) {
+            cmd.arg("--no-stream");
+        }
+        if let Some(role) = args.role {
+            if let Some(config) = &role.config {
+                cmd.args(["--config", config]);
+            }
+            let boundary = role
+                .args
+                .iter()
+                .position(|token| token == "--")
+                .unwrap_or(role.args.len());
+            tail = &role.args[boundary..];
+            let overrides = args.evaluator;
+            let mut index = 0;
+            while index < boundary {
+                let token = &role.args[index];
+                let flag = token
+                    .split_once('=')
+                    .map_or(token.as_str(), |(flag, _)| flag);
+                let overridden = overrides.is_some_and(|settings| match flag {
+                    "--harness" => settings.harness.is_some(),
+                    "--model" => settings.model.is_some(),
+                    "--timeout" => settings.timeout.is_some(),
+                    _ => false,
+                });
+                if overridden {
+                    index += if token.contains('=') { 1 } else { 2 };
+                } else {
+                    cmd.arg(token);
+                    index += 1;
+                }
+            }
+            if let Some(settings) = overrides {
+                if let Some(harness) = &settings.harness {
+                    cmd.args(["--harness", harness]);
+                }
+                if let Some(model) = &settings.model {
+                    if !model.is_empty() {
+                        cmd.args(["--model", model]);
+                    }
+                }
+                if let Some(timeout) = settings.timeout {
+                    cmd.args(["--timeout", &timeout.to_string()]);
+                }
+            }
+        } else {
+            cmd.args(["--harness", args.harness, "--timeout", &timeout]);
+            if !args.model.is_empty() {
+                cmd.args(["--model", args.model]);
+            }
+        }
+        if let Some(schema) = args.schema {
+            cmd.arg("--schema").arg(schema);
         }
         if let Some(system) = args.system {
             cmd.args(["--system", system]);
@@ -959,6 +1060,8 @@ impl OneharnessProvider {
             cmd.arg("--spy-file");
             cmd.arg(&files.spy);
         }
+
+        cmd.args(tail);
 
         let mut child = cmd
             .stdin(Stdio::piped())
@@ -1000,11 +1103,33 @@ impl OneharnessProvider {
         // `history_file` is on the run report, not per result — capture it
         // before consuming `results`.
         let history_file = envelope.history_file;
-        let result = envelope
-            .results
-            .into_iter()
-            .next()
+        let mut results = envelope.results;
+        if results.iter().filter(|r| r.status == "ok").count() > 1 {
+            return Err(Error::provider(
+                "oneharness",
+                "multiple successful results cannot be consumed as a single verdict",
+            ));
+        }
+        let settled = results
+            .iter()
+            .rposition(|r| r.status == "ok")
+            .or_else(|| results.len().checked_sub(1))
             .ok_or_else(|| Error::provider("oneharness", "oneharness returned no results"))?;
+        let result = results.remove(settled);
+        if !output.status.success()
+            && !(args.schema.is_some() && result.schema_valid == Some(false))
+        {
+            return Err(oh_failure(
+                format!("oneharness:{}", args.harness),
+                format!(
+                    "oneharness exited with {}; {}",
+                    output.status,
+                    result.error.as_deref().unwrap_or(&result.stderr)
+                ),
+                result.failure_kind.as_deref(),
+                &result.status,
+            ));
+        }
 
         if result.status != "ok" {
             let detail = result
@@ -1026,14 +1151,18 @@ impl OneharnessProvider {
         // harness's output shape defeats extraction (oneharness's documented
         // contract — see OhResult::stdout). Only a run that produced *neither* is
         // a real error.
-        let text = select_reply_text(result.text, &result.stdout).ok_or_else(|| {
-            Error::provider(
-                format!("oneharness:{}", args.harness),
-                "harness produced neither extractable text nor stdout",
-            )
-        })?;
+        let text = select_reply_text(result.text, &result.stdout)
+            .or_else(|| args.schema.map(|_| String::new()))
+            .ok_or_else(|| {
+                Error::provider(
+                    format!("oneharness:{}", args.harness),
+                    "harness produced neither extractable text nor stdout",
+                )
+            })?;
         let mock_calls = mock_files.as_ref().map(MockFiles::records).transpose()?;
         Ok(RunOutcome {
+            structured: result.structured,
+            schema_valid: result.schema_valid,
             text,
             session_id: result.session_id,
             usage: result.usage,
@@ -1179,6 +1308,8 @@ impl OneharnessProvider {
             // far). The spy log may be torn mid-line by the kill, and an
             // aborted run is never scored, so no records are reported.
             return Ok(RunOutcome {
+                structured: None,
+                schema_valid: None,
                 text: String::new(),
                 session_id: None,
                 usage: None,
@@ -1236,6 +1367,8 @@ impl OneharnessProvider {
         };
         let mock_calls = mock_files.as_ref().map(MockFiles::records).transpose()?;
         Ok(RunOutcome {
+            structured: result.structured,
+            schema_valid: result.schema_valid,
             text,
             session_id: result.session_id,
             usage: result.usage,
@@ -1278,6 +1411,9 @@ impl Provider for OneharnessProvider {
         };
         let history_name = self.history_name(platform, model, messages);
         let outcome = self.run(&RunArgs {
+            schema: None,
+            role: None,
+            evaluator: None,
             harness: platform,
             model,
             prompt: &prompt,
@@ -1334,6 +1470,9 @@ impl Provider for OneharnessProvider {
         let history_name = self.history_name(platform, model, messages);
         let outcome = self.run_streaming(
             &RunArgs {
+                schema: None,
+                role: None,
+                evaluator: None,
                 harness: platform,
                 model,
                 prompt: &prompt,
@@ -1361,7 +1500,10 @@ impl Provider for OneharnessProvider {
 
     fn simulate_user(&self, model: &str, persona: &str, messages: &[Message]) -> Result<UserTurn> {
         let prompt = build_user_prompt(persona, messages);
-        let outcome = self.run(&RunArgs::plain(&self.judge_harness, model, &prompt))?;
+        let mut args = RunArgs::plain(&self.judge_harness, model, &prompt);
+        args.role = self.user_role.as_ref();
+        args.evaluator = Some(&self.evaluator_overrides.simulated_user);
+        let outcome = self.run(&args)?;
         Ok(UserTurn {
             message: outcome.text.trim().to_string(),
             stop: false,
@@ -1376,8 +1518,19 @@ impl Provider for OneharnessProvider {
         messages: &[Message],
     ) -> Result<JudgeVerdict> {
         let prompt = build_judge_prompt(query, messages);
-        let outcome = self.run(&RunArgs::plain(&self.judge_harness, model, &prompt))?;
-        let mut verdict = parse_verdict(query.kind, &outcome.text)?;
+        let schema = SchemaFile::prepare(query.kind)?;
+        let mut args = RunArgs::plain(&self.judge_harness, model, &prompt);
+        args.schema = Some(&schema.path);
+        args.role = self.judge_role.as_ref();
+        args.evaluator = Some(&self.evaluator_overrides.judge);
+        let outcome = self.run(&args)?;
+        let mut verdict = outcome
+            .structured
+            .as_ref()
+            .filter(|_| outcome.schema_valid == Some(true))
+            .and_then(|value| verdict_from_value(query.kind, value).ok())
+            .map(Ok)
+            .unwrap_or_else(|| parse_verdict(query.kind, &outcome.text))?;
         verdict.usage = outcome.usage;
         Ok(verdict)
     }
@@ -2246,31 +2399,69 @@ fn build_judge_prompt(query: &JudgeQuery<'_>, messages: &[Message]) -> String {
     }
 }
 
-/// Extract the first JSON object from `text`, tolerating code fences and prose
-/// around it (real models do not always emit bare JSON).
-fn extract_json_object(text: &str) -> Option<&str> {
-    let start = text.find('{')?;
-    let end = text.rfind('}')?;
-    if end > start {
-        Some(&text[start..=end])
-    } else {
+/// Enumerate complete objects, accounting for quoted braces and escapes. Starting
+/// at each opening brace also recovers a verdict after an unrelated malformed fragment.
+fn json_objects(text: &str) -> impl Iterator<Item = &str> {
+    let mut consumed = 0;
+    text.match_indices('{').filter_map(move |(start, _)| {
+        if start < consumed {
+            return None;
+        }
+        let mut depth = 0;
+        let mut quoted = false;
+        let mut escaped = false;
+        for (offset, ch) in text[start..].char_indices() {
+            if quoted {
+                if escaped {
+                    escaped = false;
+                } else if ch == '\\' {
+                    escaped = true;
+                } else if ch == '"' {
+                    quoted = false;
+                }
+            } else {
+                match ch {
+                    '"' => quoted = true,
+                    '{' => depth += 1,
+                    '}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            let object = &text[start..start + offset + 1];
+                            if serde_json::from_str::<serde_json::Value>(object).is_ok() {
+                                consumed = start + offset + 1;
+                            }
+                            return Some(object);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
         None
-    }
+    })
+}
+
+#[cfg(test)]
+fn extract_json_object(text: &str) -> Option<&str> {
+    json_objects(text).next()
 }
 
 fn parse_verdict(kind: JudgeKind, text: &str) -> Result<JudgeVerdict> {
-    let json = extract_json_object(text).ok_or_else(|| {
-        Error::provider(
-            "oneharness:judge",
-            format!("judge did not return a JSON object; got: {text}"),
-        )
-    })?;
-    let value: serde_json::Value = serde_json::from_str(json).map_err(|e| {
-        Error::provider(
-            "oneharness:judge",
-            format!("judge verdict was not valid JSON: {e}; got: {json}"),
-        )
-    })?;
+    let mut last = None;
+    let mut problem = None;
+    for object in json_objects(text) {
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(object) {
+            match verdict_from_value(kind, &value) {
+                Ok(verdict) => last = Some(verdict),
+                Err(error) => problem = Some(error),
+            }
+        }
+    }
+    last.ok_or_else(|| problem.unwrap_or_else(|| Error::provider(
+        "oneharness:judge", format!("judge did not return a usable JSON verdict; got: {text}. Return an object with a correctly typed `value`."))))
+}
+
+fn verdict_from_value(kind: JudgeKind, value: &serde_json::Value) -> Result<JudgeVerdict> {
     let reason = value
         .get("reason")
         .and_then(serde_json::Value::as_str)
@@ -3144,6 +3335,7 @@ mod tests {
                 timeout_secs: 30,
                 history,
                 history_dir: Some(TEST_HISTORY_DIR.to_string()),
+                ..Default::default()
             })
         }
 

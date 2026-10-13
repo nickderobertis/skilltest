@@ -31,7 +31,7 @@ into the runner:
   are dropped, so `index` stays ordered but may skip numbers. Empty for
   harnesses that expose no machine-readable transcript.
 - **Normalized `usage`** — `{input_tokens, output_tokens, cost_usd}` is parsed
-  off each result and aggregated into the [report](schema.md) so cross-model
+  off each result and aggregated into the [report and configuration contract](schema.md) so cross-model
   cost reporting is portable instead of harness-specific.
 - **Normalized `failure_kind`** — when a run fails with a classified reason
   (`auth`, `rate_limit`, `model_not_found`, `quota`), skilltest maps it to a
@@ -74,11 +74,17 @@ oneharness run --harness <H> --model <M> --compact --events \
   [--history --history-dir <dir> --history-name <name>]
 ```
 
-with a constructed prompt on stdin, then reads `results[0]`: it requires
-`status == "ok"` and uses `text`, `session_id`, `usage`, `events`, and
-`history_file`. A non-`ok` status becomes a provider error, classified by
+with a constructed prompt on stdin, then selects the settled successful result
+of a fallback chain. Multiple successful results are a provider error. It
+requires `status == "ok"` and consumes `text`, `structured`, `schema_valid`,
+`session_id`, `usage`, `events`, and `history_file`. A non-`ok` status becomes a provider error, classified by
 `failure_kind` when set and otherwise from the `status` (`timeout` →
 `ProviderErrorKind::Timeout`); see [structured errors](schema.md#structured-errors).
+
+Judges receive `--schema` via oneharness native or prompt delivery, retained throughout
+oneharness retries and cleaned up afterward. Only `schema_valid: true` with a
+usable verdict authorizes structured data; the text backstop selects the last
+complete verdict object of the requested kind.
 
 **Approval mode.** skilltest passes no `--mode`, so oneharness applies its own
 default approval mode (v0.3.0+ normalized `--mode` across harnesses — a breaking

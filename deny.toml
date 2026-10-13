@@ -4,13 +4,7 @@
 [advisories]
 version = 2
 yanked = "deny"
-ignore = [
-    # Temporary, authorized by the user on 2026-10-12: `unsafe-libyaml` is
-    # unmaintained (informational, no fixed version), reached through
-    # `serde_yaml` / `serde_yaml_ng`. The planned move to `serde-saphyr`, a
-    # safe-Rust parser (plan authoring:serde-yaml-replacement), removes this entry.
-    "RUSTSEC-2024-0449",
-]
+ignore = []
 
 
 [licenses]
@@ -29,6 +23,15 @@ allow = [
 confidence-threshold = 0.9
 
 [bans]
+deny = [
+    { name = "serde_yaml", reason = "RUSTSEC-2024-0449: avoid unmaintained libyaml translations; use serde-saphyr" },
+    { name = "serde_yaml_ng", reason = "RUSTSEC-2024-0449: avoid unmaintained libyaml translations; use serde-saphyr" },
+    { name = "serde_norway", reason = "RUSTSEC-2024-0449: avoid unmaintained libyaml translations; use serde-saphyr" },
+    { name = "serde_yml", reason = "RUSTSEC-2024-0449: avoid unmaintained libyaml translations; use serde-saphyr" },
+    { name = "unsafe-libyaml", reason = "RUSTSEC-2024-0449: avoid unmaintained libyaml translations; use serde-saphyr" },
+    { name = "unsafe-libyaml-norway", reason = "RUSTSEC-2024-0449: avoid unmaintained libyaml translations; use serde-saphyr" },
+    { name = "libyml", reason = "RUSTSEC-2024-0449: avoid unmaintained libyaml translations; use serde-saphyr" },
+]
 multiple-versions = "warn"
 
 [sources]

@@ -81,9 +81,16 @@ pub fn load_skill(dir: &Path) -> Result<SkillDefinition> {
     })?;
     let (fm, body) = split_frontmatter(&text);
     let frontmatter: Frontmatter = match fm {
-        Some(fm) => serde_yaml::from_str(fm).map_err(|source| Error::Yaml {
+        Some(fm) => serde_saphyr::from_str_with_options(fm, {
+            let mut options = serde_saphyr::Options::default();
+            options.strict_booleans = true;
+            options.merge_keys = serde_saphyr::MergeKeyPolicy::Error;
+            options.with_snippet = false;
+            options
+        })
+        .map_err(|source| Error::Yaml {
             path: skill_md.clone(),
-            source,
+            message: source.to_string(),
         })?,
         None => Frontmatter {
             name: None,
@@ -131,7 +138,13 @@ pub fn validate_skill(dir: &Path) -> Result<Vec<Finding>> {
         return Ok(findings);
     };
 
-    match serde_yaml::from_str::<Frontmatter>(fm) {
+    match serde_saphyr::from_str_with_options::<Frontmatter>(fm, {
+        let mut options = serde_saphyr::Options::default();
+        options.strict_booleans = true;
+        options.merge_keys = serde_saphyr::MergeKeyPolicy::Error;
+        options.with_snippet = false;
+        options
+    }) {
         Ok(frontmatter) => {
             match frontmatter.name.as_deref().map(str::trim) {
                 None | Some("") => findings.push(Finding::new(

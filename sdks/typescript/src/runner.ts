@@ -25,6 +25,7 @@ import {
   SkilltestUsageError,
   providerErrorFor,
 } from "./errors.js";
+import type { ConfigOverrides } from "./generated/config_overrides.js";
 import type { ReportError } from "./generated/error.js";
 import type { Report } from "./generated/report.js";
 import type { ValidationReport } from "./generated/validation.js";
@@ -42,6 +43,8 @@ export const ENV_PROVIDER = "SKILLTEST_PROVIDER";
 export const ENV_ONEHARNESS_BIN = "SKILLTEST_ONEHARNESS_BIN";
 
 export interface RunOptions {
+  /** Full schema-derived partial run settings, delivered through CLI --set. */
+  configOverrides?: ConfigOverrides;
   /** Path to the `skilltest` binary (default: `$SKILLTEST_BIN` or `skilltest`). */
   bin?: string;
   /** Provider command (default: `$SKILLTEST_PROVIDER`). A string or argv array. */
@@ -238,11 +241,14 @@ export function buildRunArgs(
   if (options.config) args.push("--config", options.config);
   args.push("run", ...caseArgs, "--format", format);
 
+  for (const [key, value] of Object.entries(options.configOverrides ?? {})) {
+    if (value !== undefined) args.push("--set", `${key}=${JSON.stringify(value)}`);
+  }
   const provider = resolveProvider(options.provider);
   if (provider !== undefined) args.push("--provider", provider);
   for (const platform of options.platforms ?? []) args.push("--platform", platform);
   for (const model of options.models ?? []) args.push("--model", model);
-  if (options.judgeModel) args.push("--judge-model", options.judgeModel);
+  if (options.judgeModel !== undefined) args.push("--judge-model", options.judgeModel);
   if (options.maxTurns !== undefined) args.push("--max-turns", String(options.maxTurns));
   args.push(...mockArgs);
   return args;

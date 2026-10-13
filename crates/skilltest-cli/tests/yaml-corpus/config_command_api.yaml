@@ -1,0 +1,23 @@
+# Synthetic: the config variants no committed config uses — the `command`
+# provider and the `api` judge with every field, plus config-level mocks.
+provider:
+  kind: command
+  command: ["skilltest-fake-provider", "--flag"]
+platforms: [demo, other]
+models:
+  - fake
+judge_model: fake-judge
+max_turns: 3
+judge:
+  kind: api
+  vendor: anthropic
+  api_key_env: ANTHROPIC_API_KEY
+  base_url: https://example.invalid/v1
+  timeout_secs: 45
+  curl_bin: /usr/bin/curl
+  strict_json: false
+mocks:
+  - name: shared
+    match: { tool: bash, contains: "git push" }
+    deny: { message: blocked suite-wide }
+spy: true

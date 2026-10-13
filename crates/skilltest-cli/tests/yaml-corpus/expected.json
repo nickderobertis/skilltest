@@ -1,0 +1,1147 @@
+{
+  "crates/skilltest-cli/tests/yaml-corpus/case_every_variant.yaml": {
+    "evals": [
+      {
+        "criterion": "the deploy finished",
+        "expected": false,
+        "name": "b",
+        "type": "boolean"
+      },
+      {
+        "comparator": "gte",
+        "criterion": "how concise",
+        "max": 10.0,
+        "min": 0.0,
+        "name": "n1",
+        "threshold": 7.0,
+        "type": "numeric"
+      },
+      {
+        "comparator": "lt",
+        "criterion": "how warm",
+        "max": 1.5,
+        "min": -1.5,
+        "threshold": 0.5,
+        "type": "numeric"
+      },
+      {
+        "comparator": "gt",
+        "criterion": "alias gt",
+        "max": 1.0,
+        "min": 0.0,
+        "threshold": 0.5,
+        "type": "numeric"
+      },
+      {
+        "comparator": "lte",
+        "criterion": "word lte",
+        "max": 1.0,
+        "min": 0.0,
+        "threshold": 0.5,
+        "type": "numeric"
+      },
+      {
+        "mock": "text_stub",
+        "name": "pushed",
+        "times": 1,
+        "type": "called",
+        "where": {
+          "command": "git push"
+        }
+      },
+      {
+        "mock": "rw",
+        "type": "called",
+        "where": {
+          "file_path": {
+            "contains": "hosts"
+          }
+        }
+      },
+      {
+        "mock": "text_deny",
+        "name": "never",
+        "type": "not_called",
+        "where": {
+          "command": {
+            "pattern": "rm\\s+-rf"
+          }
+        }
+      }
+    ],
+    "input": "Deploy the app.\nThen report.\n",
+    "mocks": [
+      {
+        "match": {
+          "contains": "git push",
+          "tool": "bash"
+        },
+        "name": "text_stub",
+        "stub": "Everything up-to-date"
+      },
+      {
+        "match": {
+          "pattern": "^make\\b",
+          "tool": "bash"
+        },
+        "name": "full_stub",
+        "stub": {
+          "exit_code": 2,
+          "output": "make: done"
+        }
+      },
+      {
+        "match": {
+          "contains": "jobctl"
+        },
+        "name": "seq_stub",
+        "stub": [
+          "queued",
+          {
+            "exit_code": 1,
+            "output": "failed"
+          },
+          {
+            "exit_code": 0,
+            "output": "passed"
+          }
+        ]
+      },
+      {
+        "deny": "destructive commands are blocked",
+        "match": {
+          "contains": "rm -rf"
+        },
+        "name": "text_deny"
+      },
+      {
+        "deny": {
+          "message": "force-push blocked"
+        },
+        "match": {
+          "input": {
+            "command": "git push --force"
+          },
+          "tool": "bash"
+        },
+        "name": "full_deny"
+      },
+      {
+        "match": {
+          "input": {
+            "file_path": {
+              "equals": "/etc/hosts"
+            },
+            "mode": {
+              "pattern": "^r"
+            },
+            "other": {
+              "contains": "x"
+            }
+          },
+          "tool": "read"
+        },
+        "name": "rw",
+        "rewrite": {
+          "alpha": [
+            true,
+            null,
+            1.5,
+            "s"
+          ],
+          "file_path": "fixtures/hosts",
+          "nested": {
+            "a": {
+              "c": []
+            },
+            "b": 2
+          },
+          "zeta": 1
+        }
+      },
+      {
+        "match": {
+          "tool": "bash"
+        }
+      }
+    ],
+    "name": "every_variant",
+    "skill": "<repo>/crates/skilltest-cli/tests/yaml-corpus/../skills/deployer",
+    "spy": true,
+    "user": {
+      "done_when": "the deploy is reported",
+      "max_turns": 4,
+      "persona": "You are an operator who folds lines.\n"
+    }
+  },
+  "crates/skilltest-cli/tests/yaml-corpus/config_command_api.yaml": {
+    "judge": {
+      "api_key_env": "ANTHROPIC_API_KEY",
+      "base_url": "https://example.invalid/v1",
+      "curl_bin": "/usr/bin/curl",
+      "kind": "api",
+      "strict_json": false,
+      "timeout_secs": 45,
+      "vendor": "anthropic"
+    },
+    "judge_model": "fake-judge",
+    "max_turns": 3,
+    "mocks": [
+      {
+        "deny": {
+          "message": "blocked suite-wide"
+        },
+        "match": {
+          "contains": "git push",
+          "tool": "bash"
+        },
+        "name": "shared"
+      }
+    ],
+    "models": [
+      "fake"
+    ],
+    "platforms": [
+      "demo",
+      "other"
+    ],
+    "provider": {
+      "command": [
+        "skilltest-fake-provider",
+        "--flag"
+      ],
+      "kind": "command"
+    },
+    "spy": true
+  },
+  "crates/skilltest-cli/tests/yaml-corpus/config_oneharness.yaml": {
+    "judge": {
+      "api_key_env": null,
+      "base_url": null,
+      "curl_bin": "curl",
+      "kind": "api",
+      "strict_json": true,
+      "timeout_secs": 60,
+      "vendor": "openai"
+    },
+    "judge_model": "",
+    "max_turns": 8,
+    "mocks": [],
+    "models": [
+      "claude-opus-4-8"
+    ],
+    "platforms": [
+      "claude-code"
+    ],
+    "provider": {
+      "bin": "/opt/oneharness",
+      "history": true,
+      "judge_harness": "codex",
+      "kind": "oneharness",
+      "timeout_secs": 300
+    },
+    "spy": false
+  },
+  "crates/skilltest-cli/tests/yaml-corpus/python.json": [
+    {
+      "match": {
+        "contains": "git push"
+      },
+      "name": "__mock_1",
+      "stub": {
+        "exit_code": 0,
+        "output": "Everything up-to-date"
+      }
+    },
+    {
+      "match": {
+        "pattern": "^make\\b",
+        "tool": "bash"
+      },
+      "name": "__mock_2",
+      "stub": {
+        "exit_code": 2,
+        "output": "done"
+      }
+    },
+    {
+      "match": {
+        "contains": "jobctl status"
+      },
+      "name": "__mock_3",
+      "stub": [
+        "queued",
+        {
+          "exit_code": 1,
+          "output": "failed"
+        },
+        "passed"
+      ]
+    },
+    {
+      "deny": "destructive commands are blocked",
+      "match": {
+        "contains": "rm -rf"
+      },
+      "name": "__mock_4"
+    },
+    {
+      "deny": "no force",
+      "match": {
+        "input": {
+          "command": "git push --force"
+        },
+        "tool": "bash"
+      },
+      "name": "__mock_5"
+    },
+    {
+      "match": {
+        "input": {
+          "file_path": "/etc/hosts"
+        },
+        "tool": "read"
+      },
+      "name": "__mock_6",
+      "rewrite": {
+        "alpha": [
+          true,
+          null,
+          1.5,
+          "s",
+          "yes",
+          "010"
+        ],
+        "big": 9223372036854775808,
+        "file_path": "fixtures/hosts",
+        "nested": {
+          "a": {
+            "c": []
+          },
+          "b": 2
+        },
+        "unicode": "café — ü",
+        "zeta": 1
+      }
+    }
+  ],
+  "crates/skilltest-cli/tests/yaml-corpus/typescript.json": [
+    {
+      "match": {
+        "contains": "git push"
+      },
+      "name": "__mock_1",
+      "stub": {
+        "exit_code": 0,
+        "output": "Everything up-to-date"
+      }
+    },
+    {
+      "match": {
+        "pattern": "^make\\b",
+        "tool": "bash"
+      },
+      "name": "__mock_2",
+      "stub": {
+        "exit_code": 2,
+        "output": "done"
+      }
+    },
+    {
+      "match": {
+        "contains": "jobctl status"
+      },
+      "name": "__mock_3",
+      "stub": [
+        "queued",
+        {
+          "exit_code": 1,
+          "output": "failed"
+        },
+        "passed"
+      ]
+    },
+    {
+      "deny": "destructive commands are blocked",
+      "match": {
+        "contains": "rm -rf"
+      },
+      "name": "__mock_4"
+    },
+    {
+      "deny": "no force",
+      "match": {
+        "input": {
+          "command": "git push --force"
+        },
+        "tool": "bash"
+      },
+      "name": "__mock_5"
+    },
+    {
+      "match": {
+        "input": {
+          "file_path": "/etc/hosts"
+        },
+        "tool": "read"
+      },
+      "name": "__mock_6",
+      "rewrite": {
+        "alpha": [
+          true,
+          null,
+          1.5,
+          "s",
+          "yes",
+          "010"
+        ],
+        "big": 9223372036854776000,
+        "file_path": "fixtures/hosts",
+        "nested": {
+          "a": {
+            "c": []
+          },
+          "b": 2
+        },
+        "unicode": "café — ü",
+        "zeta": 1
+      }
+    }
+  ],
+  "examples/skilltest.yaml": {
+    "judge_model": "haiku",
+    "max_turns": 8,
+    "mocks": [],
+    "models": [
+      "sonnet"
+    ],
+    "platforms": [
+      "claude-code"
+    ],
+    "provider": {
+      "bin": "oneharness",
+      "history": true,
+      "judge_harness": "claude-code",
+      "kind": "oneharness",
+      "timeout_secs": 120
+    },
+    "spy": false
+  },
+  "plugins/pytest/tests/collected/deploy.skilltest.yaml": {
+    "evals": [
+      {
+        "criterion": "the reply mentions `Everything up-to-date`",
+        "expected": true,
+        "name": "canned-output-surfaced",
+        "type": "boolean"
+      },
+      {
+        "mock": "push",
+        "times": 1,
+        "type": "called"
+      },
+      {
+        "mock": "git",
+        "name": "both-git-calls-observed",
+        "times": 2,
+        "type": "called"
+      },
+      {
+        "mock": "danger",
+        "name": "the-deny-intercepted",
+        "times": 1,
+        "type": "called"
+      },
+      {
+        "mock": "push",
+        "type": "not_called",
+        "where": {
+          "command": {
+            "contains": "--force"
+          }
+        }
+      }
+    ],
+    "input": "Deploy the app",
+    "mocks": [
+      {
+        "match": {
+          "pattern": "git push( --force)?\\b",
+          "tool": "bash"
+        },
+        "name": "push",
+        "stub": "Everything up-to-date"
+      },
+      {
+        "deny": "destructive commands are blocked",
+        "match": {
+          "contains": "rm -rf"
+        },
+        "name": "danger"
+      },
+      {
+        "match": {
+          "pattern": "\\bgit\\b",
+          "tool": "bash"
+        },
+        "name": "git"
+      }
+    ],
+    "name": "collected_deploy",
+    "skill": "<repo>/plugins/pytest/tests/collected/./deployer"
+  },
+  "plugins/pytest/tests/collected/deployer/SKILL.md": {
+    "description": "Deploys the app by pushing to git and reporting the outcome.",
+    "instructions": "# Deployer\n\nDeploy the current app: push the branch, check the working tree, clean the\nbuild directory, and report the outcome in one sentence.\n\n<!-- fake-reply: Deployment finished. -->\n<!-- fake-tool: bash git push origin main -->\n<!-- fake-tool: bash git status -->\n<!-- fake-tool: bash rm -rf /tmp/build -->",
+    "name": "deployer"
+  },
+  "plugins/pytest/tests/collected/greet.skilltest.yaml": {
+    "evals": [
+      {
+        "criterion": "the reply greets `Dr. Smith` by name",
+        "expected": true,
+        "name": "names-the-patient",
+        "type": "boolean"
+      }
+    ],
+    "input": "Greet Dr. Smith.",
+    "name": "collected_greet",
+    "skill": "<repo>/plugins/pytest/tests/collected/./greeter"
+  },
+  "plugins/pytest/tests/collected/greeter/SKILL.md": {
+    "description": "A local greeter skill used to exercise pytest auto-collection.",
+    "instructions": "# Greeter\n\nGreet the user by name.\n\n<!-- fake-reply: Hello, Dr. Smith! Welcome to the clinic. -->",
+    "name": "greeter"
+  },
+  "plugins/vitest/tests/collected/deploy.skilltest.yaml": {
+    "evals": [
+      {
+        "criterion": "the reply mentions `Everything up-to-date`",
+        "expected": true,
+        "name": "canned-output-surfaced",
+        "type": "boolean"
+      },
+      {
+        "mock": "push",
+        "times": 1,
+        "type": "called"
+      },
+      {
+        "mock": "git",
+        "name": "both-git-calls-observed",
+        "times": 2,
+        "type": "called"
+      },
+      {
+        "mock": "danger",
+        "name": "the-deny-intercepted",
+        "times": 1,
+        "type": "called"
+      },
+      {
+        "mock": "push",
+        "type": "not_called",
+        "where": {
+          "command": {
+            "contains": "--force"
+          }
+        }
+      }
+    ],
+    "input": "Deploy the app",
+    "mocks": [
+      {
+        "match": {
+          "pattern": "git push( --force)?\\b",
+          "tool": "bash"
+        },
+        "name": "push",
+        "stub": "Everything up-to-date"
+      },
+      {
+        "deny": "destructive commands are blocked",
+        "match": {
+          "contains": "rm -rf"
+        },
+        "name": "danger"
+      },
+      {
+        "match": {
+          "pattern": "\\bgit\\b",
+          "tool": "bash"
+        },
+        "name": "git"
+      }
+    ],
+    "name": "collected_deploy",
+    "skill": "<repo>/plugins/vitest/tests/collected/./deployer"
+  },
+  "plugins/vitest/tests/collected/deployer/SKILL.md": {
+    "description": "Deploys the app by pushing to git and reporting the outcome.",
+    "instructions": "# Deployer\n\nDeploy the current app: push the branch, check the working tree, clean the\nbuild directory, and report the outcome in one sentence.\n\n<!-- fake-reply: Deployment finished. -->\n<!-- fake-tool: bash git push origin main -->\n<!-- fake-tool: bash git status -->\n<!-- fake-tool: bash rm -rf /tmp/build -->",
+    "name": "deployer"
+  },
+  "plugins/vitest/tests/collected/greet.skilltest.yaml": {
+    "evals": [
+      {
+        "criterion": "the reply greets `Dr. Smith` by name",
+        "expected": true,
+        "name": "names-the-patient",
+        "type": "boolean"
+      }
+    ],
+    "input": "Greet Dr. Smith.",
+    "name": "collected_greet",
+    "skill": "<repo>/plugins/vitest/tests/collected/./greeter"
+  },
+  "plugins/vitest/tests/collected/greeter/SKILL.md": {
+    "description": "A local greeter skill used to exercise vitest auto-discovery.",
+    "instructions": "# Greeter\n\nGreet the user by name.\n\n<!-- fake-reply: Hello, Dr. Smith! Welcome to the clinic. -->",
+    "name": "greeter"
+  },
+  "screenshots/fixture/skills/broken/SKILL.md": {
+    "description": "",
+    "instructions": "# Broken\n\nThis skill is intentionally invalid — its frontmatter has no `description` — so\nthe `validate` screenshot shows a real finding alongside the valid skills.",
+    "name": "broken"
+  },
+  "screenshots/fixture/skills/deployer/SKILL.md": {
+    "description": "Deploys the app by pushing to git and reporting the outcome in one sentence.",
+    "instructions": "# Deployer\n\nDeploy the current app: push the branch, check the working tree, clean the build\ndirectory, and report the outcome in a single sentence.\n\n<!-- fake-reply: Deployment finished — pushed to origin. -->\n<!-- fake-tool: bash git push origin main -->\n<!-- fake-tool: bash git status -->\n<!-- fake-tool: bash rm -rf /tmp/build -->",
+    "name": "deployer"
+  },
+  "screenshots/fixture/skills/scheduler/SKILL.md": {
+    "description": "Greets a patient by name and confirms their appointment in one warm sentence.",
+    "instructions": "# Scheduler\n\nYou are a clinic's scheduling assistant. Greet the patient by their title and\nsurname, then confirm their appointment in a single warm, professional sentence.\n\n<!-- fake-reply: Hello, Dr. Smith! Your appointment today at 3 PM is confirmed. -->",
+    "name": "scheduler"
+  },
+  "tests/fixtures/cases/booking_multiturn.yaml": {
+    "evals": [
+      {
+        "criterion": "the assistant confirmed the appointment (`confirmed`)",
+        "expected": true,
+        "name": "confirms-appointment",
+        "type": "boolean"
+      }
+    ],
+    "input": "I'd like to confirm my appointment, please.",
+    "name": "booking_multiturn",
+    "skill": "<repo>/tests/fixtures/cases/../skills/greeter",
+    "user": {
+      "done_when": "the conversation has reached turns>=2",
+      "max_turns": 4,
+      "persona": "You are a terse patient confirming an appointment.\nsay: Yes, please go ahead.\n"
+    }
+  },
+  "tests/fixtures/cases/deploy_plain.yaml": {
+    "evals": [
+      {
+        "criterion": "the reply says `Deployment finished.`",
+        "expected": true,
+        "type": "boolean"
+      }
+    ],
+    "input": "Deploy the app",
+    "name": "deploy_plain",
+    "skill": "<repo>/tests/fixtures/cases/../skills/deployer"
+  },
+  "tests/fixtures/cases/greet_fail.yaml": {
+    "evals": [
+      {
+        "criterion": "the reply contains a `goodbye`",
+        "expected": true,
+        "name": "says-goodbye",
+        "type": "boolean"
+      }
+    ],
+    "input": "Greet Dr. Smith.",
+    "name": "greet_fail",
+    "skill": "<repo>/tests/fixtures/cases/../skills/greeter"
+  },
+  "tests/fixtures/cases/greet_numeric.yaml": {
+    "evals": [
+      {
+        "comparator": "gte",
+        "criterion": "reply mentions `Dr. Smith` and the `appointment`",
+        "max": 10.0,
+        "min": 0.0,
+        "name": "coverage",
+        "threshold": 7.0,
+        "type": "numeric"
+      }
+    ],
+    "input": "Greet Dr. Smith about today's appointment.",
+    "name": "greet_numeric",
+    "skill": "<repo>/tests/fixtures/cases/../skills/greeter"
+  },
+  "tests/fixtures/cases/greet_pass.yaml": {
+    "evals": [
+      {
+        "criterion": "the reply greets `Dr. Smith` by name",
+        "expected": true,
+        "name": "names-the-patient",
+        "type": "boolean"
+      },
+      {
+        "criterion": "the reply states the appointment is `confirmed`",
+        "expected": true,
+        "name": "confirms-appointment",
+        "type": "boolean"
+      }
+    ],
+    "input": "Greet Dr. Smith, who has an appointment today.",
+    "name": "greet_pass",
+    "skill": "<repo>/tests/fixtures/cases/../skills/greeter"
+  },
+  "tests/fixtures/cases/mock_stub.yaml": {
+    "evals": [
+      {
+        "criterion": "the reply mentions `Everything up-to-date`",
+        "expected": true,
+        "name": "canned-output-surfaced",
+        "type": "boolean"
+      },
+      {
+        "mock": "push",
+        "times": 1,
+        "type": "called"
+      },
+      {
+        "mock": "git",
+        "name": "both-git-calls-observed",
+        "times": 2,
+        "type": "called"
+      },
+      {
+        "mock": "push",
+        "type": "not_called",
+        "where": {
+          "command": {
+            "contains": "--force"
+          }
+        }
+      }
+    ],
+    "input": "Deploy the app",
+    "mocks": [
+      {
+        "match": {
+          "pattern": "git push( --force)?\\b",
+          "tool": "bash"
+        },
+        "name": "push",
+        "stub": "Everything up-to-date"
+      },
+      {
+        "match": {
+          "pattern": "\\bgit\\b",
+          "tool": "bash"
+        },
+        "name": "git"
+      }
+    ],
+    "name": "mock_stub",
+    "skill": "<repo>/tests/fixtures/cases/../skills/deployer"
+  },
+  "tests/fixtures/cases/mock_violation.yaml": {
+    "evals": [
+      {
+        "mock": "danger",
+        "type": "not_called"
+      }
+    ],
+    "input": "Deploy the app",
+    "mocks": [
+      {
+        "deny": "destructive commands are blocked in tests",
+        "match": {
+          "contains": "rm -rf"
+        },
+        "name": "danger"
+      }
+    ],
+    "name": "mock_violation",
+    "skill": "<repo>/tests/fixtures/cases/../skills/deployer"
+  },
+  "tests/fixtures/cases/tool_events.yaml": {
+    "evals": [
+      {
+        "criterion": "the reply says it `committed` or `edited` the change",
+        "expected": true,
+        "name": "confirms-the-work",
+        "type": "boolean"
+      }
+    ],
+    "input": "Please update config.yaml and commit the change.",
+    "name": "tool_events",
+    "skill": "<repo>/tests/fixtures/cases/../skills/tooluser"
+  },
+  "tests/fixtures/live/cases/mock_deny.yaml": {
+    "evals": [
+      {
+        "mock": "danger",
+        "type": "called"
+      },
+      {
+        "criterion": "the assistant's reply indicates the command was blocked, denied, or could not be run",
+        "expected": true,
+        "name": "block-was-reported",
+        "type": "boolean"
+      }
+    ],
+    "input": "Run the marked command and report its output.",
+    "mocks": [
+      {
+        "deny": "this command is blocked by the skilltest harness",
+        "match": {
+          "contains": "MARKER"
+        },
+        "name": "danger"
+      }
+    ],
+    "name": "live_mock_deny",
+    "skill": "<repo>/tests/fixtures/live/cases/../skills/toolrunner"
+  },
+  "tests/fixtures/live/cases/mock_stub.yaml": {
+    "evals": [
+      {
+        "mock": "marker",
+        "type": "called"
+      },
+      {
+        "criterion": "the assistant's reply reports the command output as `CANNED-BY-SKILLTEST` (and NOT as MARKER-LIVE)",
+        "expected": true,
+        "name": "canned-output-reported",
+        "type": "boolean"
+      }
+    ],
+    "input": "Run the marked command and report its output.",
+    "mocks": [
+      {
+        "match": {
+          "contains": "MARKER"
+        },
+        "name": "marker",
+        "stub": "CANNED-BY-SKILLTEST"
+      }
+    ],
+    "name": "live_mock_stub",
+    "skill": "<repo>/tests/fixtures/live/cases/../skills/toolrunner"
+  },
+  "tests/fixtures/live/cases/multiturn.yaml": {
+    "evals": [
+      {
+        "criterion": "the assistant produced a reply to the user on each of its turns",
+        "expected": true,
+        "name": "assistant-responded",
+        "type": "boolean"
+      }
+    ],
+    "input": "hello",
+    "name": "live_multiturn",
+    "skill": "<repo>/tests/fixtures/live/cases/../skills/echo-ok",
+    "user": {
+      "max_turns": 2,
+      "persona": "You are a user. Reply to the assistant with exactly the single word: continue"
+    }
+  },
+  "tests/fixtures/live/cases/pong.yaml": {
+    "evals": [
+      {
+        "criterion": "the assistant's reply is the word 'pong' (case-insensitive), with no other words",
+        "expected": true,
+        "name": "replied-pong",
+        "type": "boolean"
+      },
+      {
+        "comparator": "gte",
+        "criterion": "how concise and on-instruction is the reply (a one-word answer scores highest)",
+        "max": 10.0,
+        "min": 0.0,
+        "name": "conciseness",
+        "threshold": 4.0,
+        "type": "numeric"
+      }
+    ],
+    "input": "ping",
+    "name": "live_pong",
+    "skill": "<repo>/tests/fixtures/live/cases/../skills/pong"
+  },
+  "tests/fixtures/live/cases/smoke.yaml": {
+    "evals": [
+      {
+        "criterion": "the assistant's reply includes the word 'pong' (case-insensitive), even if the harness wraps it in a session banner, tool output, or other framing text",
+        "expected": true,
+        "name": "replied-pong",
+        "type": "boolean"
+      }
+    ],
+    "input": "ping",
+    "name": "live_smoke",
+    "skill": "<repo>/tests/fixtures/live/cases/../skills/pong"
+  },
+  "tests/fixtures/live/cases/spy_only.yaml": {
+    "evals": [
+      {
+        "mock": "marker",
+        "type": "called"
+      },
+      {
+        "criterion": "the assistant's reply reports the command output as MARKER-LIVE",
+        "expected": true,
+        "name": "real-output-reported",
+        "type": "boolean"
+      }
+    ],
+    "input": "Run the marked command and report its output.",
+    "mocks": [
+      {
+        "match": {
+          "contains": "MARKER"
+        },
+        "name": "marker"
+      }
+    ],
+    "name": "live_spy_only",
+    "skill": "<repo>/tests/fixtures/live/cases/../skills/toolrunner"
+  },
+  "tests/fixtures/live/skills/echo-ok/SKILL.md": {
+    "description": "Replies with the single word \"ok\" to every user message.",
+    "instructions": "# Echo OK\n\nReply to every user message with exactly the single lowercase word:\n\nok\n\nDo not add anything else.",
+    "name": "echo-ok"
+  },
+  "tests/fixtures/live/skills/pong/SKILL.md": {
+    "description": "Always replies with the single word \"pong\" and nothing else.",
+    "instructions": "# Pong\n\nNo matter what the user says, reply with exactly the single lowercase word:\n\npong\n\nDo not add any other words, punctuation, quotation marks, or explanation.",
+    "name": "pong"
+  },
+  "tests/fixtures/live/skills/toolrunner/SKILL.md": {
+    "description": "Runs one marked shell command and reports its output verbatim.",
+    "instructions": "# Tool runner\n\nYou MUST use your shell tool for this task. Run exactly this one command:\n\n    printf 'MARKER-%s' 'LIVE'\n\nThen reply with one short sentence that reports the command's output verbatim\n(quote the exact text the command printed). Do not run any other commands, and\ndo not guess the output — report only what the tool actually returned.",
+    "name": "toolrunner"
+  },
+  "tests/fixtures/oneharness/cases/mock_rewrite.yaml": {
+    "evals": [
+      {
+        "mock": "redirect",
+        "times": 1,
+        "type": "called"
+      }
+    ],
+    "input": "Deploy the app",
+    "mocks": [
+      {
+        "match": {
+          "input": {
+            "command": {
+              "contains": "git status"
+            }
+          },
+          "tool": "bash"
+        },
+        "name": "redirect",
+        "rewrite": {
+          "command": "echo REDIRECTED-OUTPUT"
+        }
+      }
+    ],
+    "name": "oh_mock_rewrite",
+    "skill": "<repo>/tests/fixtures/oneharness/cases/../../skills/deployer"
+  },
+  "tests/fixtures/oneharness/cases/mock_stub.yaml": {
+    "evals": [
+      {
+        "mock": "push",
+        "times": 1,
+        "type": "called"
+      },
+      {
+        "mock": "git",
+        "name": "both-git-calls-observed",
+        "times": 2,
+        "type": "called"
+      },
+      {
+        "mock": "push",
+        "type": "not_called",
+        "where": {
+          "command": {
+            "contains": "--force"
+          }
+        }
+      },
+      {
+        "criterion": "the reply reports the deploy finished",
+        "expected": true,
+        "type": "boolean"
+      }
+    ],
+    "input": "Deploy the app",
+    "mocks": [
+      {
+        "match": {
+          "pattern": "git push( --force)?\\b",
+          "tool": "bash"
+        },
+        "name": "push",
+        "stub": "Everything up-to-date"
+      },
+      {
+        "match": {
+          "pattern": "\\bgit\\b",
+          "tool": "bash"
+        },
+        "name": "git"
+      }
+    ],
+    "name": "oh_mock_stub",
+    "skill": "<repo>/tests/fixtures/oneharness/cases/../../skills/deployer"
+  },
+  "tests/fixtures/oneharness/cases/mock_violation.yaml": {
+    "evals": [
+      {
+        "mock": "danger",
+        "type": "not_called"
+      }
+    ],
+    "input": "Deploy the app",
+    "mocks": [
+      {
+        "deny": "destructive commands are blocked",
+        "match": {
+          "contains": "rm -rf"
+        },
+        "name": "danger"
+      }
+    ],
+    "name": "oh_mock_violation",
+    "skill": "<repo>/tests/fixtures/oneharness/cases/../../skills/deployer"
+  },
+  "tests/fixtures/oneharness/cases/resume_multiturn.yaml": {
+    "evals": [
+      {
+        "criterion": "the assistant replied on each of its turns",
+        "expected": true,
+        "type": "boolean"
+      }
+    ],
+    "input": "I'd like to confirm my appointment, please.",
+    "name": "oh_resume_multiturn",
+    "skill": "<repo>/tests/fixtures/oneharness/cases/../../skills/greeter",
+    "user": {
+      "max_turns": 2,
+      "persona": "You are a terse patient confirming an appointment."
+    }
+  },
+  "tests/fixtures/oneharness/cases/spy_plain.yaml": {
+    "evals": [
+      {
+        "criterion": "the reply reports the deploy finished",
+        "expected": true,
+        "type": "boolean"
+      }
+    ],
+    "input": "Deploy the app",
+    "name": "oh_spy_plain",
+    "skill": "<repo>/tests/fixtures/oneharness/cases/../../skills/deployer"
+  },
+  "tests/fixtures/sequence/mock_stub_sequence.yaml": {
+    "evals": [
+      {
+        "mock": "status",
+        "times": 4,
+        "type": "called"
+      },
+      {
+        "criterion": "the job reported `build-42: queued`, then `build-42: failed (retrying)`, then `build-42: passed`",
+        "expected": true,
+        "name": "every-response-reached-the-model",
+        "type": "boolean"
+      }
+    ],
+    "input": "Watch build-42 until it settles.",
+    "mocks": [
+      {
+        "match": {
+          "contains": "jobctl status",
+          "tool": "bash"
+        },
+        "name": "status",
+        "stub": [
+          "build-42: queued",
+          {
+            "exit_code": 1,
+            "output": "build-42: failed (retrying)"
+          },
+          "build-42: passed"
+        ]
+      }
+    ],
+    "name": "mock_stub_sequence",
+    "skill": "<repo>/tests/fixtures/sequence/../skills/poller",
+    "user": {
+      "max_turns": 2,
+      "persona": "You are an operator waiting on a build.\nsay: Check again, please.\n"
+    }
+  },
+  "tests/fixtures/skills/deployer/SKILL.md": {
+    "description": "Deploys the app by pushing to git and reporting the outcome.",
+    "instructions": "# Deployer\n\nDeploy the current app: push the branch, check the working tree, clean the\nbuild directory, and report the outcome in one sentence.\n\n<!-- fake-reply: Deployment finished. -->\n<!-- fake-tool: bash git push origin main -->\n<!-- fake-tool: bash git status -->\n<!-- fake-tool: bash rm -rf /tmp/build -->",
+    "name": "deployer"
+  },
+  "tests/fixtures/skills/greeter/SKILL.md": {
+    "description": "Greets a named person and confirms their appointment in one sentence.",
+    "instructions": "# Greeter\n\nGreet the user by name and confirm their appointment in a single, warm sentence.\nAlways use the person's title and surname.\n\n<!-- fake-reply: Hello, Dr. Smith! Your appointment is confirmed. -->",
+    "name": "greeter"
+  },
+  "tests/fixtures/skills/invalid/SKILL.md": {
+    "description": "",
+    "instructions": "# Intentionally invalid\n\nThis skill is missing a `description` in its frontmatter; the `validate`\nsubcommand and its e2e test rely on that to exercise the failure path.",
+    "name": "invalid"
+  },
+  "tests/fixtures/skills/manytools/SKILL.md": {
+    "description": "Emits many tool calls, for exercising the streaming short-circuit path.",
+    "instructions": "# Many Tools\n\nDo the work, emitting a long run of tool calls.\n\n<!-- fake-reply: done -->\n<!-- fake-tools: 4000 -->",
+    "name": "manytools"
+  },
+  "tests/fixtures/skills/poller/SKILL.md": {
+    "description": "Polls a long-running job's status and reports how it is going.",
+    "instructions": "# Poller\n\nCheck the job's status twice per turn and report what each check said.\n\n<!-- fake-reply: Watched the job. -->\n<!-- fake-tool: bash jobctl status build-42 -->\n<!-- fake-tool: bash jobctl status build-42 -->",
+    "name": "poller"
+  },
+  "tests/fixtures/skills/tooluser/SKILL.md": {
+    "description": "Performs a small file edit and a shell commit, then confirms in one sentence.",
+    "instructions": "# Tool User\n\nDo the small task the user asks for, then confirm what you did in a single sentence.\n\n<!-- fake-reply: Done — edited config.yaml and committed the change. -->\n<!-- fake-tool: edit_file config.yaml -->\n<!-- fake-tool: bash git commit -m \"update config\" -->",
+    "name": "tooluser"
+  },
+  "tests/fixtures/smoke/greet.skilltest.yaml": {
+    "evals": [
+      {
+        "criterion": "the reply greets `Dr. Smith` by name",
+        "expected": true,
+        "name": "names-the-patient",
+        "type": "boolean"
+      }
+    ],
+    "input": "Greet Dr. Smith, who has an appointment today.",
+    "name": "bundle_smoke_greet",
+    "skill": "<repo>/tests/fixtures/smoke/./greeter"
+  },
+  "tests/fixtures/smoke/greeter/SKILL.md": {
+    "description": "Greets a named person and confirms their appointment in one sentence.",
+    "instructions": "# Greeter\n\nGreet the user by name and confirm their appointment in a single, warm sentence.\nAlways use the person's title and surname.\n\n<!-- fake-reply: Hello, Dr. Smith! Your appointment is confirmed. -->",
+    "name": "greeter"
+  },
+  "tests/fixtures/stream/manytools.yaml": {
+    "evals": [
+      {
+        "criterion": "the reply says `done`",
+        "expected": true,
+        "name": "done",
+        "type": "boolean"
+      }
+    ],
+    "input": "go",
+    "name": "manytools",
+    "skill": "<repo>/tests/fixtures/stream/../skills/manytools"
+  }
+}

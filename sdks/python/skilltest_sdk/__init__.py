@@ -24,6 +24,8 @@ directory of them), and the pytest plugin auto-discovers ``*.skilltest.yaml``.
 
 from __future__ import annotations
 
+from ._config import Config
+from ._config_overrides import ConfigOverrides
 from .case import (
     Eval,
     MockRefEval,
@@ -93,6 +95,8 @@ __all__ = [
     "BooleanDetail",
     "CallsDetail",
     "CaseRun",
+    "Config",
+    "ConfigOverrides",
     "Eval",
     "EvalOutcome",
     "Matcher",

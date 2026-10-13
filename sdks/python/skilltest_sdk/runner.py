@@ -18,6 +18,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ValidationError
 
+from ._config_overrides import ConfigOverrides
 from ._error import ReportError
 from .case import TestCase
 from .errors import SkilltestError, SkilltestProviderError, SkilltestUsageError
@@ -138,6 +139,7 @@ def run_skill(
     judge_model: str | None = None,
     max_turns: int | None = None,
     config: str | Path | None = None,
+    config_overrides: ConfigOverrides | None = None,
     cwd: str | Path | None = None,
     mocks: Sequence[ToolSpy] = (),
 ) -> Report:
@@ -169,6 +171,7 @@ def run_skill(
             judge_model=judge_model,
             max_turns=max_turns,
             config=config,
+            config_overrides=config_overrides,
             fmt="json",
             mock_args=mock_args,
         )
@@ -237,6 +240,7 @@ def build_run_argv(
     config: str | Path | None,
     fmt: str,
     mock_args: Sequence[str] = (),
+    config_overrides: ConfigOverrides | None = None,
 ) -> list[str]:
     """Build the ``skilltest run`` argv for output format ``fmt`` (``json`` for the
     buffered API, ``json-stream`` for the streaming API). ``case_args`` are the
@@ -247,6 +251,15 @@ def build_run_argv(
     if config is not None:
         argv += ["--config", str(config)]
     argv += ["run", *case_args, "--format", fmt]
+
+    if config_overrides is not None:
+        payload = (
+            config_overrides.model_dump(mode="json", exclude_unset=True)
+            if isinstance(config_overrides, BaseModel)
+            else config_overrides
+        )
+        for key, value in payload.items():
+            argv += ["--set", f"{key}={json.dumps(value, separators=(',', ':'))}"]
 
     resolved_provider = _resolve_provider(provider)
     if resolved_provider is not None:
