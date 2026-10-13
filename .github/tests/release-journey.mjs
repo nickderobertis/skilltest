@@ -296,6 +296,7 @@ for (const [mutation, message] of [
   ["identity", /invalid staged wheel identity/],
   ["payload", /wheel binary differs/],
   ["provider", /wheel contains fake provider/],
+  ["tags", /invalid wheel tags/],
 ]) {
   const changed = spawnSync(
     "python3",
@@ -318,6 +319,8 @@ else:
                 data = b"Name: wrong\\nVersion: 0.0.0\\n"
             if mutation == "payload" and "/_bin/" in name:
                 data = b"wrong binary"
+            if mutation == "tags" and name.endswith(".dist-info/WHEEL"):
+                data = b"Wheel-Version: 1.0\\nRoot-Is-Purelib: true\\nTag: py3-none-any\\n"
             out.writestr(name, data)
         if mutation == "duplicate":
             out.writestr(entries[0][0], entries[0][1])
@@ -419,10 +422,11 @@ for (const [mutation, message] of [
   ["member", /unexpected npm contents/],
   ["duplicate", /unexpected npm contents/],
   ["link", /unexpected npm contents/],
+  ["scripts", /packed npm manifest differs from source/],
 ]) {
   execFileSync("python3", [
     "-c",
-    `import io,sys,tarfile
+    `import io,json,sys,tarfile
 path,mutation=sys.argv[1:]
 with tarfile.open(path) as t: entries=[(m,t.extractfile(m).read()) for m in t.getmembers()]
 with tarfile.open(path,'w:gz') as t:
@@ -431,6 +435,8 @@ with tarfile.open(path,'w:gz') as t:
    if mutation=='payload': data=b'not the archived binary'
    if mutation=='link':
     m.type=tarfile.SYMTYPE;m.linkname='/bin/sh';m.size=0;t.addfile(m);continue
+  if mutation=='scripts' and m.name=='package/package.json':
+   doc=json.loads(data);doc['scripts']={'postinstall':'node -e 0'};data=json.dumps(doc).encode()
   if mutation=='duplicate' and m.name=='package/package.json': t.addfile(m,io.BytesIO(data))
   m.size=len(data);t.addfile(m,io.BytesIO(data))
  if mutation=='member':

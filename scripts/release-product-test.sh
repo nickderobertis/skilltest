@@ -57,9 +57,12 @@ import tomllib
 import tarfile
 import io
 import json
+import os
+import shutil
 import zipfile
 root = Path(sys.argv[1])
-for platform in tomllib.load(open('release-platforms.toml', 'rb'))['platform']:
+records = tomllib.load(open('release-platforms.toml', 'rb'))['platform']
+for platform in records:
     target = platform['target']
     directory = root / target
     directory.mkdir(parents=True)
@@ -92,6 +95,8 @@ for platform in tomllib.load(open('release-platforms.toml', 'rb'))['platform']:
                     content = content.replace(b'Name: skilltest-sdk', b'Name: forged-sdk')
                 if kind == 'metadata' and name.endswith('.dist-info/METADATA'):
                     content = content.replace(b'Version: ', b'Incorrect-Version: ')
+                if kind == 'tags' and name.endswith('.dist-info/WHEEL'):
+                    content = content.replace(('py3-none-' + platform['wheel_tag']).encode(), b'py3-none-any')
                 z.writestr(name, content)
             if kind == 'provider':
                 z.writestr('skilltest_sdk/_bin/skilltest-fake-provider', b'not a shipped product')
@@ -101,6 +106,8 @@ for platform in tomllib.load(open('release-platforms.toml', 'rb'))['platform']:
     reject('wrong wheel version')
     rewrite_wheel('name')
     reject('wrong wheel identity')
+    rewrite_wheel('tags')
+    reject('invalid wheel tags')
     wheel.write_bytes(wheel_bytes)
     original = binary.read_bytes()
     binary.write_bytes(bytes(len(original)))
@@ -119,6 +126,10 @@ for platform in tomllib.load(open('release-platforms.toml', 'rb'))['platform']:
                     manifest = json.loads(content)
                     manifest['version'] = '99.99.99'
                     content = json.dumps(manifest).encode()
+                if member.name == 'package/package.json' and corrupt == 'scripts':
+                    manifest = json.loads(content)
+                    manifest['scripts'] = {'postinstall': 'node -e "process.exit(0)"'}
+                    content = json.dumps(manifest).encode()
                 if member.name == 'package/package.json' and corrupt in ('cpu', 'os'):
                     manifest = json.loads(content)
                     manifest[corrupt] = ['arm64' if target.startswith('x86_64') else 'x64'] if corrupt == 'cpu' else ['linux' if 'linux' not in target else 'win32']
@@ -133,6 +144,8 @@ for platform in tomllib.load(open('release-platforms.toml', 'rb'))['platform']:
     reject('npm binary differs')
     rewrite('identity')
     reject('packed npm identity differs from source')
+    rewrite('scripts')
+    reject('packed npm manifest differs from source')
     source_dir = directory / 'metadata-source' / platform['npm_dir']
     source_dir.mkdir(parents=True)
     source = json.loads((Path(package) / 'package.json').read_text())
@@ -145,6 +158,45 @@ for platform in tomllib.load(open('release-platforms.toml', 'rb'))['platform']:
     rewrite('extra')
     reject('unexpected npm contents')
     carrier.write_bytes(packed_bytes)
+# The production stager reports each failing step with its next action. Tool
+# failures are injected only at the external npm/uvx/install boundaries.
+target = records[0]['target']
+directory = root / target
+binary = directory / records[0]['bin']
+shims = root / 'failing-tools'
+shims.mkdir()
+real_install = shutil.which('install')
+(shims / 'install').write_text(
+    '#!/bin/sh\ncase "$*" in *platforms/*) exit 1 ;; esac\nexec ' + real_install + ' "$@"\n'
+)
+for tool in ('npm', 'uvx'):
+    (shims / tool).write_text('#!/bin/sh\nexit 1\n')
+for tool in ('npm', 'uvx', 'install'):
+    (shims / tool).chmod(0o755)
+for tool, message in [
+    ('uvx', 'wheel build failed'),
+    ('install', 'npm staging failed'),
+    ('npm', 'npm pack failed'),
+]:
+    tools = root / ('only-' + tool)
+    tools.mkdir()
+    (tools / tool).symlink_to(shims / tool)
+    result = subprocess.run(
+        ['bash', 'scripts/stage-release-product.sh', target, str(binary), str(root / ('failed-' + tool))],
+        capture_output=True,
+        text=True,
+        env={**os.environ, 'PATH': f"{tools}:{os.environ['PATH']}"},
+    )
+    if result.returncode == 0 or message not in result.stderr:
+        raise RuntimeError(f'expected stager failure {message}: {result.stderr}')
+binary.write_bytes(bytes(128))
+result = subprocess.run(
+    ['bash', 'scripts/stage-release-product.sh', target, str(binary), str(root / 'failed-verify')],
+    capture_output=True,
+    text=True,
+)
+if result.returncode == 0 or 'payload verification failed' not in result.stderr:
+    raise RuntimeError(f'expected stager verification failure: {result.stderr}')
 PY
 node .github/tests/release-journey.mjs "$work" "$target"
 echo 'release-product-test: native install/run and declared platform packaging/failure contracts passed; foreign headers not executed' >&3

@@ -62,6 +62,54 @@ test("screencomp provisioning exercises real filesystem/extraction with only for
   assert.equal(result.status, 0, result.stderr);
   result = invoke();
   assert.equal(result.status, 0, result.stderr);
+  // A stale cached binary is replaced by the pinned download, not accepted.
+  const cached = join(fixture, ".github/.tools/screencomp");
+  writeFileSync(cached, '#!/bin/sh\necho "screencomp 0.4.1"\n');
+  result = invoke();
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(execFileSync(cached, { encoding: "utf8" }).trim(), "screencomp 0.4.2");
+  // Every supported host selects its own pinned asset and checksum entry.
+  const urls = join(root, "urls");
+  writeFileSync(
+    join(tools, "curl"),
+    '#!/bin/sh\necho "$2" >> "$URL_LOG"\nexec "$REAL_COPY" "$FORGE_ARCHIVE" "$4"\n',
+  );
+  for (const [os, machine, target] of [
+    ["Linux", "x86_64", "x86_64-unknown-linux-gnu"],
+    ["Linux", "aarch64", "aarch64-unknown-linux-gnu"],
+    ["Darwin", "x86_64", "x86_64-apple-darwin"],
+    ["Darwin", "arm64", "aarch64-apple-darwin"],
+  ]) {
+    rmSync(join(fixture, ".github/.tools"), { recursive: true, force: true });
+    writeFileSync(urls, "");
+    writeFileSync(
+      join(tools, "uname"),
+      `#!/bin/sh\ncase "$1" in -s) echo ${os} ;; -m) echo ${machine} ;; esac\n`,
+    );
+    writeFileSync(lock, JSON.stringify({ [target]: hash }));
+    result = spawnSync(bash, [".github/setup-screencomp.sh"], {
+      cwd: fixture,
+      encoding: "utf8",
+      env: { ...process.env, PATH: tools, FORGE_ARCHIVE: archive, REAL_COPY: copy, URL_LOG: urls },
+    });
+    assert.equal(result.status, 0, `${target}: ${result.stderr}`);
+    assert.equal(
+      readFileSync(urls, "utf8").trim(),
+      `https://github.com/nickderobertis/screencomp/releases/download/v0.4.2/screencomp-v0.4.2-${target}.tar.gz`,
+    );
+    // The checksum is read for this host's target: another target's entry does not satisfy it.
+    rmSync(join(fixture, ".github/.tools"), { recursive: true, force: true });
+    writeFileSync(lock, JSON.stringify({ "other-target": hash }));
+    result = invoke();
+    assert.notEqual(result.status, 0, target);
+    assert.match(result.stderr, /cannot read checksum lock/);
+  }
+  writeFileSync(
+    join(tools, "uname"),
+    '#!/bin/sh\ncase "$1" in -s) echo Linux ;; -m) echo x86_64 ;; esac\n',
+  );
+  writeFileSync(join(tools, "curl"), '#!/bin/sh\nexec "$REAL_COPY" "$FORGE_ARCHIVE" "$4"\n');
+  writeFileSync(lock, JSON.stringify({ "x86_64-unknown-linux-gnu": hash }));
   rmSync(join(fixture, ".github/.tools"), { recursive: true });
   writeFileSync(lock, JSON.stringify({ "x86_64-unknown-linux-gnu": "0".repeat(64) }));
   result = invoke();

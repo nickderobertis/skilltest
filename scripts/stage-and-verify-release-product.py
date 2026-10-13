@@ -170,6 +170,26 @@ def staged_binary(platform: Platform, directory: Path) -> bytes:
         return payload.read()
 
 
+def require_wheel_tags(wheel: zipfile.ZipFile, platform: Platform) -> None:
+    """A platform wheel declares exactly its own platform tag."""
+    names = [n for n in wheel.namelist() if n.endswith(".dist-info/WHEEL")]
+    require(len(names) == 1, "invalid wheel tags: expected one WHEEL file")
+    headers = Parser().parsestr(wheel.read(names[0]).decode())
+    require(
+        headers.get_all("Wheel-Version", []) == ["1.0"]
+        and headers.get_all("Tag", []) == [f"py3-none-{platform.wheel_tag}"],
+        f"invalid wheel tags: expected only py3-none-{platform.wheel_tag}",
+    )
+
+
+def require_source_manifest(packed: bytes, source: Path) -> None:
+    """A packed carrier manifest is its checked-in source, field for field."""
+    require(
+        json.loads(packed) == json.loads(source.read_text()),
+        f"packed npm manifest differs from source: {source}",
+    )
+
+
 def check_carriers(platforms: list[Platform], products: Path) -> None:
     """Hold every staged npm carrier to its declared identity and archive binary."""
     version = release_version()
@@ -197,7 +217,8 @@ def check_carriers(platforms: list[Platform], products: Path) -> None:
             payload = packed.extractfile(f"package/bin/{platform.bin}")
             if manifest_stream is None or payload is None:
                 raise ValueError("npm carrier member missing")
-            manifest = NpmIdentity.parse(json.load(manifest_stream))
+            manifest_bytes = manifest_stream.read()
+            manifest = NpmIdentity.parse(json.loads(manifest_bytes))
             require(
                 (
                     manifest.name,
@@ -206,6 +227,10 @@ def check_carriers(platforms: list[Platform], products: Path) -> None:
                 )
                 == (platform.npm_package, version, npm_platform(platform.target)),
                 f"packed carrier identity differs from declared target/version: {carriers[0]}",
+            )
+            require_source_manifest(
+                manifest_bytes,
+                Path("sdks/typescript/platforms") / platform.npm_dir / "package.json",
             )
             require(payload.read() == binary_data, "npm binary differs")
     require(
@@ -256,6 +281,7 @@ def main() -> None:
                     archive.read(f"skilltest_sdk/_bin/{platform.bin}") == binary_data,
                     "wheel binary differs",
                 )
+                require_wheel_tags(archive, platform)
                 metadata_names = [
                     name
                     for name in archive.namelist()
@@ -329,6 +355,7 @@ def main() -> None:
         require(
             headers.get_all("Name", []) == ["skilltest-sdk"], "wrong wheel identity"
         )
+        require_wheel_tags(z, platform)
 
     (packed,) = out.glob("skill-test-cli-*.tgz")
     with tarfile.open(packed) as t:
@@ -340,11 +367,13 @@ def main() -> None:
         manifest_stream = t.extractfile("package/package.json")
         if manifest_stream is None:
             raise ValueError("npm manifest missing")
-        manifest = NpmIdentity.parse(json.load(manifest_stream))
+        manifest_bytes = manifest_stream.read()
+        manifest = NpmIdentity.parse(json.loads(manifest_bytes))
         source = NpmIdentity.parse(
             json.loads((Path(package) / "package.json").read_text())
         )
         require(manifest == source, "packed npm identity differs from source")
+        require_source_manifest(manifest_bytes, Path(package) / "package.json")
         require(
             manifest.name == platform.npm_package and manifest.version == version,
             "wrong npm identity/version",
