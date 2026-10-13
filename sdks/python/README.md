@@ -109,8 +109,10 @@ drift gate in CI fails if anything is stale, so the models cannot diverge from
 the binary. That covers both directions: the report models the SDK parses
 (`_report.py`) and the case models the builders construct (`_case.py`).
 
-<!-- llmlint: ignore[no_redundant_instruction_pointers] Goal 4 requires consumer docs to link to the single tested configuration statement; SDK users do not inherit agent instruction context. -->
+<!-- llmlint: ignore-block[no_redundant_instruction_pointers] Goal 4 requires consumer docs to link to the single tested configuration statement; SDK users do not inherit agent instruction context. -->
 Full run settings are available through YAML, derived environment variables,
 CLI `--set`, and generated SDK config overrides. See the
 [configuration contract](../../docs/schema.md#config-file-skilltestyaml) for precedence,
 evaluator role inheritance, value grammar and path resolution.
+
+<!-- llmlint: ignore-end[no_redundant_instruction_pointers] -->

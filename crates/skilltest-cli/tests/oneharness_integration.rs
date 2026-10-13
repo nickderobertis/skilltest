@@ -828,7 +828,22 @@ fn role_configs_deliver_native_and_prompt_schemas_and_retry_settings() {
     let retry = scratch.0.join("retry");
     let judge = scratch.0.join("judge.toml");
     let user = scratch.0.join("user.toml");
+    let competing_schema = scratch.0.join("configured-schema.json");
+    std::fs::write(&competing_schema,
+        serde_json::json!({"type":"object","required":["configured_only"],"properties":{"configured_only":{"type":"string"}},"additionalProperties":false}).to_string()).unwrap();
     std::fs::write(&judge, format!("harnesses = [\"claude-code\"]\nmodel = \"judge-native\"\nmode = \"bypass\"\ntimeout = 17\nschema_max_retries = 1\n[env]\nROLE_MARKER = \"judge\"\nSCHEMA_RETRY_MARKER = {:?}\n", retry.to_string_lossy())).unwrap();
+    let judge_config = std::fs::read_to_string(&judge).unwrap();
+    std::fs::write(
+        &judge,
+        judge_config.replace(
+            "[env]",
+            &format!(
+                "schema_file = {:?}\n[env]",
+                competing_schema.to_string_lossy()
+            ),
+        ),
+    )
+    .unwrap();
     std::fs::write(&user, "harnesses = [\"goose\"]\nmodel = \"user-model\"\nmode = \"bypass\"\ntimeout = 23\n[env]\nROLE_MARKER = \"user\"\nGOOSE_MODEL = \"user-model\"\n").unwrap();
     let config = scratch.0.join("skilltest.json");
     let settings = serde_json::json!({"provider":{"kind":"oneharness","bin":oneharness_bin(),"history":false,"judge":{"config":judge,"args":["--schema-max-retries=1","--no-stream"]},"simulated_user":{"config":user,"args":["--","tail with spaces","--model=literal tail"]}},"models":["responder-model"]});
@@ -874,6 +889,14 @@ fn role_configs_deliver_native_and_prompt_schemas_and_retry_settings() {
     assert!(judges.iter().all(|row| row["model"] == "judge-native"
         && row["mode"] == "bypassPermissions"
         && row["schema"].as_str().is_some_and(|s| !s.is_empty())));
+    for row in &judges {
+        let schema: Value = serde_json::from_str(row["schema"].as_str().unwrap()).unwrap();
+        assert!(schema["properties"]["value"].is_object(), "{schema}");
+        assert!(
+            schema["properties"].get("configured_only").is_none(),
+            "{schema}"
+        );
+    }
     let users: Vec<_> = observations
         .iter()
         .filter(|row| row["role"] == "user")

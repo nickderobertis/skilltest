@@ -114,8 +114,10 @@ construct (`generated/case.ts`). They are types only: the runner trusts the
 shape after `JSON.parse`, because the gate (not runtime re-validation) is what
 guarantees it.
 
-<!-- llmlint: ignore[no_redundant_instruction_pointers] Goal 4 requires consumer docs to link to the single tested configuration statement; SDK users do not inherit agent instruction context. -->
+<!-- llmlint: ignore-block[no_redundant_instruction_pointers] Goal 4 requires consumer docs to link to the single tested configuration statement; SDK users do not inherit agent instruction context. -->
 Full run settings are available through YAML, derived environment variables,
 CLI `--set`, and generated SDK config overrides. See the
 [configuration contract](../../docs/schema.md#config-file-skilltestyaml) for precedence,
 evaluator role inheritance, value grammar and path resolution.
+
+<!-- llmlint: ignore-end[no_redundant_instruction_pointers] -->

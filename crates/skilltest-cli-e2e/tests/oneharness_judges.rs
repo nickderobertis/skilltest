@@ -410,6 +410,38 @@ fn transport_failures_and_invalid_patch_contents_cannot_be_hidden() {
         );
         assert!(String::from_utf8_lossy(&output.stderr).contains("config setting"));
     }
+    let output = Command::new(common::built_bin("skilltest"))
+        .args(["run", "--set", "max_turns"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stderr)
+        .contains("config assignment `max_turns` needs dotted.path=<JSON-value>"));
+    for args in [
+        json!(["--all"]),
+        json!(["--prompt", "replacement"]),
+        json!(["--prompt-file=replacement"]),
+        json!(["--system", "replacement"]),
+        json!(["--system-file=replacement"]),
+        json!(["--format=json"]),
+        json!(["--compact"]),
+        json!(["--batch-strategy", "parallel"]),
+        json!(["--batch-concurrency=2"]),
+        json!(["--print-command"]),
+        json!(["--schema=replacement"]),
+        json!(["--run-mode=parallel"]),
+    ] {
+        let assignment = format!("provider.judge.args={args}");
+        let output = Command::new(common::built_bin("skilltest"))
+            .args(["run", "--set", &assignment])
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(2), "{args}: {:?}", output);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("provider.judge.args"), "{stderr}");
+        let flag = args[0].as_str().unwrap().split('=').next().unwrap();
+        assert!(stderr.contains(flag), "{stderr}");
+    }
     // Unrelated non-Unicode environment entries must not crash the resolver.
     use std::os::unix::ffi::OsStringExt;
     let output = Command::new(common::built_bin("skilltest"))
