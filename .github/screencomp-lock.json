@@ -1,0 +1,6 @@
+{
+  "x86_64-unknown-linux-gnu": "b6cdd56113807e627f99ca84dba3c8fb5e6aec365b7b0971dccb8480f84417e0",
+  "aarch64-unknown-linux-gnu": "82b941031348d7c661b71bc7005cda56d52d4de192d2bba85f09929c0641a4c0",
+  "x86_64-apple-darwin": "10d5e15c1728ddd2e728bb2e7f69cda80e1a6c7e31e60729c4310a3daaa6d3b3",
+  "aarch64-apple-darwin": "d6509d61e8c282c95c1f9af5d2cf36af89684885b18f9946231ba95570060a65"
+}

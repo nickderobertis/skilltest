@@ -1,0 +1,111 @@
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import test from "node:test";
+import { classifyCLI, event, history } from "./history.mjs";
+test("real CLI verifies version-only histories and fails closed for forged/mixed/unreadable PRs", (t) => {
+  const h = history(t);
+  assert.deepEqual(classifyCLI(h, event()).isReleaseOnly, true);
+  for (const login of ["github-actions[bot]", "nickderobertis", "someone"])
+    assert.equal(classifyCLI(h, event({ sender: { login } })).macosRequired, false);
+  for (const head of [h.dependency, h.source, "missing-ref"])
+    assert.equal(classifyCLI(h, event(), head).macosRequired, true);
+  for (const ref of ["feature", "release-plz", "release/0.2.0"]) {
+    const e = event();
+    e.pull_request.head.ref = ref;
+    assert.equal(classifyCLI(h, e).macosRequired, true);
+  }
+  const fork = event();
+  fork.pull_request.head.repo.full_name = "fork/skilltest";
+  assert.equal(classifyCLI(h, fork).macosRequired, true);
+  const bot = event({ sender: { login: "github-actions[bot]" } });
+  bot.pull_request.head.ref = "feature";
+  assert.equal(classifyCLI(h, bot).macosRequired, true);
+  for (const malformed of ["{", "null", "[]", "{}"])
+    assert.equal(classifyCLI(h, malformed).macosRequired, true);
+  for (const name of [
+    "push",
+    "schedule",
+    "workflow_run",
+    "workflow_dispatch",
+    "repository_dispatch",
+    "release",
+  ])
+    assert.equal(classifyCLI(h, event({ event_name: name }), h.source).macosRequired, false);
+});
+
+test("parsed TOML and workspace lockfiles admit only internal version fields", (t) => {
+  const h = history(t);
+  const git = (...args) => execFileSync("git", args, { cwd: h.dir, encoding: "utf8" }).trim();
+  git("checkout", "--quiet", h.base);
+  const fixtures = {
+    "Cargo.toml":
+      '[workspace.package]\nversion="0.1.0"\n[workspace.dependencies]\nskilltest-core={path="crates/skilltest-core",version="0.1.0"}\nserde="1.0.0"\n',
+    "Cargo.lock":
+      'version=4\n[[package]]\nname="skilltest-core"\nversion="0.1.0"\n[[package]]\nname="serde"\nversion="1.0.0"\nsource="registry+https://example.invalid"\n',
+    "sdks/python/pyproject.toml":
+      '[project]\nname="skilltest-sdk"\nversion="0.1.0"\ndependencies=["pydantic>=2.7"]\n',
+    "plugins/pytest/pyproject.toml":
+      '[project]\nname="skilltest-pytest"\nversion="0.1.0"\ndependencies=["skilltest-sdk==0.1.0", "pytest>=8"]\n',
+    "uv.lock":
+      'version=1\n[[package]]\nname="skilltest-sdk"\nversion="0.1.0"\nsource={editable="sdks/python"}\n[[package]]\nname="pydantic"\nversion="1.0.0"\nsource={registry="https://example.invalid"}\n',
+    "pnpm-lock.yaml": "lockfileVersion: '9.0'\nimporters: {}\npackages: {}\n",
+  };
+  for (const [path, src] of Object.entries(fixtures)) {
+    mkdirSync(join(h.dir, path, ".."), { recursive: true });
+    writeFileSync(join(h.dir, path), src);
+  }
+  git("add", ".");
+  git("commit", "--quiet", "-m", "all manifests");
+  h.base = git("rev-parse", "HEAD");
+  for (const [path, src] of Object.entries(fixtures)) {
+    writeFileSync(join(h.dir, path), src.replaceAll("0.1.0", "0.2.0"));
+  }
+  git("add", ".");
+  git("commit", "--quiet", "-m", "version fields");
+  const release = git("rev-parse", "HEAD");
+  assert.equal(classifyCLI(h, event(), release).isReleaseOnly, true);
+  for (const [path, src] of Object.entries(fixtures)) {
+    git("checkout", "--quiet", release);
+    writeFileSync(
+      join(h.dir, path),
+      src
+        .replaceAll("0.1.0", "0.2.0")
+        .replaceAll("1.0.0", "2.0.0")
+        .replaceAll(">=2.7", ">=3.0")
+        .replaceAll("pytest>=8", "pytest>=9")
+        .replace("packages: {}", "packages: {foreign: {integrity: changed}}"),
+    );
+    git("add", ".");
+    const changed = git("diff", "--cached", "--name-only");
+    if (changed) {
+      git("commit", "--quiet", "-m", "dependency content");
+      assert.equal(classifyCLI(h, event(), git("rev-parse", "HEAD")).macosRequired, true, path);
+    }
+  }
+  git("checkout", "--quiet", release);
+  chmodSync(join(h.dir, "CHANGELOG.md"), 0o755);
+  git("add", ".");
+  git("commit", "--quiet", "-m", "permissions");
+  assert.equal(classifyCLI(h, event(), git("rev-parse", "HEAD")).macosRequired, true);
+});
+
+test("classifier rejects empty and added/deleted/renamed release histories", (t) => {
+  const h = history(t);
+  const git = (...args) => execFileSync("git", args, { cwd: h.dir, encoding: "utf8" }).trim();
+  assert.equal(classifyCLI(h, event(), h.base).macosRequired, true);
+  git("checkout", "--quiet", h.release);
+  writeFileSync(join(h.dir, "another-file"), "new");
+  git("add", ".");
+  git("commit", "--quiet", "-m", "added");
+  assert.equal(classifyCLI(h, event(), git("rev-parse", "HEAD")).macosRequired, true);
+  git("checkout", "--quiet", h.release);
+  git("rm", "CHANGELOG.md");
+  git("commit", "--quiet", "-m", "deleted");
+  assert.equal(classifyCLI(h, event(), git("rev-parse", "HEAD")).macosRequired, true);
+  git("checkout", "--quiet", h.release);
+  git("mv", "CHANGELOG.md", "RENAMED.md");
+  git("commit", "--quiet", "-m", "renamed");
+  assert.equal(classifyCLI(h, event(), git("rev-parse", "HEAD")).macosRequired, true);
+});

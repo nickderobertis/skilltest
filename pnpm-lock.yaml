@@ -39,6 +39,18 @@ importers:
         specifier: ^25.0.5
         version: 25.0.5(typescript@5.9.3)
 
+  .github:
+    dependencies:
+      '@actions/expressions':
+        specifier: 0.3.61
+        version: 0.3.61
+      '@onebudgetspec/sdk':
+        specifier: 0.1.4
+        version: 0.1.4
+      yaml:
+        specifier: 2.9.1
+        version: 2.9.1
+
   plugins/vitest:
     dependencies:
       '@skill-test/sdk':
@@ -112,6 +124,10 @@ packages:
 
   '@actions/exec@3.0.0':
     resolution: {integrity: sha512-6xH/puSoNBXb72VPlZVm7vQ+svQpFyA96qdDBvhB8eNZOE8LtPf9L4oAsfzK/crCL8YZ+19fKYVnM63Sl+Xzlw==}
+
+  '@actions/expressions@0.3.61':
+    resolution: {integrity: sha512-Ig+tXELvTjlqxQAWBQnLNn2dPpNraLMdSnT+vDzDPmJtbNUhIAH/Z9kVT8pZ8UtJi9vUGs8hwHE8JFJmbOnLEA==}
+    engines: {node: '>= 20'}
 
   '@actions/http-client@4.0.1':
     resolution: {integrity: sha512-+Nvd1ImaOZBSoPbsUtEhv+1z99H12xzncCkz0a3RuehINE81FZSe2QTj3uvAPTcJX/SCzUQHQ0D1GrPMbrPitg==}
@@ -455,6 +471,43 @@ packages:
 
   '@octokit/types@16.0.0':
     resolution: {integrity: sha512-sKq+9r1Mm4efXW1FCk7hFSeJo4QKreL/tTbR0rz/qx/r1Oa2VV83LTA/H/MuCOX7uCIJmQVRKBcbmWoySjAnSg==}
+
+  '@onebudgetspec/cli-darwin-arm64@0.1.4':
+    resolution: {integrity: sha512-nFjU4DnAR73B2lyKtq8kmxaE4F/XtyHrvUzoYSCGkFpb8lqTTmkRPr4FjNzlutgQD0wn6JHlF9as3u/AHpx01g==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@onebudgetspec/cli-darwin-x64@0.1.4':
+    resolution: {integrity: sha512-87Dez6i+8DNXp5F1Dnc4nKfDt4n9fSAIWf/ceQHYRb0nWhWLZR3kD1StdbUuPZEqZ3MXTpq49+biIiWR7i75HA==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@onebudgetspec/cli-linux-arm64@0.1.4':
+    resolution: {integrity: sha512-1hfcpTPg9zb4fFpUV9Pqn6qFj4TPUptXlPU7RoAMIbGwfg2JZZ/N8cu5AOxa32MFiNmyaRVq3H+3uoThCQlEWw==}
+    cpu: [arm64]
+    os: [linux]
+
+  '@onebudgetspec/cli-linux-x64@0.1.4':
+    resolution: {integrity: sha512-EE309bKhIz96v58aDhg0AVqYe3bQarFy9Dv0N3WcR2YWCRNV0n1d5OSgSQmNc8hh8b6JTu5cbKr/cPZswiwLjA==}
+    cpu: [x64]
+    os: [linux]
+
+  '@onebudgetspec/cli-win32-arm64@0.1.4':
+    resolution: {integrity: sha512-qND1GWB9Zxc9KSnfX9UN7BSsYbbi3YbBjh64pFHu9PuzywKdNfsmYFdmKjbeALhvNtwL0jjM3DYiQX9kFa9RCw==}
+    cpu: [arm64]
+    os: [win32]
+
+  '@onebudgetspec/cli-win32-x64@0.1.4':
+    resolution: {integrity: sha512-qHhVj30S/Ynj71FMEcco18Nk5biQum1YxQyHzyZ5i1yZfryvFIAu94BfnqWS1WzIQjQi3KdeW56DhNfpuOg5jA==}
+    cpu: [x64]
+    os: [win32]
+
+  '@onebudgetspec/cli@0.1.4':
+    resolution: {integrity: sha512-Tq1FkYjSqJCEI441hMppHz64wXvj0IDg/MeRh0qrDaCIdgAiXNKL6EKSefMv9uuO9yiBwIs33FtwhEHzdAdJfg==}
+    hasBin: true
+
+  '@onebudgetspec/sdk@0.1.4':
+    resolution: {integrity: sha512-sey8ntapirT9NqilIJ8RR7lzyjNteR87RlUVprCLU6tBxCdPpU1+ZeUDspCc4a2tvSPpiBdd465siX2byKkbhQ==}
 
   '@oneharness/cli-darwin-arm64@0.21.3':
     resolution: {integrity: sha512-ZVQ0umjPMXB3EKAEKn8gtvzp4EXx6mG/eS8oBu/0IMKd5Iip0TjTDhhomO7Fq5QI9QI9w2hbjAPNCHZeHI88Tw==}
@@ -2348,6 +2401,11 @@ packages:
     engines: {node: '>= 14.6'}
     hasBin: true
 
+  yaml@2.9.1:
+    resolution: {integrity: sha512-3NxN8+78OdzbT7C/WjGsyfPAtJaN3FNDsWxv7Y7mcDsT/oOmgW8BpyQQFFBnvZE3j9Y2Sdz1ULFLezL7Eb2yFw==}
+    engines: {node: '>= 14.6'}
+    hasBin: true
+
   yargs-parser@20.2.9:
     resolution: {integrity: sha512-y11nGElTIV+CT3Zv9t7VKl+Q3hTQoT9a1Qzezhhl6Rp21gJ/IVTW7Z3y9EWXhuUBC2Shnf+DX0antecpAwSP8w==}
     engines: {node: '>=10'}
@@ -2386,6 +2444,8 @@ snapshots:
   '@actions/exec@3.0.0':
     dependencies:
       '@actions/io': 3.0.2
+
+  '@actions/expressions@0.3.61': {}
 
   '@actions/http-client@4.0.1':
     dependencies:
@@ -2631,6 +2691,38 @@ snapshots:
   '@octokit/types@16.0.0':
     dependencies:
       '@octokit/openapi-types': 27.0.0
+
+  '@onebudgetspec/cli-darwin-arm64@0.1.4':
+    optional: true
+
+  '@onebudgetspec/cli-darwin-x64@0.1.4':
+    optional: true
+
+  '@onebudgetspec/cli-linux-arm64@0.1.4':
+    optional: true
+
+  '@onebudgetspec/cli-linux-x64@0.1.4':
+    optional: true
+
+  '@onebudgetspec/cli-win32-arm64@0.1.4':
+    optional: true
+
+  '@onebudgetspec/cli-win32-x64@0.1.4':
+    optional: true
+
+  '@onebudgetspec/cli@0.1.4':
+    optionalDependencies:
+      '@onebudgetspec/cli-darwin-arm64': 0.1.4
+      '@onebudgetspec/cli-darwin-x64': 0.1.4
+      '@onebudgetspec/cli-linux-arm64': 0.1.4
+      '@onebudgetspec/cli-linux-x64': 0.1.4
+      '@onebudgetspec/cli-win32-arm64': 0.1.4
+      '@onebudgetspec/cli-win32-x64': 0.1.4
+    optional: true
+
+  '@onebudgetspec/sdk@0.1.4':
+    optionalDependencies:
+      '@onebudgetspec/cli': 0.1.4
 
   '@oneharness/cli-darwin-arm64@0.21.3':
     optional: true
@@ -4452,6 +4544,8 @@ snapshots:
   y18n@5.0.8: {}
 
   yaml@2.9.0: {}
+
+  yaml@2.9.1: {}
 
   yargs-parser@20.2.9: {}
 

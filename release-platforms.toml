@@ -2,8 +2,8 @@
 #
 # Every list that builds, bundles, publishes or smokes a per-platform artifact
 # restates part of this set, because a GitHub Actions matrix or a shell `case`
-# cannot read a file: publish.yml's `binaries` matrix, release.yml's archive
-# matrix, scripts/build-python-dist.sh's targets, scripts/build-python-wheel.sh's
+# cannot read a file: publish.yml's native matrix and sequential Darwin job, release.yml's archive
+# transport loop, scripts/build-python-dist.sh's targets, scripts/build-python-wheel.sh's
 # wheel-tag map, the npm job's `for target in` loop, scripts/stage-npm-binary.sh,
 # the `@skill-test/cli-*` platform packages, release-targets.toml's `covers`, the
 # SDK's optionalDependencies, .releaserc.json's assets, scripts/set-version.sh,

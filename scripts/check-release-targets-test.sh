@@ -51,6 +51,7 @@ staged=(
   .github/workflows/bundle-smoke.yml
   scripts/build-python-dist.sh
   scripts/build-python-wheel.sh
+  scripts/stage-release-product.sh
   scripts/set-version.sh
   .releaserc.json
 )
@@ -206,9 +207,9 @@ expect_red "publish.yml's binaries matrix lost a Windows target" \
   "publish.yml's binaries matrix lacks 'aarch64-pc-windows-msvc	windows-11-arm	skilltest.exe'"
 
 stage
-edit .github/workflows/release.yml 's/{ target: x86_64-pc-windows-msvc, os: windows-latest, bin: skilltest.exe }/{ target: x86_64-pc-windows-msvc, os: windows-latest, bin: skilltest }/'
-expect_red "release.yml's archive matrix named the Windows binary without .exe" \
-  "release.yml's upload matrix has 'x86_64-pc-windows-msvc	windows-latest	skilltest'"
+edit .github/workflows/release.yml 's/ x86_64-pc-windows-msvc aarch64-pc-windows-msvc; do/ aarch64-pc-windows-msvc; do/'
+expect_red "release.yml's archive transport lost the Windows x64 archive" \
+  "release.yml's archive targets lacks 'x86_64-pc-windows-msvc'"
 
 stage
 edit scripts/build-python-dist.sh 's/ x86_64-pc-windows-msvc aarch64-pc-windows-msvc"$/"/'
@@ -246,15 +247,15 @@ expect_red "a shipped Windows target was dropped from the platform declaration" 
   "publish.yml's binaries matrix has 'aarch64-pc-windows-msvc	windows-11-arm	skilltest.exe', which release-platforms.toml does not declare"
 
 stage
-edit .github/workflows/bundle-smoke.yml 's/^\( *\)- { target: aarch64-apple-darwin, os: macos-14 }$/&\
+edit .github/workflows/bundle-smoke.yml 's/^\( *\)- { target: aarch64-unknown-linux-gnu, os: ubuntu-24.04-arm }$/&\
 \1- { target: x86_64-unknown-freebsd, os: ubuntu-latest }/'
 expect_red "bundle-smoke smoked an undeclared platform" \
   "bundle-smoke.yml smokes 'x86_64-unknown-freebsd', which release-platforms.toml does not declare"
 
 stage
-edit .github/workflows/bundle-smoke.yml 's/{ target: aarch64-apple-darwin, os: macos-14 }/{ target: aarch64-apple-darwin, os: macos-13 }/'
+edit .github/workflows/bundle-smoke.yml 's/{ target: aarch64-unknown-linux-gnu, os: ubuntu-24.04-arm }/{ target: aarch64-unknown-linux-gnu, os: ubuntu-latest }/'
 expect_red "bundle-smoke smoked a declared platform on another runner" \
-  "smokes 'aarch64-apple-darwin' on 'macos-13' but release-platforms.toml builds it on 'macos-14'"
+  "smokes 'aarch64-unknown-linux-gnu' on 'ubuntu-latest' but release-platforms.toml builds it on 'ubuntu-24.04-arm'"
 
 stage
 edit .github/workflows/publish.yml 's/^\( *\)x86_64-pc-windows-msvc aarch64-pc-windows-msvc; do$/\1x86_64-pc-windows-msvc; do/'

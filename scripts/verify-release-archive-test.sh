@@ -138,6 +138,10 @@ pack x86_64-unknown-linux-gnu skilltest 1.2.3
 expect_red "the binary does not run" "skilltest from skilltest-x86_64-unknown-linux-gnu.tar.gz did not run" \
   "$work/x86_64-unknown-linux-gnu" x86_64-unknown-linux-gnu skilltest 1.2.3
 
+verify "$work/x86_64-unknown-linux-gnu" x86_64-unknown-linux-gnu skilltest 1.2.3 --contents-only ||
+  fail "contents-only verification executed the deliberately failing foreign binary"
+grep -Fq 'binary not executed' "$work/out" || fail "contents-only verification claimed execution"
+
 expect_red "the binary name escapes the archive" "bin '../skilltest' is neither skilltest nor skilltest.exe" \
   "$work/x86_64-unknown-linux-gnu" x86_64-unknown-linux-gnu ../skilltest 1.2.3
 

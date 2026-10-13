@@ -1,0 +1,40 @@
+{
+  "name": "release-packaging",
+  "tags": [
+    "type:e2e",
+    "lang:bash"
+  ],
+  "namedInputs": {
+    "default": [
+      "{projectRoot}/stage-release-product.sh",
+      "{projectRoot}/verify-release-product.py",
+      "{projectRoot}/release-product-test.sh",
+      "{projectRoot}/check-release-identity.sh",
+      "{projectRoot}/smoke-*-bundle.sh",
+      "{projectRoot}/verify-release-archive*",
+      "{workspaceRoot}/release-platforms.toml",
+      "{workspaceRoot}/.github/tests/release-journey.mjs"
+    ]
+  },
+  "targets": {
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "uv run --no-sync shellcheck scripts/stage-release-product.sh scripts/release-product-test.sh scripts/check-release-identity.sh scripts/smoke-python-bundle.sh scripts/smoke-npm-bundle.sh scripts/verify-release-archive.sh scripts/verify-release-archive-test.sh && uv run --no-sync ruff check scripts/verify-release-product.py"
+      }
+    },
+    "format-check": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "uv run --no-sync ruff format --check scripts/verify-release-product.py"
+      }
+    },
+    "packaging": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "bash scripts/release-product-test.sh"
+      }
+    }
+  }
+}

@@ -35,6 +35,7 @@ from __future__ import annotations
 import argparse
 import copy
 import fnmatch
+import json
 import re
 import sys
 import tomllib
@@ -67,7 +68,7 @@ class WorkflowError(ValueError):
 
 WorkflowFile = NewType("WorkflowFile", str)  # a file name under .github/workflows
 JobId = NewType("JobId", str)  # a job's key under `jobs:`
-EventName = Literal["push", "pull_request", "workflow_dispatch"]
+EventName = Literal["push", "pull_request", "workflow_dispatch", "workflow_run"]
 
 
 TokenKind = Literal["str", "op", "ident"]
@@ -212,6 +213,8 @@ class _Parser:
 
     def call(self, name: str, args: list[object]) -> object:
         match name, args:
+            case "toJSON", [a]:
+                return json.dumps(a)
             case "startsWith", [a, b]:
                 return ("" if a is None else str(a)).lower().startswith(("" if b is None else str(b)).lower())
             case (("success" | "failure" | "always" | "cancelled"), []):
@@ -316,6 +319,7 @@ LIST_FILTERS: dict[str, frozenset[str]] = {
     "push": frozenset({"branches", "tags"}),
     "pull_request": frozenset({"types", "paths"}),
     "pull_request_target": frozenset({"types"}),
+    "workflow_run": frozenset({"types", "workflows"}),
 }
 MAP_FILTERS = frozenset({"inputs", "secrets", "outputs"})
 
@@ -523,6 +527,9 @@ def matrix_targets(wfs: dict[WorkflowFile, Workflow]) -> dict[str, set[str]]:
             axis = job.matrix.get("target")
             rows = job.matrix.get("include")
             named = [*(axis if isinstance(axis, list) else []), *(r.get("target") for r in rows or [])]
+            # Darwin builds are sequential in one job, not two matrix instances.
+            if wf.filename == "publish.yml" and job.id == "darwin":
+                named.extend(t for step in job.steps for t in re.findall(r"\b(?:x86_64|aarch64)-apple-darwin\b", step.run or ""))
             for target in named:
                 match target:
                     case None:
@@ -845,7 +852,7 @@ def violations(
         ]
     tag = push_tag("v0.13.0")
     runs = simulate(wfs, tag)
-    bad += [f"{tag.label}: {wf} does not run" for wf in ("release.yml", "publish.yml") if not _ran(runs, wf)]
+    bad += [f"{tag.label}: {wf} does not run" for wf in ("publish.yml",) if not _ran(runs, wf)]
     bad += [f"{tag.label}: {wf} runs on the tag" for wf in no_release_commit if _ran(runs, wf)]
 
     # Each live suite is still runnable by hand.
@@ -911,7 +918,7 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     Mutation(
         "a release target the toolchain lacks",
-        lambda d: _retarget(_jobs(d, "release.yml")["upload"], "riscv64gc-unknown-linux-gnu"),
+        lambda d: _retarget(_jobs(d, "publish.yml")["binaries"], "riscv64gc-unknown-linux-gnu"),
     ),
     Mutation(
         "a live suite reaching nx before installing the workspace",

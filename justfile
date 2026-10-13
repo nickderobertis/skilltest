@@ -74,7 +74,7 @@ check tier="affected":
     @just workflows-lint
     @just workflows-check
     @just base-check
-    {{ if tier == "all" { "pnpm exec nx run-many" } else { affected } }} -t format-check lint typecheck test test-e2e --exclude={{live}}
+    {{ if tier == "all" { "pnpm exec nx run-many" } else { affected } }} -t format-check lint typecheck test test-e2e budgets --exclude={{live}}
     {{nx}} run-many -t lint format-check --projects={{live}}
     @just coverage
     @echo "check ({{tier}}): all gates passed"
@@ -308,3 +308,7 @@ test-lint-llm-config:
 # llmlint scoped to changed files since the merge-base with main.
 lint-llm-diff base="origin/main" *args:
     llmlint --diff --diff-base "{{base}}" {{args}}
+
+# Slow, focused production packaging proof; run through the existing release edge.
+release-product-test:
+    @{{nx}} run release-packaging:packaging --output-style=stream-without-prefixes

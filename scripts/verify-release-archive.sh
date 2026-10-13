@@ -18,7 +18,7 @@ err() {
 }
 
 usage="usage: verify-release-archive.sh <dir> <target> <bin> <version>; pass the download directory, a target triple, skilltest or skilltest.exe, and the release version X.Y.Z"
-[ "$#" -eq 4 ] && [ -d "$1" ] || err "$usage"
+{ [ "$#" -eq 4 ] || { [ "$#" -eq 5 ] && [ "$5" = --contents-only ]; }; } && [ -d "$1" ] || err "$usage"
 dir="$1" target="$2" bin="$3" version="$4"
 [[ "$target" =~ ^[A-Za-z0-9_]+(-[A-Za-z0-9_]+)+$ ]] || err "target '$target' is not a target triple; $usage"
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]] || err "version '$version' is not X.Y.Z; $usage"
@@ -61,6 +61,11 @@ case "$asset" in
 esac
 { [ -f "$out/$bin" ] && [ ! -L "$out/$bin" ]; } ||
   err "$asset's $bin is not a regular file; check release.yml's bin setting"
+
+if [ "${5:-}" = --contents-only ]; then
+  echo "verify-release-archive: $asset checksum and contents verified; binary not executed"
+  exit 0
+fi
 
 reported="$("$out/$bin" --version 2>&1)" ||
   err "$bin from $asset did not run ($reported); rebuild $target and re-run release.yml"

@@ -1,0 +1,15 @@
+{
+  "extends": [
+    "../biome.json"
+  ],
+  "files": {
+    "include": [
+      "*.mjs",
+      "tests/*.mjs",
+      "project.json",
+      "package.json",
+      "reusable-workflows.json",
+      "project.jsonc"
+    ]
+  }
+}

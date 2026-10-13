@@ -1,0 +1,17 @@
+{
+  "nickderobertis/screencomp/.github/workflows/visual-docs-reusable.yml@v0.4.2": {
+    "path": ".github/tests/fixtures/screencomp-v0.4.2.yml",
+    "commit": "305783cdb630d559e246f90999b9a1989ed4be5e",
+    "sha256": "8a719d9ea54a946399e5839f4decc5893347249c6ce429850b0d16bd33a759b3",
+    "annotations": [
+      {
+        "before": "  # ---- Arches: resolve the capture arch matrix ------------------------------",
+        "reason": "Immutable upstream workflow comment; keep its bytes intact so the reusable-call digest proves the actual upstream contract."
+      },
+      {
+        "before": "      # Hand this arch's screenshots to the host-side `report` job.",
+        "reason": "Immutable upstream workflow comment; keep its bytes intact so the reusable-call digest proves the actual upstream contract."
+      }
+    ]
+  }
+}

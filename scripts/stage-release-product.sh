@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Stage all shipped forms from one compiled binary; never publish here.
+set -euo pipefail
+if [ "$#" -ne 3 ] || [ ! -f "$2" ]; then
+  echo 'stage-release-product: usage: <target> <binary> <output-dir>; build the CLI first' >&2
+  exit 2
+fi
+target="$1"
+binary="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"
+mkdir -p "$3" || { echo 'stage-release-product: cannot create output directory; check its parent permissions' >&2; exit 1; }
+out="$(cd "$3" && pwd)" || { echo 'stage-release-product: cannot resolve output directory; check its permissions' >&2; exit 1; }
+cd "$(dirname "$0")/.."
+if ! build_output="$(bash scripts/build-python-wheel.sh "$target" "$binary" "$out" 2>&1)"; then
+  printf 'stage-release-product: wheel build failed for %s; rerun build-python-wheel.sh
+%s
+' "$target" "$build_output" >&2
+  exit 1
+fi
+pkg="$(bash scripts/stage-npm-binary.sh "$target" "$binary")"
+if ! pack_output="$(cd "$pkg" && npm pack --silent --pack-destination "$out" 2>&1)"; then
+  printf 'stage-release-product: npm pack failed for %s; inspect the staged carrier
+%s
+' "$target" "$pack_output" >&2
+  exit 1
+fi
+python3 scripts/verify-release-product.py "$target" "$binary" "$out" "$pkg"

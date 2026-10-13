@@ -23,17 +23,37 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  policy:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      macosRequired: ${{ steps.classify.outputs.macosRequired }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: package.json
+      - uses: extractions/setup-just@v2
+      - run: just bootstrap-node
+      - id: classify
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: node .github/macos-policy.mjs classify --event "$GITHUB_EVENT_PATH" --base "$BASE" --head "$HEAD"
+
   check:
+    name: check (ubuntu-latest)
     # Every pull request (the required contexts), and every push to main except
     # the release bot's own version-bump commit.
     if: >-
       github.event_name == 'pull_request' ||
       !startsWith(github.event.head_commit.message, 'chore(release):')
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
@@ -89,6 +109,90 @@ jobs:
         env:
           TIER: ${{ github.event_name == 'push' && 'all' || 'affected' }}
         run: just check "$TIER"
+
+  mac-check:
+    needs: policy
+    if: always() && github.event_name == 'pull_request' && (needs.policy.result != 'success' || needs.policy.outputs.macosRequired != 'false')
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The affected tier resolves its merge base from history; fetch it all.
+          fetch-depth: 0
+
+      - name: Install just
+        uses: extractions/setup-just@v2
+
+      - name: Install Rust toolchain (pinned in rust-toolchain.toml)
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          # Channel, components and targets come from rust-toolchain.toml. Turn
+          # off this action's own cache (Swatinem/rust-cache runs where wanted)
+          # and its default RUSTFLAGS="-D warnings", which would change builds.
+          cache: false
+          rustflags: ""
+
+      - name: Install cargo-nextest and cargo-llvm-cov
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest, cargo-llvm-cov
+
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          package_json_file: package.json
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      # Derive the PR's merge base EXPLICITLY and export it as NX_BASE, which
+      # `just check` validates (a plain ref/SHA that resolves, else it fails
+      # closed) — never Nx's implicit default base.
+      - name: Derive the affected tier's base (NX_BASE)
+        if: github.event_name == 'pull_request'
+        uses: nrwl/nx-set-shas@v4
+
+      - name: Bootstrap
+        run: just bootstrap
+
+      - name: Check (affected tier on a PR, full sweep at merge-to-main)
+        env:
+          TIER: ${{ github.event_name == 'push' && 'all' || 'affected' }}
+        run: just check "$TIER"
+
+      - name: Mac bundled Python and npm installation proofs
+        run: |
+          target=aarch64-apple-darwin
+          cargo build --release -p skilltest-cli --bin skilltest --target "$target"
+          cargo build --release -p skilltest-cli --bin skilltest-fake-provider --features fake-provider --target "$target"
+          bash scripts/smoke-python-bundle.sh "$target" "target/$target/release/skilltest" "target/$target/release/skilltest-fake-provider"
+          bash scripts/smoke-npm-bundle.sh "$target" "target/$target/release/skilltest" "target/$target/release/skilltest-fake-provider"
+
+  mac-result:
+    name: check (macos-latest)
+    runs-on: ubuntu-latest
+    needs: [policy, mac-check]
+    if: always() && github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Report required Mac outcome
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          MACOS_REQUIRED: ${{ needs.policy.outputs.macosRequired }}
+        run: node .github/required-result.mjs
 
   # One job per live suite; each workflow keeps its own credential fail-fast and
   # fork guard.

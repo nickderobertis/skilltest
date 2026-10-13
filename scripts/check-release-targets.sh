@@ -247,8 +247,10 @@ while read -r dir; do
 done < <(printf '%s\n' "$pypi_job" | sed -n 's/.*pyproject_version \([^)]*\)).*/\1/p')
 
 npm_job="$(job_body npm)"
-printf '%s\n' "$npm_job" | grep -Fq "bash $stager" ||
-  fail "$workflow's npm job no longer stages platform packages through $stager, so the platform names below are derived from a script nothing runs; point this gate at whatever stages them now"
+grep -Fq 'npm publish "$packed" --access public' <<<"$npm_job" ||
+  fail "$workflow's npm job no longer publishes staged carriers; point this gate at its new publication path"
+grep -Fq "bash $stager" scripts/stage-release-product.sh ||
+  fail "the production packager no longer stages binaries through $stager; update the source of carrier names"
 targets="$(printf '%s\n' "$npm_job" | awk '
   /for target in / { inside = 1; sub(/.*for target in /, "") }
   inside { line = $0; done = sub(/; *do.*$/, "", line); gsub(/\\/, "", line); print line; if (done) exit }
@@ -497,13 +499,21 @@ matrix_rows() {
 
 declared_builds="$(extract "$platforms_file's builds" declared_cols 1-3)" || exit 1
 matrix_fix="write one '- { target: <triple>, os: <runner>, bin: <file> }' row per $platforms_file platform, with its runner and bin"
-for spec in "$workflow binaries" "$release_workflow upload"; do
-  file="${spec% *}"
-  job="${spec#* }"
-  rows="$(matrix_rows "$file" "$job")" || exit 1
-  [ -n "$rows" ] || fail "$file's $job job has no one-line '- { target: ..., os: ..., bin: ... }' matrix rows; restore that shape so this gate can read its platforms"
-  compare_platforms "$file's $job matrix" "$declared_builds" "$rows" "$matrix_fix"
-done
+rows="$(matrix_rows "$workflow" binaries)" || exit 1
+# Darwin targets share one sequential job; these are real upload artifact names,
+# checked together with its build loop by github-workflows:test.
+darwin_targets="$(job_body darwin | sed -n 's/^ *name: skilltest-\([^ ]*apple-darwin\)$/\1/p')"
+while read -r target; do
+  [ -n "$target" ] || continue
+  rows="${rows}
+${target}\tmacos-14\tskilltest"
+done <<<"$darwin_targets"
+rows="$(printf '%b\n' "$rows")"
+compare_platforms "$workflow's binaries matrix" "$declared_builds" "$rows" "$matrix_fix"
+# release.yml transports already built artifacts on Linux; it no longer owns
+# a compiler matrix. The executable graph contract checks exact-run downloads.
+release_targets="$(sed -n 's/^ *for target in \(.*\); do$/\1/p' "$release_workflow" | tr ' ' '\n' | sort)"
+compare_platforms "$release_workflow's archive targets" "$(printf '%s\n' "$declared_builds" | cut -f1 | sort)" "$release_targets" "retain each declared platform in the Linux upload loop"
 
 windows_only() { printf '%s\n' "$declared_builds" | awk -F'\t' '$1 ~ /-windows-/'; }
 windows_builds="$(extract "$platforms_file's Windows builds" windows_only)" || exit 1

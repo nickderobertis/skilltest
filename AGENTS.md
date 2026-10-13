@@ -60,7 +60,7 @@ added. What was pulled in, and why:
   split by tier and cost ("Project graph" below). `ci.md` gives clean checkout →
   `just bootstrap` → `just check` on a Linux/macOS matrix, the two staged gate
   tiers, the live tier in its own credential-gated workflows, the install-path
-  smoke (`bundle-smoke.yml` on Linux/macOS; `windows-build.yml` on PRs and
+  smoke (`bundle-smoke.yml` on Linux and `ci.yml`'s single Mac PR lane; `windows-build.yml` on PRs and
   `publish.yml`'s `verify-windows` at release for the Windows targets) and the
   notignored suppressions comment. `llmlint.md`
   gives the LLM-judge tier: `llmlint.yml` composing the per-reference fragments,
@@ -139,7 +139,7 @@ added. What was pulled in, and why:
 | `release-targets.toml` | What a release publishes, for onevcs; ids and short names are a cross-repository contract ("Commits, releases, and merging"). |
 | `screenshots/`, `screencomp.toml`, `shots/baseline/`, `docs/screenshots/` | Terminal screenshots, informational, never a gate (`screenshots/AGENTS.md`). |
 | `gh-secrets.json` | Declarative secret manifest, synced from Bitwarden via `gh-secrets manifest sync`. |
-| `.github/workflows/` | `ci.yml` (both gate tiers, the live calls, the release), `e2e-*.yml` (one live suite each), `semantic-release.yml`, `release.yml`/`publish.yml` (tag-triggered), `bundle-smoke.yml`, `windows-build.yml` (Windows install proof, not required), `visual-docs.yml`, `pr-title.yml`, `notignored.yml`. |
+| `.github/workflows/` | `ci.yml` (both gate tiers, the live calls, the release), `e2e-*.yml` (one live suite each), `semantic-release.yml`, `publish.yml` (tag-triggered) and `release.yml` (exact-build downstream archive upload), `bundle-smoke.yml`, `windows-build.yml` (Windows install proof, not required), `visual-docs.yml`, `pr-title.yml`, `notignored.yml`. |
 | `nx.json`, `<project>/project.json` | The Nx workspace: named inputs, target defaults, and each project's targets, tags and edges. |
 | `rust-toolchain.toml` | The one Rust toolchain pin (channel, components, release targets); every workflow installs from it, and `just workflows-check` holds its targets to the build matrices. |
 
@@ -253,21 +253,22 @@ from exactly that commit.
 **Where each gate tier runs (gate a given commit once).**
 
 - **Pull request — the affected tier.** `ci.yml`'s `check` job runs `just check`
-  against the merge base `nx-set-shas` exports, on Linux and macOS; with
+  against the merge base `nx-set-shas` exports, on Linux and, for ordinary PRs, one macOS lane; with
   `pr-title` and `llmlint` these are the PR's contexts (`check (ubuntu-latest)`,
   `check (macos-latest)`, `pr-title`, `llmlint`). No live suite runs on a PR.
 - **Merge to `main` — the broader tier, ahead of the release.** Because the
   merged commit *is* the released commit, the sweep runs here and only here: the
-  same `check` job runs `just check all`, `ci.yml` calls every live e2e workflow
+  same Linux `check` job runs `just check all`, `ci.yml` calls every live e2e workflow
   (external contact promotes them out of the PR tier, unconditionally), and its
   `release` job calls `semantic-release.yml` only when the sweep (both OSes) and
   every live suite succeeded. A red sweep or live suite cuts no release.
 - **The `chore(release): X.Y.Z` commit** differs from the swept commit only in
   version strings, so every push job in `ci.yml`, `bundle-smoke.yml` and
   `visual-docs.yml` skips it (job-level guards, not `[skip ci]`, which would also
-  muzzle the tag workflows). The `vX.Y.Z` tag fires `release.yml` (binaries →
-  GitHub Release) and `publish.yml` (registries), which build and publish but
-  re-gate nothing.
+  muzzle the tag workflows). The `vX.Y.Z` tag fires `publish.yml` (native binaries → staged products → registries). Its
+  completion triggers Linux-only `release.yml`, which uploads archives from that
+  exact run and head, even when a registry fails. Both Darwin architectures and
+  their bundle installation proofs share one Mac build job. No sweep is repeated.
 - `scripts/check-workflow-routing.py` (`just workflows-check`, in every gate)
   simulates these events over the committed workflows and fails if the routing
   drifts.
@@ -305,7 +306,7 @@ binary release, or vice versa.
   hand; it also keeps the two cross-package pins in lockstep — the internal
   `skilltest-core` pin in `[workspace.dependencies]` and pytest's exact
   `skilltest-sdk==X.Y.Z` dependency.) A manual `v*` tag remains a re-publish escape
-  hatch: it fires `publish.yml`/`release.yml` directly, and `publish.yml` skips any
+  hatch: it fires `publish.yml` and its downstream archive upload, and `publish.yml` skips any
   version already live, so re-fired tags are idempotent.
 - **Why a PAT.** `semantic-release.yml` pushes the bump commit + tag with `RELEASE_PAT`
   (sourced from the `GH_TOKEN` gh-secrets item). The default `GITHUB_TOKEN` can neither
