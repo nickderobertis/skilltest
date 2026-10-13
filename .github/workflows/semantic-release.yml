@@ -1,7 +1,13 @@
 # Lockstep versioning. Called by ci.yml on every ordinary push to main, and only
 # once that commit's broader tier has passed: the full sweep (`just check all`)
-# and every live e2e suite. A red sweep or live suite therefore cuts no release.
-# Not triggered on its own, so nothing can release an unswept commit.
+# and every gating live suite. A red sweep or gating live suite therefore cuts
+# no release on its own.
+#
+# workflow_dispatch is the one manual lever: a maintainer runs it on main to
+# release main's head without waiting for (or re-running) that sweep — for a
+# commit already merged through PR CI whose broader tier failed for a reason no
+# commit can fix. It skips the gate by design, so it is a person's decision, never
+# automation's.
 #
 # On merge to main, semantic-release reads the conventional
 # commits, computes the next 0.x version, writes it into every manifest + lockfile
@@ -19,6 +25,7 @@ name: semantic-release
 
 on:
   workflow_call:
+  workflow_dispatch:
 
 concurrency:
   group: semantic-release
@@ -32,6 +39,7 @@ jobs:
     runs-on: ubuntu-latest
     if: >-
       github.repository == 'nickderobertis/skilltest' &&
+      github.ref == 'refs/heads/main' &&
       !startsWith(github.event.head_commit.message, 'chore(release):')
     steps:
       - uses: actions/checkout@v4

@@ -156,12 +156,14 @@ jobs:
     secrets: inherit
 
   # The called workflow repeats the repository and `chore(release):` guards.
+  # live-copilot is advisory: it still runs on every push to main, but the
+  # Copilot plan's usage limit fails it for reasons no commit can fix, so the
+  # release does not wait on it (ADVISORY_LIVE in scripts/check-workflow-routing.py).
   release:
     needs:
       - check
       - live-claude
       - live-codex
-      - live-copilot
       - live-crush
       - live-cursor
       - live-goose
