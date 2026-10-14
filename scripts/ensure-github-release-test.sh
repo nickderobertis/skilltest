@@ -88,6 +88,9 @@ major_section='# [1.0.0](https://github.com/nickderobertis/skilltest/compare/v0.
     git -C "$repo" config user.email test@example.invalid &&
     git -C "$repo" config user.name "ensure-github-release-test" &&
     printf '# Changelog\n\n%s\n\n## [0.13.0](https://github.com/nickderobertis/skilltest/compare/v0.12.2...v0.13.0) (2026-10-13)\n\n### Features\n\n* an older change\n' "$tagged_section" >"$repo/CHANGELOG.md" &&
+    # Older history well past a pipe buffer, so reading the top section must
+    # not stop the changelog's reader early.
+    for _ in $(seq 1 5000); do printf '* an older change with a long enough description to fill the pipe\n'; done >>"$repo/CHANGELOG.md" &&
     git -C "$repo" add CHANGELOG.md && git -C "$repo" commit -qm "chore(release): 0.14.0" &&
     git -C "$repo" tag v0.14.0 &&
     printf '# Changelog\n\n## [0.14.0] (rewritten later)\n\n* not what was released\n' >"$repo/CHANGELOG.md" &&
@@ -114,14 +117,18 @@ ensure() {
 ensure absent ok v0.14.0 CHANGELOG.md || fail "the script failed to create a missing release"
 grep -Eq '^release create v0\.14\.0 --verify-tag --title v0\.14\.0 --notes-file [^ ]+$' "$work/gh.log" ||
   fail "the script did not create the release from the existing tag (--verify-tag), titled with the tag; gh saw: $(cat "$work/gh.log")"
-[ "$(cat "$work/gh.log.notes")" = "$tagged_section" ] ||
-  fail "the release notes are not the v0.14.0 section of CHANGELOG.md as committed at the tag; got: $(cat "$work/gh.log.notes")"
+# Byte for byte: the committed section runs to the next version heading, so it
+# ends with the blank line before it.
+printf '%s\n\n' "$tagged_section" >"$work/expected" || fail "could not write $work/expected; check that $work is writable"
+cmp -s "$work/expected" "$work/gh.log.notes" ||
+  fail "the release notes are not, byte for byte, the v0.14.0 section of CHANGELOG.md as committed at the tag (heading through the blank line before the next version heading); diff: $(diff "$work/expected" "$work/gh.log.notes" | tr '\n' ' ')"
 ! grep -Eq '^release (edit|delete)' "$work/gh.log" || fail "the script edited or deleted a release while creating one"
 
 # A major version's single-# heading ends at the next (## minor) heading.
 ensure absent ok v1.0.0 CHANGELOG.md || fail "the script failed to create a missing major release"
-[ "$(cat "$work/gh.log.notes")" = "$major_section" ] ||
-  fail "the v1.0.0 notes are not its # [1.0.0] section up to the next version heading; got: $(cat "$work/gh.log.notes")"
+printf '%s\n\n' "$major_section" >"$work/expected" || fail "could not write $work/expected; check that $work is writable"
+cmp -s "$work/expected" "$work/gh.log.notes" ||
+  fail "the v1.0.0 notes are not, byte for byte, its # [1.0.0] section up to the next version heading; diff: $(diff "$work/expected" "$work/gh.log.notes" | tr '\n' ' ')"
 
 # (b) The release exists: nothing but the lookup reaches gh.
 ensure exists ok v0.14.0 CHANGELOG.md || fail "the script failed when the release already exists"
@@ -146,6 +153,11 @@ expect_red "gh refuses the lookup for auth" "gh could not look up release v0.14.
 expect_red "gh refuses the create" "gh could not create release v0.14.0 (HTTP 403" absent refused v0.14.0 CHANGELOG.md
 expect_red "the tagged changelog has no section for the version" "CHANGELOG.md at v0.15.0 has no section for 0.15.0" absent ok v0.15.0 CHANGELOG.md
 expect_red "the changelog is not committed at the tag" "NEWS.md is not committed at v0.14.0" absent ok v0.14.0 NEWS.md
+# The notes file is written under $TMPDIR; one that cannot hold it is named.
+if TMPDIR="$work/absent" ensure absent ok v0.14.0 CHANGELOG.md; then fail "the script succeeded with no writable TMPDIR for its notes"; fi
+grep -Fq "could not create a temporary file for the release notes" "$work/out" ||
+  fail "the script did not name the release-notes file it could not create"
+! grep -q '^release create' "$work/gh.log" || fail "the script attempted a create without its notes"
 status=0
 ensure absent ok v0.14.0 || status=$?
 [ "$status" = 2 ] || fail "the script exited $status, not 2, without a changelog path"

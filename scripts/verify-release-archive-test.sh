@@ -354,6 +354,14 @@ fi
 grep -Fq "invalid or duplicate target '../escape'" "$work/out" ||
   fail "the aggregation refused a malformed declaration without naming it; restore the target check's message in scripts/verify-staged-archives.sh"
 
+# A missing checksum declaration is named rather than read as no checksums.
+{ rm "$work/tree/scripts/release-checksums.txt" && : >"$work/out"; } || fail "could not remove the scratch checksum declaration; check that $work is writable"
+if "$BASH" "$work/tree/scripts/verify-release-archive.sh" --checksum-names x86_64-unknown-linux-gnu skilltest >"$work/out" 2>&1; then
+  fail "the verifier accepted a tree with no scripts/release-checksums.txt"
+fi
+grep -Fq "could not read $work/tree/scripts/release-checksums.txt" "$work/out" ||
+  fail "the verifier did not name the checksum declaration it could not read; restore that message in scripts/verify-release-archive.sh"
+
 # A checksum declaration that could escape the archive's directory, names one
 # file twice, or names none is refused by both of its readers (the verifier
 # and the stager) before any path is built from it.

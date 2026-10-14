@@ -277,7 +277,8 @@ assert.deepEqual(ghCalls[created].args.slice(0, 6), [
   "--title",
   `v${version}`,
 ]);
-assert.equal(readFileSync(`${uploadLog}.notes`, "utf8"), `${notes}\n`);
+// The section runs to the next version heading, its blank line included.
+assert.equal(readFileSync(`${uploadLog}.notes`, "utf8"), `${notes}\n\n`);
 // An undeclared asset staged in products stops the upload before any is sent.
 const stray = join(fixture, "products", platforms[0].target, "skilltest-undeclared.zip");
 writeFileSync(stray, "not a declared release asset");

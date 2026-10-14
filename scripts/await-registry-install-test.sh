@@ -92,6 +92,7 @@ info="$VENV/Lib/site-packages/skilltest_sdk-$version.dist-info"
   printf 'Wheel-Version: 1.0\r\nGenerator: test\r\nRoot-Is-Purelib: false\r\nTag: py3-none-%s\r\n' "$tag" >"$info/WHEEL"; } ||
   broken "write $info/WHEEL"
 [ -z "${UV_FAILS:-}" ] || { echo "error: Failed to install skilltest-sdk" >&2; exit 1; }
+[ -z "${WHEEL_UNREADABLE:-}" ] || chmod 000 "$info/WHEEL" || broken "make $info/WHEEL unreadable"
 EOF
 chmod +x "$work/bin/npm" "$work/bin/uv" || fail "could not make the registry doubles executable; check that $work honors chmod"
 
@@ -259,6 +260,18 @@ expect_usage "the attempt bound is not a positive number" "unset them to use the
 expect_usage "the interval is not a number" "unset them to use the defaults" \
   SKILLTEST_REGISTRY_INTERVAL=soon bash "$script" npm x86_64-pc-windows-msvc 0.14.0 "$consumer"
 
+# Unreadable install metadata is named, not read as a missing wheel. Root
+# reads any file, so this needs an ordinary user, as CI runners are.
+if [ "$(id -u)" != 0 ]; then
+  if await pypi x86_64-pc-windows-msvc 0 win_amd64 WHEEL_UNREADABLE=1; then
+    fail "the PyPI install succeeded although its WHEEL metadata could not be read"
+  fi
+  grep -Fq "could not read $work/consumer-pypi/Lib/site-packages/skilltest_sdk-0.14.0.dist-info/WHEEL" "$work/out" ||
+    fail "the PyPI failure did not name the WHEEL file it could not read"
+  [ "$(calls)" = 1 ] || fail "the script retried after it could not read the installed metadata; that is not a registry delay"
+  chmod -R u+rwX "$work/consumer-pypi" || fail "could not make $work/consumer-pypi readable again; delete it by hand"
+fi
+
 # A declared npm_package that could leave node_modules is refused before any
 # install: the script runs from a scratch tree holding that declaration.
 { mkdir -p "$work/tree/scripts" && cp scripts/await-registry-install.sh "$work/tree/scripts/" &&
@@ -271,5 +284,13 @@ fi
 grep -Fq "declares npm_package '../../escape' for x86_64-pc-windows-msvc, which is not a valid npm_package" "$work/out" ||
   fail "the script refused a malformed npm_package without naming it"
 [ "$(calls)" = 0 ] || fail "the script installed before refusing a malformed npm_package"
+
+# A tree with no release-platforms.toml is named before any install.
+rm "$work/tree/release-platforms.toml" || fail "could not remove the scratch declaration; check that $work is writable"
+if env PATH="$work/bin:$PATH" CALLS="$work/calls" bash "$work/tree/scripts/await-registry-install.sh" npm x86_64-pc-windows-msvc 0.14.0 "$consumer" >"$work/out" 2>&1; then
+  fail "the script succeeded with no release-platforms.toml to read the target from"
+fi
+grep -Fq "could not read release-platforms.toml" "$work/out" || fail "the script did not name the release-platforms.toml it could not read"
+[ "$(calls)" = 0 ] || fail "the script installed without a platform declaration"
 
 echo "await-registry-install-test: npm and PyPI installs wait for the target's platform package and wheel, and name the one that never arrives"

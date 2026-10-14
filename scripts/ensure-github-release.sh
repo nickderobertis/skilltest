@@ -42,9 +42,16 @@ case "$viewed" in
   *) err "gh could not look up release $tag ($viewed); check GH_TOKEN's access to the repository and rerun" ;;
 esac
 
-committed="$(git show "$tag:$changelog" 2>&1)" ||
-  err "$changelog is not committed at $tag ($committed); check the changelog path and that semantic-release's changelog step committed it"
-notes="$(awk -v version="$version" '
+checked="$(git cat-file -e "$tag:$changelog" 2>&1)" ||
+  err "$changelog is not committed at $tag ($checked); check the changelog path and that semantic-release's changelog step committed it"
+
+body="$(mktemp)" || err "could not create a temporary file for the release notes; check that \$TMPDIR is writable"
+trap 'rm -f "$body" || echo "ensure-github-release: could not remove $body; delete it by hand" >&2' EXIT
+# Streamed straight into the notes file, never through a command substitution,
+# so the section keeps its exact bytes, trailing blank lines included. awk reads
+# to the end rather than exiting at the section's end, so git show is never cut
+# off by a closed pipe (which pipefail would report as a failure).
+git show "$tag:$changelog" | awk -v version="$version" '
   function heading(line) { return line ~ /^##? \[?[0-9]+\.[0-9]+\.[0-9]+[^ ]*(\]| |\(|$)/ }
   function named(line,   v) {
     v = line
@@ -52,16 +59,12 @@ notes="$(awk -v version="$version" '
     sub(/[] (].*$/, "", v)
     return v == version
   }
-  inside && heading($0) { exit }
-  !inside && heading($0) && named($0) { inside = 1 }
-  inside { print }
-' <<<"$committed")" || err "could not extract $version's section from $changelog at $tag (reason above); check that awk is on PATH"
-[ -n "$notes" ] ||
+  inside && heading($0) { done = 1 }
+  !inside && !done && heading($0) && named($0) { inside = 1 }
+  inside && !done { print }
+' >"$body" || err "could not extract $version's section from $changelog at $tag into $body (reason above); check that git and awk are on PATH and \$TMPDIR has space"
+[ -s "$body" ] ||
   err "$changelog at $tag has no section for $version; check that semantic-release's changelog step wrote it, or create the release by hand"
-
-body="$(mktemp)" || err "could not create a temporary file for the release notes; check that \$TMPDIR is writable"
-trap 'rm -f "$body" || echo "ensure-github-release: could not remove $body; delete it by hand" >&2' EXIT
-printf '%s\n' "$notes" >"$body" || err "could not write the release notes to $body; check that \$TMPDIR has space"
 
 if created="$(gh release create "$tag" --verify-tag --title "$tag" --notes-file "$body" 2>&1)"; then
   echo "ensure-github-release: created release $tag from its changelog section"
