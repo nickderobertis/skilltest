@@ -4,6 +4,10 @@
 # the same proof oneharness's own oh_mock_enforce phase makes, now through the
 # whole skilltest pipeline. Matchers use `contains` on the raw event (never a
 # tool name), so one fixture works on every harness's tool naming.
+#
+# The criterion asks only about the reply text, because the judge never sees
+# tool output; `e2e_assert_mock` decides whether the canned output reached the
+# model (docs/e2e.md).
 name: live_mock_stub
 skill: ../skills/toolrunner
 input: "Run the marked command and report its output."
@@ -16,4 +20,4 @@ evals:
     mock: marker
   - type: boolean
     name: canned-output-reported
-    criterion: "the assistant's reply reports the command output as `CANNED-BY-SKILLTEST` (and NOT as MARKER-LIVE)"
+    criterion: "the assistant's reply states that the command's output was `CANNED-BY-SKILLTEST` (judge the reply text only: this transcript shows no tool output, so do not require it)"

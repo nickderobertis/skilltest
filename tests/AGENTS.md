@@ -18,7 +18,10 @@ and authored for the `skilltest-fake-provider`.
 - `fixtures/cases/*.yaml` — sample test cases. Each names the journey it covers
   (`greet_pass`, `greet_fail`, `greet_numeric`, `booking_multiturn`).
 - `fixtures/oneharness/` — the hermetic tier: the `fake-claude.sh` shim (a
-  scripted claude CLI that executes the installed mock hook) + its `cases/`.
+  scripted claude CLI that executes the installed mock hook) + its `cases/`,
+  and `fake-codex.sh`, a scripted codex following the live `toolrunner` skill
+  (`FAKE_CODEX_SCENARIO` picks its behavior) that the codex mock-phase tests
+  run `scripts/e2e-lib.sh`'s live mock phase over.
 - `fixtures/smoke/` — a self-contained case (`greet.skilltest.yaml`) **and its own
   skill copy**, used by the bundle smoke (`scripts/smoke-{python,npm}-bundle.sh`).
   Kept standalone — no shared skill, no `conftest` above it — so it can be copied into

@@ -25,7 +25,8 @@
 # `--append-system-prompt`, using the same markers the fake provider uses
 # (tests/AGENTS.md): `fake-reply: <text>` is the reply; each
 # `fake-tool: <name> <command>` is one tool call. A prompt asking for a JSON
-# verdict (skilltest's judge prompt) gets `{"value": true, …}` so judge-backed
+# verdict (skilltest's judge prompt) gets `{"value": true, …}` (or the
+# boolean FAKE_CLAUDE_VERDICT) so judge-backed
 # evals can coexist with the deterministic ones — but note judge runs arrive
 # WITHOUT `--settings` (skilltest never mocks the judge), which
 # `JUDGE_SAW_SETTINGS` in the reply would expose if that ever regressed.
@@ -106,6 +107,16 @@ if [ -n "${ROLE_SLEEP:-}" ] && ! sleep "$ROLE_SLEEP"; then
     exit 2
 fi
 
+# A boolean judge answers FAKE_CLAUDE_VERDICT (default true), so a test can
+# show a failing eval decides a run.
+verdict="${FAKE_CLAUDE_VERDICT:-true}"
+case "$verdict" in
+    true | false) ;;
+    *)
+        echo "fake-claude: FAKE_CLAUDE_VERDICT must be true or false, got '$verdict'; fix it and rerun the integration test" >&2
+        exit 2 ;;
+esac
+
 # A judge/user-simulation run (no skill => no --append-system-prompt): reply
 # with a passing verdict so judge-backed evals resolve deterministically.
 if [ -z "$system" ]; then
@@ -118,7 +129,7 @@ if [ -z "$system" ]; then
         if [[ "$prompt" == *"Score how well"* ]]; then
             text='{"value": 9, "reason": "fake-claude numeric judge"}'
         else
-            text='{"value": true, "reason": "fake-claude judge"}'
+            text="{\"value\": $verdict, \"reason\": \"fake-claude judge\"}"
         fi
     else
         text="continue"

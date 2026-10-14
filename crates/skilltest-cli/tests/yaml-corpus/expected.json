@@ -808,7 +808,7 @@
         "type": "called"
       },
       {
-        "criterion": "the assistant's reply reports the command output as `CANNED-BY-SKILLTEST` (and NOT as MARKER-LIVE)",
+        "criterion": "the assistant's reply states that the command's output was `CANNED-BY-SKILLTEST` (judge the reply text only: this transcript shows no tool output, so do not require it)",
         "expected": true,
         "name": "canned-output-reported",
         "type": "boolean"
