@@ -8,7 +8,8 @@
 #
 # Usage: verify-staged-archives.sh <products-dir> <version> [--list-assets]
 #   --list-assets prints the verified archive and checksum paths, one per line,
-#   instead of the summary, for release.yml to upload exactly that set.
+#   instead of the summary, for release.yml to upload exactly that set: each
+#   archive and every checksum name scripts/release-checksums.txt declares.
 #
 # Quiet on success, one line (or the asset list). Exit codes: 0 verified;
 # 1 a declared archive is missing or bad, or an undeclared asset is staged;
@@ -52,9 +53,14 @@ while read -r target bin; do
   bash "$here/verify-release-archive.sh" "$products/$target" "$target" "$bin" "$version" --contents-only >/dev/null ||
     err "the staged $target archive failed verification (reason above); restage it by re-running publish.yml"
   case "$bin" in *.exe) asset="skilltest-$target.zip" ;; *) asset="skilltest-$target.tar.gz" ;; esac
+  checksums="$(bash "$here/verify-release-archive.sh" --checksum-names "$target" "$bin")" ||
+    err "could not read the declared checksum names for $target (reason above); restore scripts/release-checksums.txt"
   assets="$assets$products/$target/$asset
-$products/$target/$asset.sha256
 "
+  while read -r name; do
+    assets="$assets$products/$target/$name
+"
+  done <<<"$checksums"
   count=$((count + 1))
 done <<<"$platforms"
 

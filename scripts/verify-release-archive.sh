@@ -5,9 +5,13 @@
 # the release. release.yml runs it on each target's own runner against the
 # asset it just uploaded, so Windows' .zip is proven as published.
 #
-# Usage: verify-release-archive.sh <dir> <target> <bin> <version>
-#   <dir> holds skilltest-<target>.<tar.gz|zip> and its .sha256; <bin> is
-#   skilltest or skilltest.exe (a .exe ships as a .zip); <version> is X.Y.Z.
+# Usage: verify-release-archive.sh <dir> <target> <bin> <version> [--contents-only]
+#        verify-release-archive.sh --checksum-names <target> <bin>
+#   <dir> holds skilltest-<target>.<tar.gz|zip> and every checksum file
+#   scripts/release-checksums.txt names beside it; <bin> is skilltest or
+#   skilltest.exe (a .exe ships as a .zip); <version> is X.Y.Z.
+#   --checksum-names prints those checksum file names, one per line, and is
+#   how the other release scripts read the declaration.
 #
 # Quiet on success, one line. Exit codes: 0 verified; 1 the archive is
 # missing, wrong or does not run; 2 invalid invocation.
@@ -18,22 +22,53 @@ err() {
   exit 1
 }
 
-usage="usage: verify-release-archive.sh <dir> <target> <bin> <version>; pass the download directory, a target triple, skilltest or skilltest.exe, and the release version X.Y.Z"
+usage="usage: verify-release-archive.sh <dir> <target> <bin> <version> [--contents-only], or --checksum-names <target> <bin>; pass the download directory, a target triple, skilltest or skilltest.exe, and the release version X.Y.Z"
 usage_err() {
   echo "verify-release-archive: $1" >&2
   exit 2
 }
-{ [ "$#" -eq 4 ] || { [ "$#" -eq 5 ] && [ "$5" = --contents-only ]; }; } && [ -d "$1" ] || usage_err "$usage"
-dir="$1" target="$2" bin="$3" version="$4"
+if [ "${1:-}" = --checksum-names ]; then
+  [ "$#" -eq 3 ] || usage_err "$usage"
+  names_only=1 target="$2" bin="$3"
+else
+  { [ "$#" -eq 4 ] || { [ "$#" -eq 5 ] && [ "$5" = --contents-only ]; }; } && [ -d "$1" ] || usage_err "$usage"
+  names_only="" dir="$1" target="$2" bin="$3" version="$4"
+  [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]] || usage_err "version '$version' is not X.Y.Z; $usage"
+fi
 [[ "$target" =~ ^[A-Za-z0-9_]+(-[A-Za-z0-9_]+)+$ ]] || usage_err "target '$target' is not a target triple; $usage"
-[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]] || usage_err "version '$version' is not X.Y.Z; $usage"
 case "$bin" in
   skilltest.exe) asset="skilltest-$target.zip" ;;
   skilltest) asset="skilltest-$target.tar.gz" ;;
   *) usage_err "bin '$bin' is neither skilltest nor skilltest.exe; $usage" ;;
 esac
+
+here="${BASH_SOURCE[0]%/*}"
+[ "$here" != "${BASH_SOURCE[0]}" ] || here=.
+declared="$here/release-checksums.txt"
+checksums=()
+while IFS= read -r line || [ -n "$line" ]; do
+  line="${line%$'\r'}"
+  case "$line" in '' | '#'*) continue ;; esac
+  line="${line//\{asset\}/$asset}"
+  line="${line//\{target\}/$target}"
+  # Each name is joined onto <dir>, so it must be one plain, unique file name.
+  [[ "$line" =~ ^skilltest-[A-Za-z0-9_.-]+\.sha256$ ]] ||
+    err "$declared declares '$line' for $target, which is not a skilltest-*.sha256 file name; use only {asset} and {target} in a plain file name"
+  for name in ${checksums[@]+"${checksums[@]}"}; do
+    [ "$name" != "$line" ] || err "$declared declares $line twice for $target; remove the duplicate line"
+  done
+  checksums+=("$line")
+done <"$declared" || err "could not read $declared; restore it from a complete checkout"
+[ "${#checksums[@]}" -gt 0 ] || err "$declared names no checksum file; restore its file-name lines"
+if [ -n "$names_only" ]; then
+  printf '%s\n' "${checksums[@]}"
+  exit 0
+fi
+
 [ -f "$dir/$asset" ] || err "$dir has no $asset; check release.yml's archive name and that the upload step ran"
-[ -f "$dir/$asset.sha256" ] || err "$dir has no $asset.sha256; check release.yml's checksum setting"
+for name in "${checksums[@]}"; do
+  [ -f "$dir/$name" ] || err "$dir has no $name; stage it with scripts/stage-and-verify-release-product.py, which writes every name scripts/release-checksums.txt declares"
+done
 
 if command -v sha256sum >/dev/null 2>&1; then
   hashed="$(sha256sum "$dir/$asset")" || err "sha256sum could not hash $dir/$asset; check its permissions and re-download it"
@@ -41,10 +76,14 @@ else
   hashed="$(shasum -a 256 "$dir/$asset")" || err "shasum could not hash $dir/$asset, and sha256sum is not on PATH; check the archive's permissions, or install coreutils' sha256sum, and rerun"
 fi
 actual="${hashed%% *}"
-recorded="$(tr -d '\r' <"$dir/$asset.sha256")" || err "could not read $dir/$asset.sha256; check its permissions and re-download it"
-expected="${recorded%% *}"
-[ "$expected" = "$actual" ] ||
-  err "checksum mismatch for $asset (its .sha256 says $expected, the archive hashes to $actual); re-run release.yml for $target"
+for name in "${checksums[@]}"; do
+  recorded="$(tr -d '\r' <"$dir/$name")" || err "could not read $dir/$name; check its permissions and re-download it"
+  expected="${recorded%% *}"
+  [ "$expected" = "$actual" ] ||
+    err "checksum mismatch for $asset (its $name says $expected, the archive hashes to $actual); re-run release.yml for $target"
+  [ "$recorded" = "$actual  $asset" ] ||
+    err "$name does not hold the one line '$actual  $asset'; restage it with scripts/stage-and-verify-release-product.py"
+done
 
 # The archive must hold exactly the binary at its root, checked from its
 # listing before anything is written, so no entry can land outside $out.

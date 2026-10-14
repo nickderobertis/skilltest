@@ -391,6 +391,29 @@ test("release artifact authority retains every platform and enforces pre-publica
     assert.ok(
       job.steps.some((s) => /bash scripts\/verify-staged-archives\.sh products /.test(s.run ?? "")),
     );
+  // The upload ensures the tag's release itself (scripts/ensure-github-release-test.sh)
+  // before uploading, rather than relying on semantic-release's GitHub step.
+  const upload = graph["release.yml"].jobs.upload.steps.map((s) => s.run ?? "").join("\n");
+  const ensured = upload.indexOf('bash scripts/ensure-github-release.sh "$TAG" CHANGELOG.md');
+  assert.ok(ensured >= 0 && ensured < upload.indexOf("gh release upload"));
+  assert.doesNotMatch(upload, /gh release (create|edit|delete)/);
+  // The Windows install proof waits on each registry for the matrix target's
+  // own platform package and wheel. Its run bodies need a Windows runner and
+  // the live registries, so they are held structurally here; the helper they
+  // call is driven end to end by scripts/await-registry-install-test.sh.
+  const verifyWindows = publish["verify-windows"].steps;
+  for (const [registry, runs] of [
+    ["pypi", "verify_bundled.py"],
+    ["npm", "verify-bundled.mjs"],
+  ]) {
+    const step = verifyWindows.find((s) =>
+      (s.run ?? "").includes(`bash scripts/await-registry-install.sh ${registry} "$TARGET"`),
+    );
+    assert.ok(step, registry);
+    assert.equal(step.env.TARGET, "${{ matrix.target }}");
+    assert.ok(step.run.indexOf("await-registry-install.sh") < step.run.indexOf(runs), registry);
+    assert.doesNotMatch(step.run, /for i in|sleep/);
+  }
   for (const script of [
     "stage-release-product.sh",
     "verify-release-archive.sh",
@@ -830,6 +853,15 @@ print(json.dumps([bool(m.VERSION.fullmatch(v)) for v in json.loads(sys.argv[2])]
     assert.notEqual(result.status, 0, "the scratch directory holds no archive");
     return !/is not X\.Y\.Z|usage:/.test(result.stderr);
   });
+  const consumer = samples.map((v) => {
+    const result = spawnSync(
+      "bash",
+      ["scripts/await-registry-install.sh", "npm", "x86_64-pc-windows-msvc", v, root],
+      { encoding: "utf8" },
+    );
+    assert.notEqual(result.status, 0, "the scratch directory is no npm consumer");
+    return !/is not X\.Y\.Z/.test(result.stderr);
+  });
   const expected = samples.map((v) => releaseVersion.test(v));
   assert.ok(expected.some(Boolean) && !expected.every(Boolean));
   assert.deepEqual(python(".github/semantic-version-diff.py"), expected);
@@ -837,6 +869,7 @@ print(json.dumps([bool(m.VERSION.fullmatch(v)) for v in json.loads(sys.argv[2])]
   assert.deepEqual(shell, expected);
   assert.deepEqual(writer, expected);
   assert.deepEqual(verifier, expected);
+  assert.deepEqual(consumer, expected);
 });
 
 // llmlint: ignore[shell_test_tiers_stay_split] loadGraph reads the lock and fixture relative to its working directory, so each corruption runs it in a scratch copy; no network, service or model is reached.

@@ -54,8 +54,10 @@ for (const path of [
   "plugins/vitest",
   "scripts/verify-release-archive.sh",
   "scripts/verify-staged-archives.sh",
+  "scripts/release-checksums.txt",
   "scripts/stage-and-verify-release-product.py",
   "scripts/check-release-identity.sh",
+  "scripts/ensure-github-release.sh",
 ])
   cpSync(path, join(fixture, path), {
     recursive: true,
@@ -86,6 +88,11 @@ cpSync(join(work, "native-products"), join(fixture, "products", native), { recur
 for (const path of ["sdks/typescript", "plugins/vitest"])
   symlinkSync(resolve(path, "node_modules"), join(fixture, path, "node_modules"), "dir");
 const version = JSON.parse(readFileSync("sdks/typescript/package.json", "utf8")).version;
+const notes = `## [${version}](https://github.com/nickderobertis/skilltest/compare/v0.0.0...v${version}) (2026-10-13)\n\n### Bug Fixes\n\n* the staged release`;
+writeFileSync(
+  join(fixture, "CHANGELOG.md"),
+  `# Changelog\n\n${notes}\n\n## [0.0.0] (2026-01-01)\n`,
+);
 const git = (...args) => execFileSync("git", args, { cwd: fixture, encoding: "utf8" }).trim();
 git("init", "--quiet");
 git("config", "user.email", "packaging@example.invalid");
@@ -114,7 +121,13 @@ flags=int(os.environ['PUBLISHED_FLAGS'])
 if command=='git' and args[0]=='fetch': record();sys.exit(0)
 if command=='gh':
     record()
-    if args[:2]==['release','view']:sys.exit(0 if os.environ.get('EXISTING_RELEASE')=='1' else 1)
+    if args[:2]==['release','view']:
+        if os.environ.get('EXISTING_RELEASE')=='1':sys.exit(0)
+        if any(json.loads(line)['args'][:2]==['release','create'] for line in log.read_text().splitlines()):sys.exit(0)
+        sys.stderr.write('release not found\\n');sys.exit(1)
+    if args[:2]==['release','create']:
+        notes=args[args.index('--notes-file')+1]
+        pathlib.Path(os.environ['TRANSPORT_LOG']+'.notes').write_text(pathlib.Path(notes).read_text())
     if args[:2]==['release','upload']:
         if os.environ.get('UPLOAD_FAILS')=='1':sys.exit(1)
         for path in args[2:]:
@@ -244,9 +257,28 @@ const uploads = readFileSync(uploadLog, "utf8")
 // Exactly the declared archives and checksums reach the forge, nothing else.
 const declaredAssets = platforms.flatMap((p) => {
   const asset = `products/${p.target}/skilltest-${p.target}.${p.bin.endsWith(".exe") ? "zip" : "tar.gz"}`;
-  return [asset, `${asset}.sha256`];
+  return [asset, `${asset}.sha256`, `products/${p.target}/skilltest-${p.target}.sha256`];
 });
 assert.deepEqual([...new Set(uploads)].sort(), declaredAssets.sort());
+// With no release yet, the upload job creates it from the tag's changelog
+// section before uploading, so the archives never wait on semantic-release.
+const ghCalls = readFileSync(uploadLog, "utf8")
+  .trim()
+  .split("\n")
+  .map((line) => JSON.parse(line))
+  .filter((c) => c.command === "gh");
+const created = ghCalls.findIndex((c) => c.args[1] === "create");
+assert.ok(created >= 0 && created < ghCalls.findIndex((c) => c.args[1] === "upload"));
+assert.deepEqual(ghCalls[created].args.slice(0, 6), [
+  "release",
+  "create",
+  `v${version}`,
+  "--verify-tag",
+  "--title",
+  `v${version}`,
+]);
+// The section runs to the next version heading, its blank line included.
+assert.equal(readFileSync(`${uploadLog}.notes`, "utf8"), `${notes}\n\n`);
 // An undeclared asset staged in products stops the upload before any is sent.
 const stray = join(fixture, "products", platforms[0].target, "skilltest-undeclared.zip");
 writeFileSync(stray, "not a declared release asset");
@@ -405,20 +437,27 @@ const wheelArchive = join(
   `skilltest-${platforms[0].target}.${platforms[0].bin.endsWith(".exe") ? "zip" : "tar.gz"}`,
 );
 const wheelArchiveBytes = readFileSync(wheelArchive);
-const wheelChecksum = `${wheelArchive}.sha256`;
-const wheelChecksumText = readFileSync(wheelChecksum, "utf8");
+const wheelChecksums = [
+  `${wheelArchive}.sha256`,
+  join(wheelDir, `skilltest-${platforms[0].target}.sha256`),
+];
+const wheelChecksumText = readFileSync(wheelChecksums[0], "utf8");
 for (const [mutation, message] of [
   ["missing", /missing staged archive/],
+  ["missing-checksum", /missing staged checksum: .*\.tar\.gz\.sha256/],
+  ["missing-legacy-checksum", /missing staged checksum: .*-gnu\.sha256/],
   ["checksum", /staged archive checksum differs/],
   ["widened", /unexpected archive contents/],
 ]) {
   if (mutation === "missing") rmSync(wheelArchive);
-  if (mutation === "checksum") writeFileSync(wheelChecksum, `${"0".repeat(64)}  x\n`);
+  if (mutation === "missing-checksum") rmSync(wheelChecksums[0]);
+  if (mutation === "missing-legacy-checksum") rmSync(wheelChecksums[1]);
+  if (mutation === "checksum") writeFileSync(wheelChecksums[1], `${"0".repeat(64)}  x\n`);
   if (mutation === "widened")
     execFileSync("python3", [
       "-c",
       `import hashlib,io,os,sys,tarfile,zipfile
-path,checksum=sys.argv[1:]
+path,*checksums=sys.argv[1:]
 if path.endswith('.zip'):
  with zipfile.ZipFile(path,'a') as z: z.writestr('extra','x')
 else:
@@ -426,9 +465,9 @@ else:
  with tarfile.open(path,'w:gz') as t:
   for m,data in entries: t.addfile(m,io.BytesIO(data))
   extra=tarfile.TarInfo('extra');extra.size=1;t.addfile(extra,io.BytesIO(b'x'))
-open(checksum,'w').write(hashlib.sha256(open(path,'rb').read()).hexdigest()+'  '+os.path.basename(path)+'\\n')`,
+for checksum in checksums: open(checksum,'w').write(hashlib.sha256(open(path,'rb').read()).hexdigest()+'  '+os.path.basename(path)+'\\n')`,
       wheelArchive,
-      wheelChecksum,
+      ...wheelChecksums,
     ]);
   writeFileSync(wheelLog, "");
   result = run(commands.pypi, 0, wheelLog);
@@ -436,7 +475,7 @@ open(checksum,'w').write(hashlib.sha256(open(path,'rb').read()).hexdigest()+'  '
   assert.match(result.stderr, message);
   assert.equal(readFileSync(wheelLog, "utf8"), "");
   writeFileSync(wheelArchive, wheelArchiveBytes);
-  writeFileSync(wheelChecksum, wheelChecksumText);
+  for (const checksum of wheelChecksums) writeFileSync(checksum, wheelChecksumText);
 }
 const extraWheel = join(wheelDir, "unexpected.whl");
 writeFileSync(extraWheel, wheelBytes);

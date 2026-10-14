@@ -39,8 +39,14 @@ curl -fsSL https://raw.githubusercontent.com/nickderobertis/skilltest/main/scrip
 
 Pin a version or install location with `SKILLTEST_VERSION` and
 `SKILLTEST_INSTALL_DIR`; the script verifies the sha256 checksum before
-installing. On Windows, download `skilltest-<target>.zip` (`x86_64-pc-windows-msvc`
-or `aarch64-pc-windows-msvc`) and its `.sha256` from the release.
+installing. Each release carries, beside `skilltest-<target>.tar.gz` (or `.zip`),
+its checksum under two names holding the same line:
+`skilltest-<target>.tar.gz.sha256` (`.zip.sha256`) and `skilltest-<target>.sha256`,
+the only one releases up to v0.13.0 carry, which the script falls back to. On
+Windows, download `skilltest-<target>.zip` (`x86_64-pc-windows-msvc` or
+`aarch64-pc-windows-msvc`) and either checksum from the release. The archives are
+uploaded once the tag's registry publish completes, creating the GitHub Release if
+semantic-release has not, so they never depend on its GitHub step.
 
 The SDKs bundle the CLI, so `pip install skilltest-sdk` or
 `pnpm add @skill-test/sdk` needs no separate binary on any of those platforms:

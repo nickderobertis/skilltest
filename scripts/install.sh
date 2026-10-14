@@ -109,13 +109,20 @@ main() {
 	trap 'rm -rf "$tmp"' EXIT
 
 	download "$url" "$tmp/$asset" || err "failed to download $url"
-	download "$url.sha256" "$tmp/$asset.sha256" ||
-		err "failed to download checksum $url.sha256"
+	# Releases from the next one on carry both checksum names; v0.1.0-v0.13.0
+	# carry only $BIN-<target>.sha256 (scripts/release-checksums.txt).
+	checksum="$asset.sha256"
+	if ! download "$base/$checksum" "$tmp/checksum" 2>/dev/null; then
+		checksum="$BIN-$target.sha256"
+		download "$base/$checksum" "$tmp/checksum" ||
+			err "release $version has neither checksum $asset.sha256 nor $checksum beside $asset, so it cannot be verified; check $base, or pick another SKILLTEST_VERSION"
+	fi
 
-	expected="$(awk '{print $1}' "$tmp/$asset.sha256")"
+	expected="$(awk '{print $1}' "$tmp/checksum" 2>/dev/null)" || expected=""
+	[ -n "$expected" ] || err "$checksum from release $version is empty or unreadable; re-download, or report the release"
 	actual="$(sha256_of "$tmp/$asset")"
 	[ "$expected" = "$actual" ] ||
-		err "checksum mismatch for $asset (expected $expected, got $actual)"
+		err "checksum mismatch for $asset (its $checksum says $expected, the download hashes to $actual); re-download, or report the release"
 
 	tar -xzf "$tmp/$asset" -C "$tmp"
 	[ -f "$tmp/$BIN" ] || err "archive did not contain a '$BIN' binary"

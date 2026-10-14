@@ -376,29 +376,30 @@ jobs:
           node-version: 22
           registry-url: https://registry.npmjs.org
 
+      # A fresh upload can take a minute to reach the index, and what reaches it
+      # first need not bundle this target's CLI: `uv publish` uploads the pure
+      # wheel before the platform wheels, and npm installs the SDK without an
+      # optional platform package it still 404s on. scripts/await-registry-install.sh
+      # retries (10 attempts, 30 s apart) until the target's platform wheel or
+      # package is what installed, then fails naming the one that never arrived.
       - name: Install the published skilltest-sdk and run its bundled CLI
+        env:
+          TARGET: ${{ matrix.target }}
         run: |
           set -euo pipefail
           version="$(grep -E '^version *= *"' sdks/python/pyproject.toml | head -1 | sed -E 's/^version *= *"([^"]+)".*/\1/')"
           uv venv --python 3.12 consumer-py
-          # A fresh upload can take a minute to reach the index; retry, then fail.
-          for i in $(seq 1 10); do
-            uv pip install --python consumer-py/Scripts/python.exe --refresh "skilltest-sdk==$version" && break
-            [ "$i" -eq 10 ] && { echo "error: skilltest-sdk==$version did not install from PyPI" >&2; exit 1; }
-            echo "waiting for skilltest-sdk==$version on PyPI ($i)…"; sleep 30
-          done
+          bash scripts/await-registry-install.sh pypi "$TARGET" "$version" consumer-py
           consumer-py/Scripts/python.exe sdks/python/scripts/verify_bundled.py "$version" tests/fixtures/smoke/greeter
 
       - name: Install the published @skill-test/sdk and run its bundled CLI
+        env:
+          TARGET: ${{ matrix.target }}
         run: |
           set -euo pipefail
           version="$(node -p "require('./sdks/typescript/package.json').version")"
           mkdir consumer-npm
+          (cd consumer-npm && npm init -y >/dev/null)
+          bash scripts/await-registry-install.sh npm "$TARGET" "$version" consumer-npm
           cd consumer-npm
-          npm init -y >/dev/null
-          for i in $(seq 1 10); do
-            npm install --no-audit --no-fund "@skill-test/sdk@$version" && break
-            [ "$i" -eq 10 ] && { echo "error: @skill-test/sdk@$version did not install from npm" >&2; exit 1; }
-            echo "waiting for @skill-test/sdk@$version on npm ($i)…"; sleep 30
-          done
           node ../sdks/typescript/scripts/verify-bundled.mjs "$version" ../tests/fixtures/smoke/greeter

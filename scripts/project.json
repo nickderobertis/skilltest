@@ -11,6 +11,11 @@
       "{projectRoot}/smoke-*-bundle.sh",
       "{projectRoot}/verify-release-archive*",
       "{projectRoot}/verify-staged-archives.sh",
+      "{projectRoot}/release-checksums.txt",
+      "{projectRoot}/check-release-checksum-docs*",
+      // llmlint: ignore[shell_test_tiers_stay_split] This project is release-packaging, itself the type:e2e host-tool tier (its release journey already drives real Git); ensure-github-release-test.sh runs from `just release-targets-check`, and listing it here only keys the lint cache to it.
+      "{projectRoot}/ensure-github-release*",
+      "{projectRoot}/await-registry-install*",
       "{projectRoot}/install.sh",
       "{projectRoot}/install-test.sh",
       "{workspaceRoot}/release-platforms.toml",
@@ -21,7 +26,7 @@
     "lint": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "uv run --no-sync shellcheck scripts/stage-release-product.sh scripts/release-product-test.sh scripts/check-release-identity.sh scripts/smoke-python-bundle.sh scripts/smoke-npm-bundle.sh scripts/verify-release-archive.sh scripts/verify-release-archive-test.sh scripts/verify-staged-archives.sh scripts/install-test.sh && uv run --no-sync ruff check scripts/stage-and-verify-release-product.py"
+        "command": "uv run --no-sync shellcheck scripts/stage-release-product.sh scripts/release-product-test.sh scripts/check-release-identity.sh scripts/smoke-python-bundle.sh scripts/smoke-npm-bundle.sh scripts/verify-release-archive.sh scripts/verify-release-archive-test.sh scripts/verify-staged-archives.sh scripts/install-test.sh scripts/ensure-github-release.sh scripts/ensure-github-release-test.sh scripts/await-registry-install.sh scripts/await-registry-install-test.sh scripts/check-release-checksum-docs.sh scripts/check-release-checksum-docs-test.sh && uv run --no-sync ruff check scripts/stage-and-verify-release-product.py"
       }
     },
     "typecheck": {
