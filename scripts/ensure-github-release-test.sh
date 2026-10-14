@@ -90,7 +90,7 @@ major_section='# [1.0.0](https://github.com/nickderobertis/skilltest/compare/v0.
     printf '# Changelog\n\n%s\n\n## [0.13.0](https://github.com/nickderobertis/skilltest/compare/v0.12.2...v0.13.0) (2026-10-13)\n\n### Features\n\n* an older change\n' "$tagged_section" >"$repo/CHANGELOG.md" &&
     # Older history well past a pipe buffer, so reading the top section must
     # not stop the changelog's reader early.
-    for _ in $(seq 1 5000); do printf '* an older change with a long enough description to fill the pipe\n'; done >>"$repo/CHANGELOG.md" &&
+    for ((line = 0; line < 5000; line++)); do printf '* an older change with a long enough description to fill the pipe\n'; done >>"$repo/CHANGELOG.md" &&
     git -C "$repo" add CHANGELOG.md && git -C "$repo" commit -qm "chore(release): 0.14.0" &&
     git -C "$repo" tag v0.14.0 &&
     printf '# Changelog\n\n## [0.14.0] (rewritten later)\n\n* not what was released\n' >"$repo/CHANGELOG.md" &&

@@ -12,6 +12,7 @@
       "{projectRoot}/verify-release-archive*",
       "{projectRoot}/verify-staged-archives.sh",
       "{projectRoot}/release-checksums.txt",
+      // llmlint: ignore[shell_test_tiers_stay_split] This project is release-packaging, itself the type:e2e host-tool tier (its release journey already drives real Git); ensure-github-release-test.sh runs from `just release-targets-check`, and listing it here only keys the lint cache to it.
       "{projectRoot}/ensure-github-release*",
       "{projectRoot}/await-registry-install*",
       "{projectRoot}/install.sh",
