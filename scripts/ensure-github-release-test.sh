@@ -34,6 +34,7 @@ fail() {
 mkdir -p "$work/bin" || fail "could not create $work/bin; check that $work is writable"
 cat >"$work/bin/gh" <<'EOF' || fail "could not write the gh double; check that $work is writable"
 #!/usr/bin/env bash
+set -euo pipefail
 printf '%s\n' "$*" >>"$GH_LOG"
 case "$1 $2" in
   "release view")
@@ -72,6 +73,12 @@ tagged_section='## [0.14.0](https://github.com/nickderobertis/skilltest/compare/
 ### Bug Fixes
 
 * **release:** publish both checksum names ([#88](https://github.com/nickderobertis/skilltest/issues/88))'
+# A major release, whose heading semantic-release writes with one #.
+major_section='# [1.0.0](https://github.com/nickderobertis/skilltest/compare/v0.14.0...v1.0.0) (2026-11-01)
+
+### ⚠ BREAKING CHANGES
+
+* go 1.0'
 {
   git init -q "$repo" &&
     git -C "$repo" config user.email test@example.invalid &&
@@ -82,7 +89,11 @@ tagged_section='## [0.14.0](https://github.com/nickderobertis/skilltest/compare/
     printf '# Changelog\n\n## [0.14.0] (rewritten later)\n\n* not what was released\n' >"$repo/CHANGELOG.md" &&
     git -C "$repo" commit -qam "docs: rewrite the changelog" &&
     printf '# Changelog\n\n## [0.14.0] (working tree)\n\n* uncommitted\n' >"$repo/CHANGELOG.md" &&
-    git -C "$repo" tag v0.15.0
+    git -C "$repo" tag v0.15.0 &&
+    printf '# Changelog\n\n%s\n\n%s\n' "$major_section" "$tagged_section" >"$repo/CHANGELOG.md" &&
+    git -C "$repo" commit -qam "chore(release): 1.0.0" &&
+    git -C "$repo" tag v1.0.0 &&
+    printf '# Changelog\n\n## [0.14.0] (working tree)\n\n* uncommitted\n' >"$repo/CHANGELOG.md"
 } || fail "could not build the fixture repository; check that git is on PATH and $work is writable"
 
 # $1 = GH_STATE, $2 = GH_CREATE, rest = the script's arguments.
@@ -102,6 +113,11 @@ grep -Eq '^release create v0\.14\.0 --verify-tag --title v0\.14\.0 --notes-file 
 [ "$(cat "$work/gh.log.notes")" = "$tagged_section" ] ||
   fail "the release notes are not the v0.14.0 section of CHANGELOG.md as committed at the tag; got: $(cat "$work/gh.log.notes")"
 ! grep -Eq '^release (edit|delete)' "$work/gh.log" || fail "the script edited or deleted a release while creating one"
+
+# A major version's single-# heading ends at the next (## minor) heading.
+ensure absent ok v1.0.0 CHANGELOG.md || fail "the script failed to create a missing major release"
+[ "$(cat "$work/gh.log.notes")" = "$major_section" ] ||
+  fail "the v1.0.0 notes are not its # [1.0.0] section up to the next version heading; got: $(cat "$work/gh.log.notes")"
 
 # (b) The release exists: nothing but the lookup reaches gh.
 ensure exists ok v0.14.0 CHANGELOG.md || fail "the script failed when the release already exists"

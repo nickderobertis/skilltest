@@ -3,7 +3,8 @@
 # runs it, with only `npm` and `uv` doubled on PATH and the retry interval set
 # to zero: a platform package (or platform wheel) the registry lacks for the
 # first attempts and then serves ends green, one that never arrives ends red
-# naming it after the bound, and an undeclared target is refused.
+# naming it after the bound, and each invalid invocation exits 2 before any
+# install.
 #
 # Quiet on success, one line. On failure it prints what the script said.
 set -euo pipefail
@@ -36,6 +37,7 @@ fail() {
 mkdir -p "$work/bin" || fail "could not create $work/bin; check that $work is writable"
 cat >"$work/bin/npm" <<'EOF' || fail "could not write the npm double; check that $work is writable"
 #!/usr/bin/env bash
+set -euo pipefail
 [ "$1" = install ] || { echo "npm double: unexpected call: $*" >&2; exit 1; }
 spec="${*: -1}" version="${spec##*@}"
 echo "$*" >>"$CALLS"
@@ -50,6 +52,7 @@ fi
 EOF
 cat >"$work/bin/uv" <<'EOF' || fail "could not write the uv double; check that $work is writable"
 #!/usr/bin/env bash
+set -euo pipefail
 [ "$1 $2" = "pip install" ] || { echo "uv double: unexpected call: $*" >&2; exit 1; }
 spec="${*: -1}" version="${spec##*==}"
 echo "$*" >>"$CALLS"
@@ -69,6 +72,10 @@ await() {
   shift 4
   dir="$work/consumer-$registry"
   { rm -rf "$dir" && mkdir -p "$dir" && : >"$work/calls" && : >"$work/out"; } || fail "could not reset $work; check that it is writable"
+  case "$registry" in
+    npm) echo '{"name": "consumer"}' >"$dir/package.json" ;;
+    *) echo 'home = /usr/bin' >"$dir/pyvenv.cfg" ;;
+  esac || fail "could not mark $dir as a $registry consumer; check that $work is writable"
   env PATH="$work/bin:$PATH" CALLS="$work/calls" ARRIVES_AFTER="$after" PLATFORM="$serves" WHEEL_TAG="$serves" VENV="$dir" \
     SKILLTEST_REGISTRY_ATTEMPTS=4 SKILLTEST_REGISTRY_INTERVAL=0 "$@" \
     bash "$script" "$registry" "$target" 0.14.0 "$dir" >"$work/out" 2>&1
@@ -81,6 +88,7 @@ await npm x86_64-pc-windows-msvc 2 @skill-test/cli-win32-x64 ||
 [ "$(calls)" = 3 ] || fail "the npm install stopped after $(calls) attempts; it must retry until the platform package is installed, then stop"
 grep -Fq -- "--prefer-online @skill-test/sdk@0.14.0" "$work/calls" || fail "the npm install did not ask for @skill-test/sdk@0.14.0; got: $(head -1 "$work/calls")"
 [ -f "$work/consumer-npm/node_modules/@skill-test/cli-win32-x64/package.json" ] || fail "the consumer's node_modules lacks the platform package after success"
+[ "$(wc -l <"$work/out" | tr -d ' ')" = 1 ] || fail "the script printed more than one line on success; keep retries quiet until it fails"
 
 await npm aarch64-pc-windows-msvc 0 @skill-test/cli-win32-arm64 ||
   fail "the npm install failed for aarch64-pc-windows-msvc; it must wait for release-platforms.toml's @skill-test/cli-win32-arm64"
@@ -120,9 +128,36 @@ fi
 grep -Fq "the py3-none-win_amd64 platform wheel of skilltest-sdk==0.14.0 (installed: py3-none-any) did not install from pypi after 4 attempts" "$work/out" ||
   fail "the PyPI failure did not name the win_amd64 platform wheel and what installed instead"
 
-# Invocation errors exit 2 before any install.
-await npm x86_64-apple-darwin-nope 0 x && fail "the script accepted an undeclared target"
-grep -Fq "declares no npm_package for target 'x86_64-apple-darwin-nope'" "$work/out" || fail "the undeclared target was refused without naming it"
-[ "$(calls)" = 0 ] || fail "the script installed before refusing an undeclared target"
+grep -Fq "the last pypi install said:" "$work/out" || fail "the PyPI failure did not show the last install's output"
+
+# Invocation errors exit 2, naming the problem, before any install.
+# $1 = what is wrong, $2 = what the script must say, rest = its invocation.
+expect_usage() {
+  local what="$1" says="$2" status=0
+  shift 2
+  : >"$work/calls" || fail "could not reset $work/calls"
+  env PATH="$work/bin:$PATH" CALLS="$work/calls" ARRIVES_AFTER=0 PLATFORM=x WHEEL_TAG=x VENV="$work" "$@" >"$work/out" 2>&1 || status=$?
+  [ "$status" = 2 ] || fail "the script exited $status, not 2, where $what"
+  grep -Fq -- "$says" "$work/out" || fail "the script refused where $what without saying '$says'"
+  [ "$(calls)" = 0 ] || fail "the script installed before refusing where $what"
+}
+consumer="$work/consumer-npm"
+expect_usage "the target is undeclared" "declares no npm_package for target 'x86_64-apple-darwin-nope'" \
+  bash "$script" npm x86_64-apple-darwin-nope 0.14.0 "$consumer"
+expect_usage "an argument is missing" "usage: await-registry-install.sh" bash "$script" npm x86_64-pc-windows-msvc 0.14.0
+expect_usage "the consumer directory does not exist" "usage: await-registry-install.sh" \
+  bash "$script" npm x86_64-pc-windows-msvc 0.14.0 "$work/absent"
+expect_usage "the registry is unknown" "registry 'cargo' is neither npm nor pypi" \
+  bash "$script" cargo x86_64-pc-windows-msvc 0.14.0 "$consumer"
+expect_usage "the version is not X.Y.Z" "version 'v0.14.0' is not X.Y.Z" \
+  bash "$script" npm x86_64-pc-windows-msvc v0.14.0 "$consumer"
+expect_usage "the directory is not an npm consumer" "has no package.json, so it is not the npm consumer" \
+  bash "$script" npm x86_64-pc-windows-msvc 0.14.0 "$work/bin"
+expect_usage "the directory is the filesystem root" "has no package.json" \
+  bash "$script" npm x86_64-pc-windows-msvc 0.14.0 /
+expect_usage "the attempt bound is not a positive number" "unset them to use the defaults" \
+  SKILLTEST_REGISTRY_ATTEMPTS=0 bash "$script" npm x86_64-pc-windows-msvc 0.14.0 "$consumer"
+expect_usage "the interval is not a number" "unset them to use the defaults" \
+  SKILLTEST_REGISTRY_INTERVAL=soon bash "$script" npm x86_64-pc-windows-msvc 0.14.0 "$consumer"
 
 echo "await-registry-install-test: npm and PyPI installs wait for the target's platform package and wheel, and name the one that never arrives"

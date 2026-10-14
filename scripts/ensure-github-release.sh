@@ -60,7 +60,7 @@ notes="$(awk -v version="$version" '
   err "$changelog at $tag has no section for $version; check that semantic-release's changelog step wrote it, or create the release by hand"
 
 body="$(mktemp)" || err "could not create a temporary file for the release notes; check that \$TMPDIR is writable"
-trap 'rm -f "$body"' EXIT
+trap 'rm -f "$body" || echo "ensure-github-release: could not remove $body; delete it by hand" >&2' EXIT
 printf '%s\n' "$notes" >"$body" || err "could not write the release notes to $body; check that \$TMPDIR has space"
 
 if created="$(gh release create "$tag" --verify-tag --title "$tag" --notes-file "$body" 2>&1)"; then

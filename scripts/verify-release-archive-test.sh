@@ -354,6 +354,19 @@ fi
 grep -Fq "invalid or duplicate target '../escape'" "$work/out" ||
   fail "the aggregation refused a malformed declaration without naming it; restore the target check's message in scripts/verify-staged-archives.sh"
 
+# A checksum declaration that could escape the archive's directory, or names
+# one file twice, is refused before any path is built from it.
+for bad in '../{asset}.sha256' '{asset}.sha256
+{asset}.sha256' '{asset}.{version}.sha256'; do
+  printf '%s\n' "$bad" >"$work/tree/scripts/release-checksums.txt" || fail "could not write the scratch checksum declaration; check that $work is writable"
+  : >"$work/out" || fail "could not write $work/out; check that $work is writable"
+  if "$BASH" "$work/tree/scripts/verify-release-archive.sh" --checksum-names x86_64-unknown-linux-gnu skilltest >"$work/out" 2>&1; then
+    fail "the verifier accepted the checksum declaration '$bad'; restore the name validation in scripts/verify-release-archive.sh"
+  fi
+  grep -Eq "not a skilltest-\*\.sha256 file name|twice for x86_64-unknown-linux-gnu" "$work/out" ||
+    fail "the verifier refused the checksum declaration '$bad' without naming why"
+done
+
 rm "$work/products/aarch64-pc-windows-msvc/skilltest-aarch64-pc-windows-msvc.sha256" ||
   fail "could not remove a staged checksum; check that $work is writable"
 expect_aggregate_red "a declared platform's legacy checksum was not staged" "has no skilltest-aarch64-pc-windows-msvc.sha256" "$work/products" 1.2.3 --list-assets

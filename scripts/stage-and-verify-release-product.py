@@ -148,6 +148,7 @@ def asset_name(platform: Platform) -> str:
 
 
 CHECKSUM_NAMES = Path("scripts/release-checksums.txt")
+CHECKSUM_NAME = re.compile(r"skilltest-[A-Za-z0-9_.-]+\.sha256")
 
 
 def checksum_names(platform: Platform) -> tuple[str, ...]:
@@ -160,6 +161,13 @@ def checksum_names(platform: Platform) -> tuple[str, ...]:
         if line and not line.startswith("#")
     )
     require(bool(names), f"{CHECKSUM_NAMES} names no checksum file")
+    # Each name is joined onto the staging directory, so it must be one plain,
+    # unique file name with every placeholder filled.
+    require(
+        all(CHECKSUM_NAME.fullmatch(name) for name in names)
+        and len(set(names)) == len(names),
+        f"{CHECKSUM_NAMES} declares an invalid or duplicate checksum name: {names}",
+    )
     return names
 
 

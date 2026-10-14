@@ -51,7 +51,14 @@ while IFS= read -r line || [ -n "$line" ]; do
   line="${line%$'\r'}"
   case "$line" in '' | '#'*) continue ;; esac
   line="${line//\{asset\}/$asset}"
-  checksums+=("${line//\{target\}/$target}")
+  line="${line//\{target\}/$target}"
+  # Each name is joined onto <dir>, so it must be one plain, unique file name.
+  [[ "$line" =~ ^skilltest-[A-Za-z0-9_.-]+\.sha256$ ]] ||
+    err "$declared declares '$line' for $target, which is not a skilltest-*.sha256 file name; use only {asset} and {target} in a plain file name"
+  for name in ${checksums[@]+"${checksums[@]}"}; do
+    [ "$name" != "$line" ] || err "$declared declares $line twice for $target; remove the duplicate line"
+  done
+  checksums+=("$line")
 done <"$declared" || err "could not read $declared; restore it from a complete checkout"
 [ "${#checksums[@]}" -gt 0 ] || err "$declared names no checksum file; restore its file-name lines"
 if [ -n "$names_only" ]; then

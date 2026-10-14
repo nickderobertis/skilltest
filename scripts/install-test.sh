@@ -29,11 +29,15 @@ fail() {
   exit 1
 }
 
-# $1 = the target. Prints the checksum file names a release carries beside
-# its archive, read from the declaration the release scripts share.
+# $1 = the target. Sets the names array to the checksum file names a release
+# carries beside its archive, read from the declaration the release scripts
+# share (a read loop, not mapfile, so macOS's bash 3.2 runs it too).
 checksum_names() {
-  bash scripts/verify-release-archive.sh --checksum-names "$1" skilltest ||
+  local listed name
+  listed="$(bash scripts/verify-release-archive.sh --checksum-names "$1" skilltest)" ||
     fail "could not read the declared checksum names; restore scripts/release-checksums.txt"
+  names=()
+  while read -r name; do names+=("$name"); done <<<"$listed"
 }
 
 # $1 = the release tag, $2 = the target, $3.. = the checksum file names to
@@ -55,7 +59,7 @@ publish() {
 # The release every host case installs: one stand-in archive per target, with
 # every declared checksum, under releases/download/v1.2.3/.
 for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu aarch64-apple-darwin; do
-  mapfile -t names < <(checksum_names "$target")
+  checksum_names "$target"
   publish v1.2.3 "$target" "${names[@]}"
 done
 
@@ -128,7 +132,7 @@ grep -Fq "Intel macOS (x86_64) is no longer supported" "$work/out" ||
 # Checksum names: each declared name alone is enough, and the installer asks
 # for no checksum name the declaration does not state.
 target=x86_64-unknown-linux-gnu
-mapfile -t names < <(checksum_names "$target")
+checksum_names "$target"
 [ "${#names[@]}" -eq 2 ] && [ "${names[0]}" = "skilltest-$target.tar.gz.sha256" ] && [ "${names[1]}" = "skilltest-$target.sha256" ] ||
   fail "scripts/release-checksums.txt declares ${names[*]}, not the agreed skilltest-$target.tar.gz.sha256 and skilltest-$target.sha256 that install.sh fetches; restore the declaration, or change install.sh with it"
 host Linux x86_64 ""
