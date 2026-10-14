@@ -248,16 +248,31 @@ e2e_mock_phase() {
     e2e_assert_mock "$out" "$action"
 }
 
-# Assert the mock report passed and the interception really happened: a record
+# Assert the interception really happened and the mock report passed: a record
 # whose action matches, resolved to its mock's name, with the ORIGINAL command
-# preserved. Args: <report-json-path> <expected-action>
+# preserved. For a stub, the canned output must also have reached the model,
+# decided here from the reply text rather than by the judge: the judge prompt
+# renders each message's text only, never its tool events, so no judge can see
+# a command's output on any harness (tests/fixtures/live/cases/mock_stub.yaml).
+# Args: <report-json-path> <expected-action>
 e2e_assert_mock() {
     local report="$1" action="$2"
-    jq -e '.passed == true' "$report" >/dev/null 2>&1 \
-        || { note "  report:"; jq '{passed, evals:[.runs[0].evals[]?|{label,passed,reason}]}' "$report" 2>/dev/null | sed 's/^/    /'; fail "the live mock run did not pass"; }
     jq -e --arg a "$action" '[.runs[0].mock_calls[]?|select(.action==$a)]|length >= 1' "$report" >/dev/null 2>&1 \
         || { note "  records:"; jq '.runs[0].mock_calls' "$report" 2>/dev/null | sed 's/^/    /'; fail "no \"$action\" record — the hook never intercepted the marked call"; }
     jq -e --arg a "$action" '[.runs[0].mock_calls[]?|select(.action==$a)][0].input|tostring|contains("MARKER")' "$report" >/dev/null 2>&1 \
         || fail "the intercepted record lost the original input"
+    if [ "$action" = "stub" ]; then
+        local reply
+        reply="$(jq -r '[.runs[0].transcript.messages[]?|select(.role=="assistant")|.content]|join(" ")' "$report" 2>/dev/null)"
+        case "$reply" in
+            *MARKER-LIVE*) fail "the reply reports the live output MARKER-LIVE, so the stub's output did not replace it; reply: $reply" ;;
+        esac
+        case "$reply" in
+            *CANNED-BY-SKILLTEST*) ;;
+            *) fail "the reply never reports the stub's output CANNED-BY-SKILLTEST, so it never reached the model; reply: $reply" ;;
+        esac
+    fi
+    jq -e '.passed == true' "$report" >/dev/null 2>&1 \
+        || { note "  report:"; jq '{passed, evals:[.runs[0].evals[]?|{label,passed,reason}]}' "$report" 2>/dev/null | sed 's/^/    /'; fail "the live mock run did not pass"; }
     note "  ok: mock phase passed ($action intercepted the marked call)"
 }

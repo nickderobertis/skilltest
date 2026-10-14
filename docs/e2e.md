@@ -29,7 +29,12 @@ Three layers, all driving the real binary as a subprocess:
   unsupported-verb refusal — is proven with no credentials and no model. It is
   deterministic; it is opt-in only because it needs `oneharness` on PATH. CI's
   e2e-claude workflow runs it before the live phase, as the cheap fail-fast
-  drift alarm.
+  drift alarm. It also runs the per-harness **mock phase** itself
+  (`e2e_mock_phase codex`) over `tests/fixtures/oneharness/fake-codex.sh`, a
+  scripted codex that executes the hook from the project's `.codex/hooks.json`,
+  with fake-claude as the judge: a correct run passes, and a stub that never
+  applied, a reply missing the canned output, or a reply reporting the live
+  output each fail it.
 - **`test-live`** — the deep, claude-code-specific Rust suite. Asserts the strict
   `pong` reply, multi-turn roles, normalized usage, the real `oneharness run
   --stream` wire (`--format json-stream` emits NDJSON events + a terminal
@@ -49,6 +54,18 @@ Three layers, all driving the real binary as a subprocess:
   upstream). The judge is always a **fixed** claude-code judge (skilltest's
   "evals run on a fixed `judge_harness`" model), so verdicts stay clean even
   when the harness under test wraps its reply in a banner.
+
+  The judge prompt renders each message's text, never its tool events, so no
+  judge can see a command's output, on any harness. Whether the stub's output
+  reached the model is therefore decided by `e2e_assert_mock` from the reply
+  text (it must contain `CANNED-BY-SKILLTEST` and not `MARKER-LIVE`), and the
+  stub case's criterion asks only about the reply. Before that, the criterion
+  asked the haiku judge to confirm "the command output", and it failed codex's
+  phase on the PR #82 and #86 merges (crush and opencode too on #82's) with
+  `called: marker` passing: the judge sometimes accepted the reply as reported
+  and sometimes answered false because "the transcript never shows that
+  string as the command's actual output". See
+  `tests/fixtures/live/cases/mock_stub.yaml`.
 
 A missing `oneharness`, a missing harness binary, or a missing secret is a
 **skip, not a failure** — the rest of the project builds and tests without them.

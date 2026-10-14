@@ -1074,3 +1074,101 @@ fn scripted_boundaries_explain_invalid_inputs() {
     );
     assert!(stderr.contains("set a valid sleep duration"), "{stderr}");
 }
+
+/// Run the live codex mock phase (`e2e_mock_phase` in `scripts/e2e-lib.sh`,
+/// exactly as `scripts/e2e-harness.sh codex` does) with only its paid
+/// boundaries doubled: `fake-codex.sh` plays the codex CLI in `scenario`
+/// (executing the hook oneharness installs), and `fake-claude.sh` is the judge,
+/// which answers `true` to every criterion. Everything between — the built
+/// `skilltest`, the real `oneharness` and its `mock` hook, the phase's own
+/// assertions — is the real thing. Returns the phase's exit code and output.
+fn codex_mock_phase(scenario: &str) -> (Option<i32>, String) {
+    let scratch = Scratch::new(&format!("codex-phase-{scenario}"));
+    // The phase calls `oneharness` by name, so put the directory of the binary
+    // under test first on PATH.
+    let oneharness = PathBuf::from(oneharness_bin());
+    let mut path = std::env::var_os("PATH").unwrap_or_default();
+    if let Some(dir) = oneharness.parent().filter(|d| !d.as_os_str().is_empty()) {
+        assert_eq!(
+            oneharness.file_name().and_then(|n| n.to_str()),
+            Some("oneharness"),
+            "the mock phase calls `oneharness` by name; point SKILLTEST_ONEHARNESS_BIN at a \
+             binary named `oneharness`"
+        );
+        let mut dirs = vec![dir.to_path_buf()];
+        dirs.extend(std::env::split_paths(&path));
+        path = std::env::join_paths(dirs).expect("PATH entries join");
+    }
+    let lib = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../scripts/e2e-lib.sh");
+    let workspace = scratch.0.join("ws");
+    std::fs::create_dir_all(&workspace).unwrap();
+    let out = Command::new("bash")
+        .arg("-c")
+        .arg(r#"source "$1" && e2e_harness_config codex && e2e_mock_phase codex"#)
+        .arg("codex-mock-phase")
+        .arg(lib)
+        // oneharness installs codex's hook into the project it runs in.
+        .current_dir(&workspace)
+        .env("PATH", path)
+        .env("SKILLTEST_BIN", skilltest())
+        .env("SKILLTEST_HISTORY_DIR", scratch.0.join("history"))
+        .env("ONEHARNESS_BIN_CODEX", fixtures().join("fake-codex.sh"))
+        .env("ONEHARNESS_BIN_CLAUDE_CODE", shim())
+        .env("FAKE_CODEX_SCENARIO", scenario)
+        .output()
+        .expect("bash runs the mock phase");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    (out.status.code(), text)
+}
+
+#[test]
+#[ignore = "needs oneharness on PATH (just install-oneharness); run via just test-oneharness"]
+fn codex_mock_phase_passes_when_the_stub_output_reaches_the_reply() {
+    let (code, text) = codex_mock_phase("relay");
+    assert_eq!(code, Some(0), "{text}");
+    assert!(
+        text.contains("ok: mock phase passed (stub intercepted the marked call)"),
+        "{text}"
+    );
+}
+
+#[test]
+#[ignore = "needs oneharness on PATH (just install-oneharness); run via just test-oneharness"]
+fn codex_mock_phase_fails_when_the_stub_never_applied() {
+    // The hook never fires, so the real command runs and the reply carries
+    // its live output: no stub record, whatever the judge says.
+    let (code, text) = codex_mock_phase("no-hook");
+    assert_eq!(code, Some(1), "{text}");
+    assert!(
+        text.contains("FAIL: no \"stub\" record — the hook never intercepted the marked call"),
+        "{text}"
+    );
+}
+
+#[test]
+#[ignore = "needs oneharness on PATH (just install-oneharness); run via just test-oneharness"]
+fn codex_mock_phase_fails_when_the_canned_output_never_reaches_the_reply() {
+    // The stub applied, the judge says yes, but the reply never reports the
+    // canned output: the phase's reply check, not the judge, decides.
+    let (code, text) = codex_mock_phase("ignore");
+    assert_eq!(code, Some(1), "{text}");
+    assert!(
+        text.contains("FAIL: the reply never reports the stub's output CANNED-BY-SKILLTEST"),
+        "{text}"
+    );
+}
+
+#[test]
+#[ignore = "needs oneharness on PATH (just install-oneharness); run via just test-oneharness"]
+fn codex_mock_phase_fails_when_the_reply_reports_the_live_output() {
+    let (code, text) = codex_mock_phase("guess");
+    assert_eq!(code, Some(1), "{text}");
+    assert!(
+        text.contains("FAIL: the reply reports the live output MARKER-LIVE"),
+        "{text}"
+    );
+}

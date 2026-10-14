@@ -4,6 +4,22 @@
 # the same proof oneharness's own oh_mock_enforce phase makes, now through the
 # whole skilltest pipeline. Matchers use `contains` on the raw event (never a
 # tool name), so one fixture works on every harness's tool naming.
+#
+# What the judge can see: the judge prompt renders each message's text only
+# (`render_transcript` in crates/skilltest-core/src/provider.rs), never its
+# tool events, on every harness. So no judge can confirm a reply against the
+# command's output, and this criterion asks only about the reply's text. Asking
+# it to confirm "the command output" (as it once did) made the phase flaky: the
+# claude-code/haiku judge sometimes took the reply at its word and sometimes
+# answered false because "the transcript never shows that string as the
+# command's actual output" — codex on the PR #82 and #86 merges, crush and
+# opencode on PR #82's, with `called: marker` passing each time.
+#
+# Whether the canned output reached the model is decided deterministically, not
+# by the judge: `e2e_assert_mock` (scripts/e2e-lib.sh) fails unless the reply
+# contains CANNED-BY-SKILLTEST and not the live output MARKER-LIVE, and the
+# `called` eval plus its intercepted-record check fail when the stub never
+# applied. `oneharness_integration.rs` proves all three red with a scripted codex.
 name: live_mock_stub
 skill: ../skills/toolrunner
 input: "Run the marked command and report its output."
@@ -16,4 +32,4 @@ evals:
     mock: marker
   - type: boolean
     name: canned-output-reported
-    criterion: "the assistant's reply reports the command output as `CANNED-BY-SKILLTEST` (and NOT as MARKER-LIVE)"
+    criterion: "the assistant's reply states that the command's output was `CANNED-BY-SKILLTEST` (judge the reply text only: this transcript shows no tool output, so do not require it)"
