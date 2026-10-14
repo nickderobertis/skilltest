@@ -42,7 +42,6 @@ case "$bin" in
   *) usage_err "bin '$bin' is neither skilltest nor skilltest.exe; $usage" ;;
 esac
 
-# The checksum file names, from the one declaration beside this script.
 here="${BASH_SOURCE[0]%/*}"
 [ "$here" != "${BASH_SOURCE[0]}" ] || here=.
 declared="$here/release-checksums.txt"

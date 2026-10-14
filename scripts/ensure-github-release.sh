@@ -55,7 +55,7 @@ notes="$(awk -v version="$version" '
   inside && heading($0) { exit }
   !inside && heading($0) && named($0) { inside = 1 }
   inside { print }
-' <<<"$committed")"
+' <<<"$committed")" || err "could not extract $version's section from $changelog at $tag (reason above); check that awk is on PATH"
 [ -n "$notes" ] ||
   err "$changelog at $tag has no section for $version; check that semantic-release's changelog step wrote it, or create the release by hand"
 

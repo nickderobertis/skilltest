@@ -4,7 +4,7 @@
 # to zero: a platform package (or platform wheel) the registry lacks for the
 # first attempts and then serves ends green, one that never arrives ends red
 # naming it after the bound, and each invalid invocation exits 2 before any
-# install.
+# install. `just release-targets-check` (every `just check` tier) runs it.
 #
 # Quiet on success, one line. On failure it prints what the script said.
 set -euo pipefail
@@ -33,21 +33,26 @@ fail() {
 # SDK unless SDK_MISSING is set, and its platform package (PLATFORM) only once
 # more than ARRIVES_AFTER installs ran ("never": not at all), as npm does when
 # the optional dependency still 404s. uv installs the pure py3-none-any wheel
-# until then, the WHEEL_TAG platform wheel after.
+# until then, the WHEEL_TAG platform wheel after, and with UV_FAILS exits 1
+# after writing it, as a reinstall that fails partway can. Each double fails
+# loudly (exit 70) if it cannot record a call or write what it installs.
 mkdir -p "$work/bin" || fail "could not create $work/bin; check that $work is writable"
 cat >"$work/bin/npm" <<'EOF' || fail "could not write the npm double; check that $work is writable"
 #!/usr/bin/env bash
 set -euo pipefail
 [ "$1" = install ] || { echo "npm double: unexpected call: $*" >&2; exit 1; }
 spec="${*: -1}" version="${spec##*@}"
-echo "$*" >>"$CALLS"
-n="$(wc -l <"$CALLS")"
+broken() { echo "npm double: could not $1" >&2; exit 70; }
+echo "$*" >>"$CALLS" || broken "log the call to $CALLS"
+n="$(wc -l <"$CALLS")" || broken "count the calls in $CALLS"
 [ -z "${SDK_MISSING:-}" ] || { echo "npm error 404 Not Found - GET @skill-test/sdk" >&2; exit 1; }
-mkdir -p node_modules/@skill-test/sdk
-printf '{\n  "name": "@skill-test/sdk",\n  "version": "%s"\n}\n' "$version" >node_modules/@skill-test/sdk/package.json
+{ mkdir -p node_modules/@skill-test/sdk &&
+  printf '{\n  "name": "@skill-test/sdk",\n  "version": "%s"\n}\n' "$version" >node_modules/@skill-test/sdk/package.json; } ||
+  broken "install @skill-test/sdk into $PWD"
 if [ "$ARRIVES_AFTER" != never ] && [ "$n" -gt "$ARRIVES_AFTER" ]; then
-  mkdir -p "node_modules/$PLATFORM"
-  printf '{\n  "name": "%s",\n  "version": "%s"\n}\n' "$PLATFORM" "$version" >"node_modules/$PLATFORM/package.json"
+  { mkdir -p "node_modules/$PLATFORM" &&
+    printf '{\n  "name": "%s",\n  "version": "%s"\n}\n' "$PLATFORM" "$version" >"node_modules/$PLATFORM/package.json"; } ||
+    broken "install $PLATFORM into $PWD"
 fi
 EOF
 cat >"$work/bin/uv" <<'EOF' || fail "could not write the uv double; check that $work is writable"
@@ -55,13 +60,16 @@ cat >"$work/bin/uv" <<'EOF' || fail "could not write the uv double; check that $
 set -euo pipefail
 [ "$1 $2" = "pip install" ] || { echo "uv double: unexpected call: $*" >&2; exit 1; }
 spec="${*: -1}" version="${spec##*==}"
-echo "$*" >>"$CALLS"
-n="$(wc -l <"$CALLS")"
+broken() { echo "uv double: could not $1" >&2; exit 70; }
+echo "$*" >>"$CALLS" || broken "log the call to $CALLS"
+n="$(wc -l <"$CALLS")" || broken "count the calls in $CALLS"
 tag=any
 if [ "$ARRIVES_AFTER" != never ] && [ "$n" -gt "$ARRIVES_AFTER" ]; then tag="$WHEEL_TAG"; fi
 info="$VENV/Lib/site-packages/skilltest_sdk-$version.dist-info"
-mkdir -p "$info"
-printf 'Wheel-Version: 1.0\r\nGenerator: test\r\nRoot-Is-Purelib: false\r\nTag: py3-none-%s\r\n' "$tag" >"$info/WHEEL"
+{ mkdir -p "$info" &&
+  printf 'Wheel-Version: 1.0\r\nGenerator: test\r\nRoot-Is-Purelib: false\r\nTag: py3-none-%s\r\n' "$tag" >"$info/WHEEL"; } ||
+  broken "write $info/WHEEL"
+[ -z "${UV_FAILS:-}" ] || { echo "error: Failed to install skilltest-sdk" >&2; exit 1; }
 EOF
 chmod +x "$work/bin/npm" "$work/bin/uv" || fail "could not make the registry doubles executable; check that $work honors chmod"
 
@@ -130,6 +138,15 @@ grep -Fq "the py3-none-win_amd64 platform wheel of skilltest-sdk==0.14.0 (instal
 
 grep -Fq "the last pypi install said:" "$work/out" || fail "the PyPI failure did not show the last install's output"
 
+# PyPI: an install that fails is not a success, even if it left the platform
+# wheel's metadata behind.
+if await pypi x86_64-pc-windows-msvc 0 win_amd64 UV_FAILS=1; then
+  fail "the PyPI install succeeded although uv failed every attempt; only a successful install may be inspected"
+fi
+grep -Fq "skilltest-sdk==0.14.0 did not install from pypi after 4 attempts" "$work/out" ||
+  fail "the failed-install refusal did not name skilltest-sdk==0.14.0"
+grep -Fq "error: Failed to install skilltest-sdk" "$work/out" || fail "the failed-install refusal did not show uv's error"
+
 # Invocation errors exit 2, naming the problem, before any install.
 # $1 = what is wrong, $2 = what the script must say, rest = its invocation.
 expect_usage() {
@@ -159,5 +176,18 @@ expect_usage "the attempt bound is not a positive number" "unset them to use the
   SKILLTEST_REGISTRY_ATTEMPTS=0 bash "$script" npm x86_64-pc-windows-msvc 0.14.0 "$consumer"
 expect_usage "the interval is not a number" "unset them to use the defaults" \
   SKILLTEST_REGISTRY_INTERVAL=soon bash "$script" npm x86_64-pc-windows-msvc 0.14.0 "$consumer"
+
+# A declared npm_package that could leave node_modules is refused before any
+# install: the script runs from a scratch tree holding that declaration.
+{ mkdir -p "$work/tree/scripts" && cp scripts/await-registry-install.sh "$work/tree/scripts/" &&
+  sed 's|"@skill-test/cli-win32-x64"|"../../escape"|' release-platforms.toml >"$work/tree/release-platforms.toml"; } ||
+  fail "could not build the scratch declaration tree; check that $work is writable"
+: >"$work/calls" || fail "could not reset $work/calls"
+if env PATH="$work/bin:$PATH" CALLS="$work/calls" bash "$work/tree/scripts/await-registry-install.sh" npm x86_64-pc-windows-msvc 0.14.0 "$consumer" >"$work/out" 2>&1; then
+  fail "the script accepted a declared npm_package that is not a package name"
+fi
+grep -Fq "declares npm_package '../../escape' for x86_64-pc-windows-msvc, which is not a valid npm_package" "$work/out" ||
+  fail "the script refused a malformed npm_package without naming it"
+[ "$(calls)" = 0 ] || fail "the script installed before refusing a malformed npm_package"
 
 echo "await-registry-install-test: npm and PyPI installs wait for the target's platform package and wheel, and name the one that never arrives"

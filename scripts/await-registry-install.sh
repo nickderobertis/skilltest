@@ -59,18 +59,19 @@ declared() {
     mine && $1 == key { gsub(/"/, "", $3); print $3; exit }
   ' "$here/../release-platforms.toml"
 }
+# Each value names a node_modules path or a wheel tag, so it is held to the
+# grammar scripts/stage-and-verify-release-product.py holds the file to.
 case "$registry" in
-  npm) field=npm_package ;;
-  pypi) field=wheel_tag ;;
+  npm) field=npm_package grammar='^@skill-test/cli-[a-z0-9]+-[a-z0-9]+$' ;;
+  pypi) field=wheel_tag grammar='^[a-z0-9_]+$' ;;
 esac
 want="$(declared "$field")" || err "could not read release-platforms.toml; restore it from a complete checkout"
 [ -n "$want" ] || usage_err "release-platforms.toml declares no $field for target '$target'; pass a declared target"
+[[ "$want" =~ $grammar ]] || err "release-platforms.toml declares $field '$want' for $target, which is not a valid $field; fix that [[platform]] entry"
 
-# Prints what is missing after an install (nothing when complete).
 missing_npm() {
   local name
   for name in @skill-test/sdk "$want"; do
-    # The installed manifest, parsed as JSON, must name this package and version.
     node -e '
       const [path, name, version] = process.argv.slice(1);
       let manifest;
@@ -80,11 +81,15 @@ missing_npm() {
   done
 }
 missing_pypi() {
-  local wheel
-  wheel="$(find "$dir" -path "*/skilltest_sdk-$version.dist-info/WHEEL" 2>/dev/null | head -1)"
+  local found wheel tags
+  found="$(find "$dir" -path "*/skilltest_sdk-$version.dist-info/WHEEL")" ||
+    err "could not search $dir for the installed skilltest-sdk (reason above); check the venv's permissions"
+  wheel="${found%%$'\n'*}"
   [ -n "$wheel" ] || { echo "skilltest-sdk==$version"; return; }
-  tr -d '\r' <"$wheel" | grep -Fxq "Tag: py3-none-$want" ||
-    echo "the py3-none-$want platform wheel of skilltest-sdk==$version (installed: $(tr -d '\r' <"$wheel" | sed -n 's/^Tag: //p' | paste -sd ' ' -))"
+  tags="$(tr -d '\r' <"$wheel" | sed -n 's/^Tag: //p')" ||
+    err "could not read $wheel (reason above); check the venv's permissions"
+  grep -Fxq "py3-none-$want" <<<"$tags" ||
+    echo "the py3-none-$want platform wheel of skilltest-sdk==$version (installed: ${tags//$'\n'/ })"
 }
 
 python="$dir/bin/python"
@@ -95,12 +100,20 @@ for ((i = 1; ; i++)); do
       # A fresh tree each time, so a platform package skipped on an earlier
       # attempt is resolved again rather than read back from the lockfile.
       rm -rf "$dir/node_modules" "$dir/package-lock.json" || err "could not clear $dir's node_modules; check its permissions"
-      said="$(cd "$dir" && npm install --no-audit --no-fund --prefer-online "@skill-test/sdk@$version" 2>&1)" || true
-      missing="$(missing_npm)"
+      if said="$(cd "$dir" && npm install --no-audit --no-fund --prefer-online "@skill-test/sdk@$version" 2>&1)"; then
+        missing="$(missing_npm)"
+      else
+        missing="@skill-test/sdk@$version"
+      fi
       ;;
     pypi)
-      said="$(uv pip install --python "$python" --refresh --reinstall "skilltest-sdk==$version" 2>&1)" || true
-      missing="$(missing_pypi)"
+      # A failed reinstall can leave an earlier attempt's wheel behind, so only
+      # a successful install is inspected.
+      if said="$(uv pip install --python "$python" --refresh --reinstall "skilltest-sdk==$version" 2>&1)"; then
+        missing="$(missing_pypi)"
+      else
+        missing="skilltest-sdk==$version"
+      fi
       ;;
   esac
   if [ -z "$missing" ]; then
@@ -111,5 +124,5 @@ for ((i = 1; ; i++)); do
     printf '%s\n' "the last $registry install said:" "$said" >&2
     err "$missing did not install from $registry after $attempts attempts ${interval}s apart; check that publish.yml's $registry job published it, then re-run this job"
   fi
-  sleep "$interval"
+  sleep "$interval" || err "could not wait ${interval}s between attempts; check that sleep is on PATH, then re-run this job"
 done

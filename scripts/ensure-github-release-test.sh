@@ -4,6 +4,7 @@
 # missing release from the tag's own CHANGELOG.md section (not the working
 # tree's), leaves an existing one untouched, accepts a create a concurrent one
 # won, and refuses a missing tag, a gh refusal and a missing section by name.
+# `just release-targets-check` (every `just check` tier) runs it.
 #
 # Quiet on success, one line. On failure it prints what the script said.
 set -euo pipefail
@@ -30,12 +31,14 @@ fail() {
 
 # The forge double: every call is logged; GH_STATE says what the release
 # lookup sees (absent, exists, race: absent until a create is attempted,
-# refused: an auth failure) and GH_CREATE whether a create succeeds.
+# refused: an auth failure) and GH_CREATE whether a create succeeds. It fails
+# loudly (exit 70) if it cannot record a call, so none goes unchecked.
 mkdir -p "$work/bin" || fail "could not create $work/bin; check that $work is writable"
 cat >"$work/bin/gh" <<'EOF' || fail "could not write the gh double; check that $work is writable"
 #!/usr/bin/env bash
 set -euo pipefail
-printf '%s\n' "$*" >>"$GH_LOG"
+broken() { echo "gh double: could not $1" >&2; exit 70; }
+printf '%s\n' "$*" >>"$GH_LOG" || broken "log the call to $GH_LOG"
 case "$1 $2" in
   "release view")
     case "$GH_STATE" in
@@ -48,11 +51,11 @@ case "$1 $2" in
     ;;
   "release create")
     while [ "$#" -gt 0 ]; do
-      [ "$1" = --notes-file ] && cp "$2" "$GH_LOG.notes"
+      if [ "$1" = --notes-file ]; then cp "$2" "$GH_LOG.notes" || broken "keep the notes file $2"; fi
       shift
     done
     if [ "$GH_STATE" = race ]; then
-      : >"$GH_LOG.created"
+      : >"$GH_LOG.created" || broken "mark the concurrent create in $GH_LOG.created"
       echo 'HTTP 422: Validation Failed: tag_name already_exists' >&2
       exit 1
     fi

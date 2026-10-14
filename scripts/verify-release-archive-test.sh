@@ -354,17 +354,34 @@ fi
 grep -Fq "invalid or duplicate target '../escape'" "$work/out" ||
   fail "the aggregation refused a malformed declaration without naming it; restore the target check's message in scripts/verify-staged-archives.sh"
 
-# A checksum declaration that could escape the archive's directory, or names
-# one file twice, is refused before any path is built from it.
+# A checksum declaration that could escape the archive's directory, names one
+# file twice, or names none is refused by both of its readers (the verifier
+# and the stager) before any path is built from it.
+cp scripts/stage-and-verify-release-product.py "$work/tree/scripts/" || fail "could not copy the stager into the scratch tree; check that $work is writable"
 for bad in '../{asset}.sha256' '{asset}.sha256
-{asset}.sha256' '{asset}.{version}.sha256'; do
+{asset}.sha256' '{asset}.{version}.sha256' '# no names'; do
   printf '%s\n' "$bad" >"$work/tree/scripts/release-checksums.txt" || fail "could not write the scratch checksum declaration; check that $work is writable"
   : >"$work/out" || fail "could not write $work/out; check that $work is writable"
   if "$BASH" "$work/tree/scripts/verify-release-archive.sh" --checksum-names x86_64-unknown-linux-gnu skilltest >"$work/out" 2>&1; then
     fail "the verifier accepted the checksum declaration '$bad'; restore the name validation in scripts/verify-release-archive.sh"
   fi
-  grep -Eq "not a skilltest-\*\.sha256 file name|twice for x86_64-unknown-linux-gnu" "$work/out" ||
+  grep -Eq "not a skilltest-\*\.sha256 file name|twice for x86_64-unknown-linux-gnu|names no checksum file" "$work/out" ||
     fail "the verifier refused the checksum declaration '$bad' without naming why"
+  python3 -I - "$work/tree" >"$work/out" 2>&1 <<'STAGER' || fail "the stager accepted the checksum declaration '$bad'; restore the name validation in scripts/stage-and-verify-release-product.py"
+import importlib.util, os, sys
+os.chdir(sys.argv[1])
+spec = importlib.util.spec_from_file_location("stager", "scripts/stage-and-verify-release-product.py")
+stager = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(stager)
+platform = stager.Platform.parse({"target": "x86_64-unknown-linux-gnu", "runner": "ubuntu-latest", "bin": "skilltest",
+    "wheel_tag": "manylinux_2_17_x86_64", "npm_package": "@skill-test/cli-linux-x64", "npm_dir": "cli-linux-x64"})
+try:
+    stager.checksum_names(platform)
+except ValueError as error:
+    print(error)
+    sys.exit(0 if "checksum" in str(error) else 1)
+sys.exit(1)
+STAGER
 done
 
 rm "$work/products/aarch64-pc-windows-msvc/skilltest-aarch64-pc-windows-msvc.sha256" ||
