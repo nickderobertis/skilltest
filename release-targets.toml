@@ -26,12 +26,13 @@
 # **What publish.yml and release.yml ship that is deliberately not declared.**
 #
 # - The GitHub Release archives. release.yml uploads, per target,
-#   `skilltest-<rust-target>.tar.gz` (`.zip` for the Windows targets) and two
-#   checksum files holding the same `<sha256-hex>  <archive>` line:
-#   `skilltest-<rust-target>.<tar.gz|zip>.sha256` and `skilltest-<rust-target>.sha256`
-#   (the one name v0.1.0-v0.13.0 carry; scripts/release-checksums.txt declares
-#   both). The Unix ones are for scripts/install.sh. release.yml creates the
-#   GitHub Release from the tag's CHANGELOG.md section when it does not exist yet
+#   `skilltest-<target>.tar.gz` (`.zip` for the Windows targets; <target> is the
+#   Rust target triple) and two checksum files holding the same
+#   `<sha256-hex>  <archive>` line: `skilltest-<target>.tar.gz.sha256`
+#   (`.zip.sha256` on Windows) and `skilltest-<target>.sha256` (the one name
+#   v0.1.0-v0.13.0 carry; scripts/release-checksums.txt declares both, and
+#   scripts/check-release-checksum-docs.sh holds this comment to it). The Unix
+#   ones are for scripts/install.sh. release.yml creates the GitHub Release from the tag's CHANGELOG.md section when it does not exist yet
 #   (scripts/ensure-github-release.sh), so the archives no longer depend on
 #   semantic-release's own GitHub step. They belong to no
 #   registry, so no `<registry>:<name>` names one: they cannot be a target or a

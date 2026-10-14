@@ -103,10 +103,13 @@ contract-check:
 # release-archive verifier's tests on stand-in archives, install.sh's
 # install/refusal journeys (host identity and download transport doubled),
 # release.yml's release-ensuring script in a real Git repository (gh doubled),
-# and publish.yml's registry-install retries (npm and uv doubled).
+# publish.yml's registry-install retries (npm and uv doubled), and the docs that
+# state the release checksum names against scripts/release-checksums.txt.
 release-targets-check:
     @bash scripts/check-release-targets.sh >/dev/null
     @bash scripts/check-release-targets-test.sh >/dev/null
+    @bash scripts/check-release-checksum-docs.sh
+    @bash scripts/check-release-checksum-docs-test.sh >/dev/null
     @bash scripts/check-release-probe.sh >/dev/null
     @bash scripts/verify-release-archive-test.sh >/dev/null
     @bash scripts/install-test.sh >/dev/null
