@@ -15,6 +15,7 @@
       "{workspaceRoot}/scripts/stage-and-verify-release-product.py",
       "{workspaceRoot}/scripts/verify-release-archive*",
       "{workspaceRoot}/scripts/verify-staged-archives.sh",
+      "{workspaceRoot}/scripts/release-checksums.txt",
       "{workspaceRoot}/scripts/smoke-*-bundle.sh"
     ]
   },

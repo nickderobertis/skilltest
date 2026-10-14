@@ -147,6 +147,22 @@ def asset_name(platform: Platform) -> str:
     )
 
 
+CHECKSUM_NAMES = Path("scripts/release-checksums.txt")
+
+
+def checksum_names(platform: Platform) -> tuple[str, ...]:
+    """The checksum files scripts/release-checksums.txt declares for an archive."""
+    names = tuple(
+        line.replace("{asset}", asset_name(platform)).replace(
+            "{target}", platform.target
+        )
+        for line in (raw.strip() for raw in CHECKSUM_NAMES.read_text().splitlines())
+        if line and not line.startswith("#")
+    )
+    require(bool(names), f"{CHECKSUM_NAMES} names no checksum file")
+    return names
+
+
 class NpmPlatform(NamedTuple):
     cpu: tuple[str, ...]
     os: tuple[str, ...]
@@ -171,11 +187,12 @@ def staged_binary(platform: Platform, directory: Path) -> bytes:
     asset = asset_name(platform)
     released = directory / asset
     require(released.is_file(), f"missing staged archive: {released}")
-    checksum = (directory / (asset + ".sha256")).read_text()
-    require(
-        checksum == f"{digest(released.read_bytes())}  {asset}\n",
-        "staged archive checksum differs",
-    )
+    expected = f"{digest(released.read_bytes())}  {asset}\n"
+    for name in checksum_names(platform):
+        require(
+            (directory / name).read_text() == expected,
+            f"staged archive checksum differs: {name}",
+        )
     if asset.endswith(".zip"):
         with zipfile.ZipFile(released) as packed:
             require(packed.namelist() == [platform.bin], "unexpected archive contents")
@@ -499,7 +516,8 @@ def main() -> None:
                 raise ValueError("archive binary missing")
             archive_data = archived_binary.read()
     require(archive_data == data, "archive binary differs")
-    (out / (asset + ".sha256")).write_text(f"{digest(archive.read_bytes())}  {asset}\n")
+    for name in checksum_names(platform):
+        (out / name).write_text(f"{digest(archive.read_bytes())}  {asset}\n")
     evidence = PayloadEvidence(
         platform.target,
         version,

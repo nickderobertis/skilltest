@@ -11,6 +11,7 @@
       "{projectRoot}/smoke-*-bundle.sh",
       "{projectRoot}/verify-release-archive*",
       "{projectRoot}/verify-staged-archives.sh",
+      "{projectRoot}/release-checksums.txt",
       "{projectRoot}/install.sh",
       "{projectRoot}/install-test.sh",
       "{workspaceRoot}/release-platforms.toml",

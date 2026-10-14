@@ -1,0 +1,15 @@
+# The checksum files each GitHub Release archive ships beside, stated once.
+#
+# One file name per line; {asset} is the archive (skilltest-<target>.tar.gz, or
+# .zip for Windows) and {target} its Rust target triple. Every one holds the
+# same single line, `<sha256-hex>  {asset}`. The first is the name #80's staging
+# introduced and scripts/install.sh fetches first; the second is the name
+# v0.1.0-v0.13.0 published, which install.sh falls back to.
+#
+# scripts/stage-and-verify-release-product.py writes and checks these, and
+# scripts/verify-release-archive.sh (which verify-staged-archives.sh and
+# install-test.sh ask through --checksum-names) requires them; install.sh is
+# fetched standalone and cannot read this file, so install-test.sh serves each
+# name alone and fails if install.sh fetches any other.
+{asset}.sha256
+skilltest-{target}.sha256

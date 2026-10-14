@@ -54,6 +54,7 @@ for (const path of [
   "plugins/vitest",
   "scripts/verify-release-archive.sh",
   "scripts/verify-staged-archives.sh",
+  "scripts/release-checksums.txt",
   "scripts/stage-and-verify-release-product.py",
   "scripts/check-release-identity.sh",
 ])
@@ -244,7 +245,7 @@ const uploads = readFileSync(uploadLog, "utf8")
 // Exactly the declared archives and checksums reach the forge, nothing else.
 const declaredAssets = platforms.flatMap((p) => {
   const asset = `products/${p.target}/skilltest-${p.target}.${p.bin.endsWith(".exe") ? "zip" : "tar.gz"}`;
-  return [asset, `${asset}.sha256`];
+  return [asset, `${asset}.sha256`, `products/${p.target}/skilltest-${p.target}.sha256`];
 });
 assert.deepEqual([...new Set(uploads)].sort(), declaredAssets.sort());
 // An undeclared asset staged in products stops the upload before any is sent.
@@ -405,20 +406,23 @@ const wheelArchive = join(
   `skilltest-${platforms[0].target}.${platforms[0].bin.endsWith(".exe") ? "zip" : "tar.gz"}`,
 );
 const wheelArchiveBytes = readFileSync(wheelArchive);
-const wheelChecksum = `${wheelArchive}.sha256`;
-const wheelChecksumText = readFileSync(wheelChecksum, "utf8");
+const wheelChecksums = [
+  `${wheelArchive}.sha256`,
+  join(wheelDir, `skilltest-${platforms[0].target}.sha256`),
+];
+const wheelChecksumText = readFileSync(wheelChecksums[0], "utf8");
 for (const [mutation, message] of [
   ["missing", /missing staged archive/],
   ["checksum", /staged archive checksum differs/],
   ["widened", /unexpected archive contents/],
 ]) {
   if (mutation === "missing") rmSync(wheelArchive);
-  if (mutation === "checksum") writeFileSync(wheelChecksum, `${"0".repeat(64)}  x\n`);
+  if (mutation === "checksum") writeFileSync(wheelChecksums[1], `${"0".repeat(64)}  x\n`);
   if (mutation === "widened")
     execFileSync("python3", [
       "-c",
       `import hashlib,io,os,sys,tarfile,zipfile
-path,checksum=sys.argv[1:]
+path,*checksums=sys.argv[1:]
 if path.endswith('.zip'):
  with zipfile.ZipFile(path,'a') as z: z.writestr('extra','x')
 else:
@@ -426,9 +430,9 @@ else:
  with tarfile.open(path,'w:gz') as t:
   for m,data in entries: t.addfile(m,io.BytesIO(data))
   extra=tarfile.TarInfo('extra');extra.size=1;t.addfile(extra,io.BytesIO(b'x'))
-open(checksum,'w').write(hashlib.sha256(open(path,'rb').read()).hexdigest()+'  '+os.path.basename(path)+'\\n')`,
+for checksum in checksums: open(checksum,'w').write(hashlib.sha256(open(path,'rb').read()).hexdigest()+'  '+os.path.basename(path)+'\\n')`,
       wheelArchive,
-      wheelChecksum,
+      ...wheelChecksums,
     ]);
   writeFileSync(wheelLog, "");
   result = run(commands.pypi, 0, wheelLog);
@@ -436,7 +440,7 @@ open(checksum,'w').write(hashlib.sha256(open(path,'rb').read()).hexdigest()+'  '
   assert.match(result.stderr, message);
   assert.equal(readFileSync(wheelLog, "utf8"), "");
   writeFileSync(wheelArchive, wheelArchiveBytes);
-  writeFileSync(wheelChecksum, wheelChecksumText);
+  for (const checksum of wheelChecksums) writeFileSync(checksum, wheelChecksumText);
 }
 const extraWheel = join(wheelDir, "unexpected.whl");
 writeFileSync(extraWheel, wheelBytes);

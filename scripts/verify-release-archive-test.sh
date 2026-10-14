@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # llmlint: ignore-file[new_code_lands_in_a_project] tests scripts/verify-release-archive.sh, repo-level release glue that belongs to no Nx package; run workspace-wide from `just check` (AGENTS.md: scripts/*.sh are orchestrator-independent glue).
 # Test of scripts/verify-release-archive.sh on archives packed here the way
-# release.yml's upload action packs them (binary at the root, a .sha256 beside
-# it), from a stand-in binary: green on a good .tar.gz and a good Windows .zip,
-# red with the reason on each way a release archive can be wrong.
+# the stager packs them (binary at the root, every checksum name
+# scripts/release-checksums.txt declares beside it), from a stand-in binary:
+# green on a good .tar.gz and a good Windows .zip, red with the reason on each
+# way a release archive can be wrong.
 #
 # Quiet on success, one line. On failure it prints what the verifier said.
 set -euo pipefail
@@ -11,6 +12,7 @@ cd "$(dirname "$0")/.." || {
   echo "verify-release-archive-test: cannot enter the repository root from $0; run it from a complete checkout" >&2
   exit 1
 }
+repo="$PWD"
 
 work="$(mktemp -d)" || {
   echo "verify-release-archive-test: could not create a scratch directory; check that \$TMPDIR (or /tmp) is writable and has space" >&2
@@ -27,10 +29,16 @@ fail() {
   exit 1
 }
 
-# $1 = the asset, checksummed in the current directory the way the upload
-# action writes it. sha256sum where present, else macOS's shasum.
+# $1 = the asset (skilltest-<target>.<tar.gz|zip>), checksummed in the current
+# directory under every name scripts/release-checksums.txt declares, the way
+# the stager writes them. sha256sum where present, else macOS's shasum.
 checksum() {
-  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else shasum -a 256 "$1"; fi >"$1.sha256"
+  local target="${1#skilltest-}" bin=skilltest names name
+  case "$1" in *.zip) target="${target%.zip}" bin=skilltest.exe ;; *) target="${target%.tar.gz}" ;; esac
+  names="$("$BASH" "$repo/scripts/verify-release-archive.sh" --checksum-names "$target" "$bin")" || return 1
+  while read -r name; do
+    if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else shasum -a 256 "$1"; fi >"$name" || return 1
+  done <<<"$names"
 }
 
 # $1 = target, $2 = bin, $3 = the version the stand-in reports. Packs
@@ -110,7 +118,7 @@ expect_red "the archive does not match its checksum" "checksum mismatch for skil
 pack aarch64-pc-windows-msvc skilltest 1.2.3
 {
   mv "$work/aarch64-pc-windows-msvc/skilltest-aarch64-pc-windows-msvc.tar.gz" "$work/aarch64-pc-windows-msvc/skilltest-aarch64-pc-windows-msvc.zip" &&
-    mv "$work/aarch64-pc-windows-msvc/skilltest-aarch64-pc-windows-msvc.tar.gz.sha256" "$work/aarch64-pc-windows-msvc/skilltest-aarch64-pc-windows-msvc.zip.sha256"
+    (cd "$work/aarch64-pc-windows-msvc" && checksum skilltest-aarch64-pc-windows-msvc.zip)
 } || fail "could not rename the stand-in tarball as a zip; check that $work is writable"
 expect_red "the Windows archive is not a zip" "could not list skilltest-aarch64-pc-windows-msvc.zip" \
   "$work/aarch64-pc-windows-msvc" aarch64-pc-windows-msvc skilltest.exe 1.2.3
@@ -130,6 +138,30 @@ rm "$work/x86_64-unknown-linux-gnu/skilltest-x86_64-unknown-linux-gnu.tar.gz.sha
   fail "could not remove the stand-in checksum; check that $work is writable"
 expect_red "the checksum was not uploaded" "has no skilltest-x86_64-unknown-linux-gnu.tar.gz.sha256" \
   "$work/x86_64-unknown-linux-gnu" x86_64-unknown-linux-gnu skilltest 1.2.3
+
+# Both checksum names ship, each checked against the archive on its own: the
+# archive-suffixed one and the skilltest-<target>.sha256 every release before
+# #80 published, which install.sh falls back to.
+for name in skilltest-x86_64-unknown-linux-gnu.tar.gz.sha256 skilltest-x86_64-unknown-linux-gnu.sha256; do
+  pack x86_64-unknown-linux-gnu skilltest 1.2.3
+  [ -f "$work/x86_64-unknown-linux-gnu/$name" ] ||
+    fail "scripts/release-checksums.txt no longer declares $name, which every release must carry; restore its line"
+  rm "$work/x86_64-unknown-linux-gnu/$name" || fail "could not remove the stand-in $name; check that $work is writable"
+  expect_red "$name was not staged" "has no $name" \
+    "$work/x86_64-unknown-linux-gnu" x86_64-unknown-linux-gnu skilltest 1.2.3
+
+  pack x86_64-unknown-linux-gnu skilltest 1.2.3
+  printf '%064d  skilltest-x86_64-unknown-linux-gnu.tar.gz\n' 0 >"$work/x86_64-unknown-linux-gnu/$name" ||
+    fail "could not write a wrong $name; check that $work is writable"
+  expect_red "$name disagrees with the archive" "its $name says $(printf '%064d' 0)" \
+    "$work/x86_64-unknown-linux-gnu" x86_64-unknown-linux-gnu skilltest 1.2.3
+
+  pack x86_64-unknown-linux-gnu skilltest 1.2.3
+  { sed -i.bak 's/  skilltest-x86_64-unknown-linux-gnu.tar.gz$/  skilltest-aarch64-unknown-linux-gnu.tar.gz/' "$work/x86_64-unknown-linux-gnu/$name" &&
+    rm "$work/x86_64-unknown-linux-gnu/$name.bak"; } || fail "could not rename the file $name records; check that sed is on PATH and $work is writable"
+  expect_red "$name records another archive's name" "$name does not hold the one line" \
+    "$work/x86_64-unknown-linux-gnu" x86_64-unknown-linux-gnu skilltest 1.2.3
+done
 
 pack x86_64-unknown-linux-gnu skilltest 1.2.3
 { printf '#!/bin/sh\nexit 3\n' >"$work/src/skilltest" && tar -czf "$work/x86_64-unknown-linux-gnu/skilltest-x86_64-unknown-linux-gnu.tar.gz" -C "$work/src" skilltest &&
@@ -301,16 +333,18 @@ expect_aggregate_red "it was called without a version" "usage: verify-staged-arc
 # release.yml uploads; an undeclared asset staged beside them is refused.
 "$BASH" scripts/verify-staged-archives.sh "$work/products" 1.2.3 --list-assets >"$work/out" 2>"$work/err" ||
   fail "the aggregation refused complete products when listing assets ($(cat "$work/err")); fix the --list-assets branch of scripts/verify-staged-archives.sh"
+# The agreed asset set, written out here rather than read from
+# scripts/release-checksums.txt, so a declaration that drifts from it fails.
 expected_assets="$(while read -r target bin; do
   case "$bin" in *.exe) asset="skilltest-$target.zip" ;; *) asset="skilltest-$target.tar.gz" ;; esac
-  printf '%s\n%s\n' "$work/products/$target/$asset" "$work/products/$target/$asset.sha256"
+  printf '%s\n%s\n%s\n' "$work/products/$target/$asset" "$work/products/$target/$asset.sha256" "$work/products/$target/skilltest-$target.sha256"
 done <<<"$declared")"
 [ "$(sort "$work/out")" = "$(sort <<<"$expected_assets")" ] ||
   fail "--list-assets did not print exactly the declared archives and checksums, so release.yml would upload the wrong set; compare $work/out with release-platforms.toml and fix the asset list built in scripts/verify-staged-archives.sh"
 
 # A declaration whose target could escape products/ is refused before any path
 # is built: the scripts run from a scratch tree holding that declaration.
-{ mkdir -p "$work/tree/scripts" && cp scripts/verify-staged-archives.sh scripts/verify-release-archive.sh "$work/tree/scripts/" &&
+{ mkdir -p "$work/tree/scripts" && cp scripts/verify-staged-archives.sh scripts/verify-release-archive.sh scripts/release-checksums.txt "$work/tree/scripts/" &&
   printf '[[platform]]\ntarget = "../escape"\nbin = "skilltest"\n' >"$work/tree/release-platforms.toml"; } ||
   fail "could not build the scratch declaration tree; check that $work is writable"
 : >"$work/out" || fail "could not write $work/out; check that $work is writable"
@@ -320,8 +354,19 @@ fi
 grep -Fq "invalid or duplicate target '../escape'" "$work/out" ||
   fail "the aggregation refused a malformed declaration without naming it; restore the target check's message in scripts/verify-staged-archives.sh"
 
+rm "$work/products/aarch64-pc-windows-msvc/skilltest-aarch64-pc-windows-msvc.sha256" ||
+  fail "could not remove a staged checksum; check that $work is writable"
+expect_aggregate_red "a declared platform's legacy checksum was not staged" "has no skilltest-aarch64-pc-windows-msvc.sha256" "$work/products" 1.2.3 --list-assets
+
+stage_products
+cp "$work/products/aarch64-apple-darwin/skilltest-aarch64-apple-darwin.sha256" "$work/products/aarch64-apple-darwin/skilltest-x86_64-apple-darwin.sha256" ||
+  fail "could not stage an undeclared checksum; check that $work is writable"
+expect_aggregate_red "an undeclared checksum was staged" "skilltest-x86_64-apple-darwin.sha256 is not a declared release asset" "$work/products" 1.2.3 --list-assets
+rm "$work/products/aarch64-apple-darwin/skilltest-x86_64-apple-darwin.sha256" ||
+  fail "could not remove the undeclared checksum; check that $work is writable"
+
 cp "$work/products/aarch64-apple-darwin/skilltest-aarch64-apple-darwin.tar.gz" "$work/products/aarch64-apple-darwin/skilltest-x86_64-apple-darwin.tar.gz" ||
   fail "could not stage an undeclared archive; check that $work is writable"
 expect_aggregate_red "an undeclared archive was staged" "skilltest-x86_64-apple-darwin.tar.gz is not a declared release asset" "$work/products" 1.2.3 --list-assets
 
-echo "verify-release-archive-test: the verifier passes good .tar.gz and Windows .zip archives and refuses each way one can be wrong; the products aggregation verifies every declared platform"
+echo "verify-release-archive-test: the verifier passes good .tar.gz and Windows .zip archives with both checksum names and refuses each way one can be wrong; the products aggregation verifies and lists every declared platform's three assets"
