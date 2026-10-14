@@ -118,9 +118,8 @@ main() {
 			err "release $version has neither checksum $asset.sha256 nor $checksum beside $asset, so it cannot be verified; check $base, or pick another SKILLTEST_VERSION"
 	fi
 
-	expected="$(awk '{print $1}' "$tmp/checksum")" ||
-		err "could not read the downloaded $checksum; check that awk is on PATH and $tmp is readable"
-	[ -n "$expected" ] || err "$checksum from release $version is empty; re-download, or report the release"
+	expected="$(awk '{print $1}' "$tmp/checksum" 2>/dev/null)" || expected=""
+	[ -n "$expected" ] || err "$checksum from release $version is empty or unreadable; re-download, or report the release"
 	actual="$(sha256_of "$tmp/$asset")"
 	[ "$expected" = "$actual" ] ||
 		err "checksum mismatch for $asset (its $checksum says $expected, the download hashes to $actual); re-download, or report the release"

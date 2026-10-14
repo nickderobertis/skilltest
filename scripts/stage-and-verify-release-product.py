@@ -198,6 +198,9 @@ def staged_binary(platform: Platform, directory: Path) -> bytes:
     expected = f"{digest(released.read_bytes())}  {asset}\n"
     for name in checksum_names(platform):
         require(
+            (directory / name).is_file(), f"missing staged checksum: {directory / name}"
+        )
+        require(
             (directory / name).read_text() == expected,
             f"staged archive checksum differs: {name}",
         )

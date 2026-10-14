@@ -36,6 +36,9 @@ fail() {
 # until then, the WHEEL_TAG platform wheel after, and with UV_FAILS exits 1
 # after writing it, as a reinstall that fails partway can. Each double fails
 # loudly (exit 70) if it cannot record a call or write what it installs.
+# PLATFORM_MANIFEST=stale or garbled has npm write the platform package's
+# manifest at another version or as broken JSON; UV_NO_METADATA has uv
+# succeed without leaving dist-info behind.
 mkdir -p "$work/bin" || fail "could not create $work/bin; check that $work is writable"
 cat >"$work/bin/npm" <<'EOF' || fail "could not write the npm double; check that $work is writable"
 #!/usr/bin/env bash
@@ -51,7 +54,11 @@ n="$(wc -l <"$CALLS")" || broken "count the calls in $CALLS"
   broken "install @skill-test/sdk into $PWD"
 if [ "$ARRIVES_AFTER" != never ] && [ "$n" -gt "$ARRIVES_AFTER" ]; then
   { mkdir -p "node_modules/$PLATFORM" &&
-    printf '{\n  "name": "%s",\n  "version": "%s"\n}\n' "$PLATFORM" "$version" >"node_modules/$PLATFORM/package.json"; } ||
+    case "${PLATFORM_MANIFEST:-}" in
+      stale) printf '{"name": "%s", "version": "0.0.1"}\n' "$PLATFORM" ;;
+      garbled) printf '{"name": "%s", "version": \n' "$PLATFORM" ;;
+      *) printf '{\n  "name": "%s",\n  "version": "%s"\n}\n' "$PLATFORM" "$version" ;;
+    esac >"node_modules/$PLATFORM/package.json"; } ||
     broken "install $PLATFORM into $PWD"
 fi
 EOF
@@ -65,6 +72,7 @@ echo "$*" >>"$CALLS" || broken "log the call to $CALLS"
 n="$(wc -l <"$CALLS")" || broken "count the calls in $CALLS"
 tag=any
 if [ "$ARRIVES_AFTER" != never ] && [ "$n" -gt "$ARRIVES_AFTER" ]; then tag="$WHEEL_TAG"; fi
+[ -z "${UV_NO_METADATA:-}" ] || exit 0
 info="$VENV/Lib/site-packages/skilltest_sdk-$version.dist-info"
 { mkdir -p "$info" &&
   printf 'Wheel-Version: 1.0\r\nGenerator: test\r\nRoot-Is-Purelib: false\r\nTag: py3-none-%s\r\n' "$tag" >"$info/WHEEL"; } ||
@@ -115,6 +123,15 @@ if await npm x86_64-pc-windows-msvc 0 @skill-test/cli-win32-arm64; then
 fi
 grep -Fq "@skill-test/cli-win32-x64@0.14.0 did not install" "$work/out" || fail "the wrong-platform failure did not name @skill-test/cli-win32-x64"
 
+# npm: an installed platform manifest at another version, or one that is not
+# JSON, is not the platform package.
+for manifest in stale garbled; do
+  if await npm x86_64-pc-windows-msvc 0 @skill-test/cli-win32-x64 PLATFORM_MANIFEST="$manifest"; then
+    fail "the npm install accepted a $manifest @skill-test/cli-win32-x64 manifest; it must parse it and match the version"
+  fi
+  grep -Fq "@skill-test/cli-win32-x64@0.14.0 did not install" "$work/out" || fail "the $manifest-manifest failure did not name @skill-test/cli-win32-x64@0.14.0"
+done
+
 # npm: the SDK itself never installs.
 if await npm x86_64-pc-windows-msvc 0 @skill-test/cli-win32-x64 SDK_MISSING=1; then
   fail "the npm install succeeded although @skill-test/sdk never installed"
@@ -137,6 +154,13 @@ grep -Fq "the py3-none-win_amd64 platform wheel of skilltest-sdk==0.14.0 (instal
   fail "the PyPI failure did not name the win_amd64 platform wheel and what installed instead"
 
 grep -Fq "the last pypi install said:" "$work/out" || fail "the PyPI failure did not show the last install's output"
+
+# PyPI: an install that reports success but leaves no skilltest-sdk metadata
+# is not one.
+if await pypi x86_64-pc-windows-msvc 0 win_amd64 UV_NO_METADATA=1; then
+  fail "the PyPI install succeeded although no skilltest-sdk dist-info was installed"
+fi
+grep -Fq "skilltest-sdk==0.14.0 did not install from pypi" "$work/out" || fail "the missing-metadata failure did not name skilltest-sdk==0.14.0"
 
 # PyPI: an install that fails is not a success, even if it left the platform
 # wheel's metadata behind.

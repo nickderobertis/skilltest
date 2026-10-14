@@ -145,7 +145,10 @@ expect_red "gh refuses the lookup for auth" "gh could not look up release v0.14.
 expect_red "gh refuses the create" "gh could not create release v0.14.0 (HTTP 403" absent refused v0.14.0 CHANGELOG.md
 expect_red "the tagged changelog has no section for the version" "CHANGELOG.md at v0.15.0 has no section for 0.15.0" absent ok v0.15.0 CHANGELOG.md
 expect_red "the changelog is not committed at the tag" "NEWS.md is not committed at v0.14.0" absent ok v0.14.0 NEWS.md
-if ensure absent ok v0.14.0; then fail "the script ran without a changelog path"; fi
+status=0
+ensure absent ok v0.14.0 || status=$?
+[ "$status" = 2 ] || fail "the script exited $status, not 2, without a changelog path"
 grep -Fq "usage: ensure-github-release.sh" "$work/out" || fail "the script did not print its usage when called without a changelog path"
+[ ! -s "$work/gh.log" ] || fail "the script called gh before refusing its invocation"
 
 echo "ensure-github-release-test: creates a missing release from the tagged changelog section, leaves an existing one, accepts a lost race, and names each refusal"

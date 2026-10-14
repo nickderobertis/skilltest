@@ -443,10 +443,14 @@ const wheelChecksums = [
 const wheelChecksumText = readFileSync(wheelChecksums[0], "utf8");
 for (const [mutation, message] of [
   ["missing", /missing staged archive/],
+  ["missing-checksum", /missing staged checksum: .*\.tar\.gz\.sha256/],
+  ["missing-legacy-checksum", /missing staged checksum: .*-gnu\.sha256/],
   ["checksum", /staged archive checksum differs/],
   ["widened", /unexpected archive contents/],
 ]) {
   if (mutation === "missing") rmSync(wheelArchive);
+  if (mutation === "missing-checksum") rmSync(wheelChecksums[0]);
+  if (mutation === "missing-legacy-checksum") rmSync(wheelChecksums[1]);
   if (mutation === "checksum") writeFileSync(wheelChecksums[1], `${"0".repeat(64)}  x\n`);
   if (mutation === "widened")
     execFileSync("python3", [
