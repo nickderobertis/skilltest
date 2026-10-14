@@ -250,10 +250,9 @@ e2e_mock_phase() {
 
 # Assert the interception really happened and the mock report passed: a record
 # whose action matches, resolved to its mock's name, with the ORIGINAL command
-# preserved. For a stub, the canned output must also have reached the model,
-# decided here from the reply text rather than by the judge: the judge prompt
-# renders each message's text only, never its tool events, so no judge can see
-# a command's output on any harness (tests/fixtures/live/cases/mock_stub.yaml).
+# preserved. For a stub, the reply text must carry the canned output and not
+# the live one, checked here because the judge cannot see tool output
+# (docs/e2e.md).
 # Args: <report-json-path> <expected-action>
 e2e_assert_mock() {
     local report="$1" action="$2"

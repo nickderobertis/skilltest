@@ -5,14 +5,9 @@
 # whole skilltest pipeline. Matchers use `contains` on the raw event (never a
 # tool name), so one fixture works on every harness's tool naming.
 #
-# What the judge can see: the judge prompt renders each message's text only
-# (`render_transcript` in crates/skilltest-core/src/provider.rs), never its
-# tool events, on every harness. So no judge can confirm a reply against the
-# command's output, and this criterion asks only about the reply's text (the
-# failures this caused are recorded in docs/e2e.md).
-#
-# The phase's reply check (`e2e_assert_mock`, scripts/e2e-lib.sh) decides
-# deterministically whether the canned output reached the model.
+# The criterion asks only about the reply text, because the judge never sees
+# tool output; `e2e_assert_mock` decides whether the canned output reached the
+# model (docs/e2e.md).
 name: live_mock_stub
 skill: ../skills/toolrunner
 input: "Run the marked command and report its output."
