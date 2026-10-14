@@ -1192,30 +1192,58 @@ fn codex_mock_phase_fails_when_the_judge_fails_a_correct_reply() {
 
 #[test]
 #[ignore = "host-tool tier (bash + jq, beside the oneharness suite); run via just test-oneharness"]
-fn mock_assertions_refuse_a_report_whose_reply_cannot_be_read() {
-    // A report with the stub record but a non-text assistant message: the
-    // reply check stops with a next action instead of reading it as empty.
-    let scratch = Scratch::new("unreadable-reply");
-    let report = scratch.0.join("report.json");
-    std::fs::write(
-        &report,
-        r#"{"passed":true,"runs":[{"mock_calls":[{"action":"stub","input":{"command":"printf MARKER"}}],
-            "transcript":{"messages":[{"role":"assistant","content":{"not":"text"}}]}}]}"#,
-    )
-    .unwrap();
+fn mock_assertions_refuse_malformed_reports_with_a_next_action() {
+    let scratch = Scratch::new("malformed-report");
     let lib = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../scripts/e2e-lib.sh");
-    let out = Command::new("bash")
-        .arg("-c")
-        .arg(r#"source "$1" && e2e_assert_mock "$2" stub"#)
-        .arg("mock-assertions")
-        .arg(lib)
-        .arg(&report)
-        .output()
-        .expect("bash runs the mock assertions");
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    let assert_mock = |name: &str, report: &str, action: &str| {
+        let path = scratch.0.join(name);
+        std::fs::write(&path, report).unwrap();
+        let out = Command::new("bash")
+            .arg("-c")
+            .arg(r#"source "$1" && e2e_assert_mock "$2" "$3""#)
+            .arg("mock-assertions")
+            .arg(&lib)
+            .arg(&path)
+            .arg(action)
+            .output()
+            .expect("bash runs the mock assertions");
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        (out.status.code(), text)
+    };
+
+    // The stub record is there, but an assistant message is not text: the
+    // reply check stops instead of coercing it into the reply it searches.
+    let (code, text) = assert_mock(
+        "non-text.json",
+        r#"{"passed":true,"runs":[{"mock_calls":[{"action":"stub","input":{"command":"printf MARKER"}}],
+            "transcript":{"messages":[{"role":"assistant","content":"CANNED-BY-SKILLTEST"},
+                                      {"role":"assistant","content":{"not":"text"}}]}}]}"#,
+        "stub",
+    );
+    assert_eq!(code, Some(1), "{text}");
     assert!(
-        stderr.contains("FAIL: could not read the assistant reply from"),
-        "{stderr}"
+        text.contains("FAIL: could not read the assistant reply from"),
+        "{text}"
+    );
+
+    // A failed run whose evals cannot be rendered still says so, then fails.
+    let (code, text) = assert_mock(
+        "unrenderable-evals.json",
+        r#"{"passed":false,"runs":[{"mock_calls":[{"action":"deny","input":{"command":"MARKER"}}],
+            "evals":["not an eval"]}]}"#,
+        "deny",
+    );
+    assert_eq!(code, Some(1), "{text}");
+    assert!(
+        text.contains("(could not render the evals: jq: error"),
+        "{text}"
+    );
+    assert!(
+        text.contains("FAIL: the live mock run did not pass"),
+        "{text}"
     );
 }

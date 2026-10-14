@@ -263,7 +263,7 @@ e2e_assert_mock() {
         || fail "the intercepted record lost the original input"
     if [ "$action" = "stub" ]; then
         local reply
-        reply="$(jq -er '[.runs[0].transcript.messages[]?|select(.role=="assistant")|.content]|join(" ")' "$report")" \
+        reply="$(jq -er '[.runs[0].transcript.messages[]?|select(.role=="assistant")|.content]|if all(type=="string") then join(" ") else error("an assistant message has non-text content") end' "$report")" \
             || fail "could not read the assistant reply from $report (see jq's error above); rerun the phase and inspect that report"
         case "$reply" in
             *MARKER-LIVE*) fail "the reply reports the live output MARKER-LIVE, so the stub's output did not replace it; reply: $reply — check the transcript events for the command that ran, then rerun the phase" ;;
@@ -273,7 +273,15 @@ e2e_assert_mock() {
             *) fail "the reply never reports the stub's output CANNED-BY-SKILLTEST, so it never reached the model; reply: $reply — check the transcript events for the tool's output, then rerun the phase" ;;
         esac
     fi
-    jq -e '.passed == true' "$report" >/dev/null 2>&1 \
-        || { note "  report:"; { jq '{passed, evals:[.runs[0].evals[]?|{label,passed,reason}]}' "$report" 2>&1 | sed 's/^/    /'; } || note "    (could not render the evals; inspect $report)"; fail "the live mock run did not pass; the failing eval's reason is above — fix what it names, then rerun the phase"; }
+    if ! jq -e '.passed == true' "$report" >/dev/null 2>&1; then
+        local evals
+        note "  report:"
+        if evals="$(jq '{passed, evals:[.runs[0].evals[]?|{label,passed,reason}]}' "$report" 2>&1)"; then
+            printf '%s\n' "$evals" | sed 's/^/    /'
+        else
+            note "    (could not render the evals: $evals; inspect $report)"
+        fi
+        fail "the live mock run did not pass; the failing eval's reason is above — fix what it names, then rerun the phase"
+    fi
     note "  ok: mock phase passed ($action intercepted the marked call)"
 }

@@ -50,14 +50,19 @@ emit() { # emit <jq args…> — one transcript record, or stop the run loudly
     }
 }
 
-# `codex exec [flags] <prompt>`: the prompt is the one positional after `exec`.
+# `codex exec [flags] <prompt>`: exactly one prompt, after the `exec` subcommand.
 # Only the flags oneharness passes codex are accepted, so a new one is loud.
-prompt=""
 args=("$@")
-i=0
+if [ "${#args[@]}" -eq 0 ] || [ "${args[0]}" != "exec" ]; then
+    echo "fake-codex: expected 'exec' as the first argument (oneharness drives \`codex exec\`); got '${args[0]:-}'. Check the oneharness codex invocation and rerun" >&2
+    exit 2
+fi
+prompt=""
+prompts=0
+i=1
 while [ "$i" -lt "${#args[@]}" ]; do
     case "${args[$i]}" in
-        exec | --json | --dangerously-bypass-approvals-and-sandbox | --dangerously-bypass-hook-trust | --full-auto | --skip-git-repo-check)
+        --json | --dangerously-bypass-approvals-and-sandbox | --dangerously-bypass-hook-trust | --full-auto | --skip-git-repo-check)
             i=$((i + 1)) ;;
         -c | --config | -m | --model | -s | --sandbox | --output-schema)
             if [ "$((i + 1))" -ge "${#args[@]}" ]; then
@@ -68,9 +73,13 @@ while [ "$i" -lt "${#args[@]}" ]; do
         -*)
             echo "fake-codex: unsupported flag '${args[$i]}'; teach this shim what codex does with it, then rerun the integration test" >&2
             exit 2 ;;
-        *) prompt="${args[$i]}"; i=$((i + 1)) ;;
+        *) prompt="${args[$i]}"; prompts=$((prompts + 1)); i=$((i + 1)) ;;
     esac
 done
+if [ "$prompts" -ne 1 ]; then
+    echo "fake-codex: expected exactly one prompt argument after exec, got $prompts; check the oneharness codex invocation and rerun" >&2
+    exit 2
+fi
 if [ "$prompt" = "-" ]; then
     prompt="$(cat)" || {
         echo "fake-codex: could not read the prompt from stdin; pass it as the exec argument and rerun" >&2
