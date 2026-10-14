@@ -58,17 +58,20 @@ Three layers, all driving the real binary as a subprocess:
   "evals run on a fixed `judge_harness`" model), so verdicts stay clean even
   when the harness under test wraps its reply in a banner.
 
-  The judge prompt renders each message's text, never its tool events, so no
-  judge can see a command's output, on any harness. Whether the stub's output
-  reached the model is therefore decided by `e2e_assert_mock` from the reply
-  text (it must contain `CANNED-BY-SKILLTEST` and not `MARKER-LIVE`), and the
-  stub case's criterion asks only about the reply. Before that, the criterion
-  asked the haiku judge to confirm "the command output", and it failed codex's
-  phase on the PR #82 and #86 merges (crush and opencode too on #82's) with
-  `called: marker` passing: the judge sometimes accepted the reply as reported
-  and sometimes answered false because "the transcript never shows that
-  string as the command's actual output". See
-  `tests/fixtures/live/cases/mock_stub.yaml`.
+  Judges never see tool events, on any harness: `build_judge_prompt` inlines
+  `render_transcript` (`crates/skilltest-core/src/provider.rs`), which writes
+  each message as `format!("{role}: {}", m.content)` and drops its `events`.
+  So whether the stub's output reached the model is decided by
+  `e2e_assert_mock` from the reply text (it must contain `CANNED-BY-SKILLTEST`
+  and not `MARKER-LIVE`), and the stub case's criterion asks only about the
+  reply. Before that, the criterion asked the haiku judge to confirm the reply
+  reported "the command output", which its input never contains. The phase
+  could pass only when the reply restated the canned text, and even then the
+  judge decided the part it could not check differently run to run: codex's
+  phase failed on the PR #82 and #86 merges (crush and opencode too on #82's)
+  with `called: marker` passing and the reply quoting `CANNED-BY-SKILLTEST`,
+  the judge answering false because "the transcript never shows that string
+  as the command's actual output".
 
 A missing `oneharness`, a missing harness binary, or a missing secret is a
 **skip, not a failure** — the rest of the project builds and tests without them.
