@@ -49,15 +49,24 @@ else
   trap 'rm -rf "$work"' EXIT
 fi
 
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || fail "cannot change to the repository root above $0" "run it from a complete checkout"
 
 # Every top-level entry of each `deps/`, `.fingerprint/`, `build/` and
-# `incremental/` directory under target/ (what the pruner may remove), sorted.
+# `incremental/` directory under target/ (what the pruner may remove), sorted,
+# written to $work/<name>.txt.
 entries() {
+  : >"$work/$1.txt" || fail "cannot write $work/$1.txt" "check that $work is writable"
   [ -d target ] || return 0
   find target \( -name deps -o -name .fingerprint -o -name build -o -name incremental \) \
     -type d -prune -exec find {} -mindepth 1 -maxdepth 1 \; |
-    LC_ALL=C sort
+    LC_ALL=C sort >"$work/$1.txt" ||
+    fail "cannot list target/'s build entries into $work/$1.txt" "check that target/ is readable and $work writable"
+}
+
+# only_in <a> <b> <out>: the lines of $work/<a>.txt missing from $work/<b>.txt.
+only_in() {
+  LC_ALL=C comm -23 "$work/$1.txt" "$work/$2.txt" >"$work/$3.txt" ||
+    fail "cannot compare $work/$1.txt with $work/$2.txt" "check that both lists exist and are sorted"
 }
 
 # The gate's build of the workspace's test targets (`just coverage` selects the
@@ -71,7 +80,7 @@ ONEBUDGETSPEC_RESULT="$work/backlog.json" just pool-maintenance >/dev/null ||
   fail "the untimed backlog pass failed" "run \`just pool-maintenance\` to see why"
 
 # (b) The alternative configuration's build, then backdate what it created.
-entries >"$work/before-alt.txt"
+entries before-alt
 profile_args=()
 packages="$(cargo metadata --no-deps --format-version 1 --locked | jq -r '.packages[].name')" ||
   fail "cannot list this workspace's packages" "run \`cargo metadata --no-deps --locked\` to see why"
@@ -80,8 +89,8 @@ while IFS= read -r package; do
 done <<<"$packages"
 build_tests "${profile_args[@]}" ||
   fail "the alternative-profile build failed" "run \`cargo test --workspace --features fake-provider --no-run\` to see why"
-entries >"$work/after-alt.txt"
-LC_ALL=C comm -13 "$work/before-alt.txt" "$work/after-alt.txt" >"$work/alt.txt"
+entries after-alt
+only_in after-alt before-alt alt
 [ -s "$work/alt.txt" ] ||
   fail "the alternative-profile build created no new entries under target/" \
     "an interrupted earlier measurement leaves that build fresh: \`cargo clean -p\` this workspace's crates, then rerun"
@@ -89,31 +98,36 @@ LC_ALL=C comm -13 "$work/before-alt.txt" "$work/after-alt.txt" >"$work/alt.txt"
 # already there, so each unit's pre-existing ordinary build stays its newest one.
 # `touch -h -t` is the same on GNU and BSD userlands.
 while IFS= read -r entry; do
-  find "$entry" -exec touch -h -t 200001010000 {} +
+  find "$entry" -exec touch -h -t 200001010000 {} + ||
+    fail "cannot backdate $entry" "check that target/ is writable by this user, then rerun"
 done <"$work/alt.txt"
 
 # (c) The ordinary gate build: each unit's newest build is now the ordinary one.
 build_tests || fail "the ordinary build failed" "run \`cargo test --workspace --features fake-provider --no-run\` to see why"
-entries >"$work/before-timed.txt"
-missing="$(LC_ALL=C comm -23 "$work/alt.txt" "$work/before-timed.txt")"
+entries before-timed
+only_in alt before-timed missing
+missing="$(cat "$work/missing.txt")" || fail "cannot read $work/missing.txt" "check that $work is readable"
 [ -z "$missing" ] || fail "the ordinary build removed entries of the alternative build: $missing" \
   "rerun; the measurement needs both builds present before the timed pass"
 
 # (d) The timed pass; the pruner reports its own seconds to ONEBUDGETSPEC_RESULT.
 just pool-maintenance >/dev/null || fail "the timed pass failed" "run \`just pool-maintenance\` to see why"
-entries >"$work/after-timed.txt"
-LC_ALL=C comm -23 "$work/before-timed.txt" "$work/after-timed.txt" >"$work/removed.txt"
+entries after-timed
+only_in before-timed after-timed removed
 [ -s "$work/removed.txt" ] ||
   fail "the timed pass removed nothing, so it measured no superseded builds" \
     "check that the pruner still removes builds older than --keep-within with a newer build of the same unit"
-stray="$(LC_ALL=C comm -23 "$work/removed.txt" "$work/alt.txt")"
+only_in removed alt stray
+stray="$(cat "$work/stray.txt")" || fail "cannot read $work/stray.txt" "check that $work is readable"
 [ -z "$stray" ] || fail "the timed pass removed entries the alternative build did not create: $stray" \
   "the pruner removed an ordinary build; inspect $work (set POOL_MAINTENANCE_EVIDENCE_DIR to keep it)"
 
 if [ -n "$result" ] && [ -f "$result" ] && [ -f "$work/backlog.json" ]; then
-  backlog="$(jq -r '.value' "$work/backlog.json")"
+  backlog="$(jq -r '.value' "$work/backlog.json")" ||
+    fail "cannot read the backlog pass's seconds from $work/backlog.json" "check that the pruner wrote a onebudgetspec result there"
   jq --arg backlog "$backlog" \
     '.detail = ((.detail // "") + "; untimed backlog pass seconds (not in the figure): " + $backlog)' \
-    "$result" >"$work/result.json"
-  cp "$work/result.json" "$result"
+    "$result" >"$work/result.json" ||
+    fail "cannot add the backlog seconds to the timed pass's result $result" "check that it is the pruner's onebudgetspec JSON"
+  cp "$work/result.json" "$result" || fail "cannot write the result back to $result" "check that its directory is writable"
 fi

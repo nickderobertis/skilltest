@@ -55,7 +55,7 @@ bootstrap:
     @just pool-maintenance-tool
 
 # Install the pinned cargo-prune-superseded `pool-maintenance` runs, only when the
-# one on PATH is not already that release (pool-maintenance/pool-maintenance-test.sh).
+# one on PATH is not already that release (pool-maintenance/declaration/pool-maintenance-test.sh).
 pool-maintenance-tool:
     @[ "$(cargo-prune-superseded --version 2>/dev/null)" = "cargo-prune-superseded {{prune-superseded-version}}" ] || cargo install --locked cargo-prune-superseded --version {{prune-superseded-version}}
 
@@ -96,8 +96,9 @@ check tier="affected":
 # every target dir this repository's builds write to — `target`, the one
 # `.cargo/config.toml` sets — keeping its newest build and every build modified
 # within 2 days. `just bootstrap` installs the pinned pruner; the
-# `pool-maintenance` project's host budget holds how long one pass takes, and its
-# `test-e2e` runs this recipe the way onevcs.toml declares it.
+# `pool-maintenance` project's host budget holds how long one pass takes, and
+# `pool-maintenance-declaration`'s `test-e2e` runs this recipe the way onevcs.toml
+# declares it.
 pool-maintenance:
     @command -v cargo-prune-superseded >/dev/null || { echo "pool-maintenance: cargo-prune-superseded not found; run \`just bootstrap\` to install the pinned release" >&2; exit 1; }
     @cargo-prune-superseded --keep-within 2d target

@@ -14,7 +14,7 @@
 # Quiet on success, one line. On failure it names the case and what happened.
 set -euo pipefail
 
-root="$(cd "$(dirname "$0")/.." && pwd)" || {
+root="$(cd "$(dirname "$0")/../.." && pwd)" || {
   echo "pool-maintenance-test: cannot locate the repository root above $0; run it from a complete checkout" >&2
   exit 1
 }
@@ -35,9 +35,9 @@ done
 
 # A PATH holding only `just`, the shells and whichever stubs a case installs.
 bin="$work/bin"
-mkdir -p "$bin"
+mkdir -p "$bin" || fail "cannot create the sandbox PATH directory $bin; check that $work is writable"
 for tool in just bash sh; do
-  ln -s "$(command -v "$tool")" "$bin/$tool"
+  ln -s "$(command -v "$tool")" "$bin/$tool" || fail "cannot link $tool into the sandbox PATH $bin; check that $work is writable"
 done
 calls="$work/calls"
 bash_path="$(command -v bash)"
@@ -48,10 +48,18 @@ stub() {
     echo "echo \"\$0 \$*\" >>'$calls'"
     [ -z "${3:-}" ] || echo "[ \"\${1:-}\" != --version ] || { echo '$3'; exit 0; }"
     echo "exit $2"
-  } >"$bin/$1"
-  chmod +x "$bin/$1"
+  } >"$bin/$1" || fail "cannot write the $1 stub into $bin; check that $work is writable"
+  chmod +x "$bin/$1" || fail "cannot make the $1 stub executable in $bin"
 }
-unstub() { rm -f "$bin/cargo-prune-superseded" "$bin/cargo" "$calls"; }
+unstub() {
+  rm -f "$bin/cargo-prune-superseded" "$bin/cargo" "$calls" || fail "cannot remove the stubs from $bin; check that $work is writable"
+}
+# installs: how many `cargo install` calls the stubs recorded.
+installs() {
+  [ -f "$calls" ] || { echo 0; return; }
+  [ -r "$calls" ] || fail "cannot read the recorded calls in $calls"
+  grep -c '/cargo install' "$calls" || true
+}
 
 # run <argv...>: from the repository root on the sandbox PATH; sets $err and $code.
 run() {
@@ -83,8 +91,10 @@ for rel in listed:
 print(" ".join(sorted(set(dirs)) or ["target"]))
 PY
 )" || fail "cannot read onevcs.toml's [pool.maintain] command or the .cargo/config.toml target dirs"
-IFS=$'\x1f' read -r -a command <<<"$(sed -n 1p <<<"$declared")"
-target_dirs="$(sed -n 2p <<<"$declared")"
+command_line="${declared%%$'\n'*}"
+target_dirs="${declared#*$'\n'}"
+[ "$command_line" != "$declared" ] || fail "reading onevcs.toml and .cargo/config.toml printed one line, not the command and the target dirs"
+IFS=$'\x1f' read -r -a command <<<"$command_line"
 [ "${#command[@]}" -gt 0 ] || fail "onevcs.toml's [pool.maintain] command is empty"
 
 # The declared command reaches the pruner with the window and every target dir.
@@ -120,13 +130,13 @@ unstub
 stub cargo 0
 stub cargo-prune-superseded 0 "cargo-prune-superseded 0.0.0-stale"
 run just pool-maintenance-tool
-[ "$code" -eq 0 ] && [ "$(grep -c '/cargo install' "$calls" || true)" = 1 ] ||
+[ "$code" -eq 0 ] && [ "$(installs)" = 1 ] ||
   fail "pool-maintenance-tool over a stale pruner: expected one install, got exit $code, calls '$(recorded)', stderr '$err'"
 unstub
 stub cargo 0
 stub cargo-prune-superseded 0 "cargo-prune-superseded $pin"
 run just pool-maintenance-tool
-if [ "$code" -ne 0 ] || grep -q '/cargo ' "$calls"; then
+if [ "$code" -ne 0 ] || [ "$(installs)" != 0 ]; then
   fail "pool-maintenance-tool over the pinned release: expected no install, got exit $code, calls '$(recorded)'"
 fi
 unstub
@@ -138,11 +148,13 @@ run just pool-maintenance-tool
 # `check` — over every project, and affected by a change to the maintenance
 # files, to the project's configuration or to a source file — never does.
 nx_line() { # recipe tier: the recipe's `nx run-many` line, as just would run it
-  (cd "$root" && just --dry-run "$1" "$2" 2>&1) | grep '^pnpm exec nx run-many -t ' | head -n 1
+  local plan
+  plan="$(cd "$root" && just --dry-run "$1" "$2" 2>&1)" || fail "\`just --dry-run $1 $2\` failed: $plan"
+  { grep '^pnpm exec nx run-many -t ' <<<"$plan" || true; } | head -n 1
 }
 tasks() { # nx argv...: the task ids nx would run
   (cd "$root" && "$@" --graph="$work/graph.json" >/dev/null 2>&1) || fail "nx could not plan \`$*\`"
-  jq -r '.tasks.tasks | keys[]' "$work/graph.json"
+  jq -r '.tasks.tasks | keys[]' "$work/graph.json" || fail "cannot read the task ids from nx's graph $work/graph.json for \`$*\`"
 }
 measured="pool-maintenance:budgets-host"
 budgets_line="$(nx_line budgets all)"
@@ -150,11 +162,16 @@ check_line="$(nx_line check all)"
 [ -n "$budgets_line" ] && [ -n "$check_line" ] || fail "cannot read the nx lines of \`just budgets all\` / \`just check all\`"
 read -r -a budgets_argv <<<"$budgets_line"
 read -r -a check_argv <<<"$check_line"
-tasks "${budgets_argv[@]}" | grep -qx "$measured" || fail "\`just budgets all\` does not select $measured"
-! tasks "${check_argv[@]}" | grep -q '^pool-maintenance:budgets' || fail "\`just check all\` selects the pool-maintenance budget"
-for changed in pool-maintenance/measure.sh pool-maintenance/budgets.yaml pool-maintenance/project.json nx.json crates/skilltest-core/src/lib.rs; do
-  affected_argv=("${check_argv[@]/run-many/affected}")
-  ! tasks "${affected_argv[@]}" --files="$changed" | grep -q '^pool-maintenance:budgets' ||
+selected="$(tasks "${budgets_argv[@]}")" || exit 1
+grep -qx "$measured" <<<"$selected" || fail "\`just budgets all\` does not select $measured"
+selected="$(tasks "${check_argv[@]}")" || exit 1
+! grep -q '^pool-maintenance:budgets' <<<"$selected" || fail "\`just check all\` selects the pool-maintenance budget"
+affected_argv=("${check_argv[@]/run-many/affected}")
+for changed in pool-maintenance/measure.sh pool-maintenance/budgets.yaml pool-maintenance/project.json \
+  pool-maintenance/declaration/pool-maintenance-test.sh pool-maintenance/declaration/project.json \
+  nx.json crates/skilltest-core/src/lib.rs; do
+  selected="$(tasks "${affected_argv[@]}" --files="$changed")" || exit 1
+  ! grep -q '^pool-maintenance:budgets' <<<"$selected" ||
     fail "\`just check\` affected by $changed selects the pool-maintenance budget"
 done
 
