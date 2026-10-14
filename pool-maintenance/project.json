@@ -1,0 +1,18 @@
+{
+  "name": "pool-maintenance",
+  "tags": ["type:e2e", "lang:bash"],
+  "targets": {
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "uv run --no-sync shellcheck pool-maintenance/measure.sh"
+      }
+    },
+    "budgets-host": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm exec onebudgetspec check pool-maintenance/budgets.yaml --label host"
+      }
+    }
+  }
+}
