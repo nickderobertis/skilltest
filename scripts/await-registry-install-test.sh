@@ -37,6 +37,9 @@ fail() {
 # until then, the WHEEL_TAG platform wheel after, and with UV_FAILS exits 1
 # after writing it, as a reinstall that fails partway can. Each double fails
 # loudly (exit 70) if it cannot record a call or write what it installs.
+# Like npm, the double resolves from an existing package-lock.json, which
+# records the platform package as absent when it was skipped, so a retry over
+# a stale lockfile never picks it up.
 # PLATFORM_MANIFEST=stale or garbled has npm write the platform package's
 # manifest at another version or as broken JSON; UV_NO_METADATA has uv
 # succeed without leaving dist-info behind.
@@ -53,7 +56,10 @@ n="$(wc -l <"$CALLS")" || broken "count the calls in $CALLS"
 { mkdir -p node_modules/@skill-test/sdk &&
   printf '{\n  "name": "@skill-test/sdk",\n  "version": "%s"\n}\n' "$version" >node_modules/@skill-test/sdk/package.json; } ||
   broken "install @skill-test/sdk into $PWD"
-if [ "$ARRIVES_AFTER" != never ] && [ "$n" -gt "$ARRIVES_AFTER" ]; then
+arrived=""
+if [ "$ARRIVES_AFTER" != never ] && [ "$n" -gt "$ARRIVES_AFTER" ]; then arrived=1; fi
+if [ -f package-lock.json ] && ! grep -Fq "\"node_modules/$PLATFORM\"" package-lock.json; then arrived=""; fi
+if [ -n "$arrived" ]; then
   { mkdir -p "node_modules/$PLATFORM" &&
     case "${PLATFORM_MANIFEST:-}" in
       stale) printf '{"name": "%s", "version": "0.0.1"}\n' "$PLATFORM" ;;
@@ -61,6 +67,13 @@ if [ "$ARRIVES_AFTER" != never ] && [ "$n" -gt "$ARRIVES_AFTER" ]; then
       *) printf '{\n  "name": "%s",\n  "version": "%s"\n}\n' "$PLATFORM" "$version" ;;
     esac >"node_modules/$PLATFORM/package.json"; } ||
     broken "install $PLATFORM into $PWD"
+fi
+if [ ! -f package-lock.json ]; then
+  if [ -n "$arrived" ]; then
+    printf '{"packages": {"node_modules/@skill-test/sdk": {}, "node_modules/%s": {}}}\n' "$PLATFORM"
+  else
+    printf '{"packages": {"node_modules/@skill-test/sdk": {}}}\n'
+  fi >package-lock.json || broken "write package-lock.json into $PWD"
 fi
 EOF
 cat >"$work/bin/uv" <<'EOF' || fail "could not write the uv double; check that $work is writable"
@@ -126,6 +139,27 @@ if await npm x86_64-pc-windows-msvc 0 @skill-test/cli-win32-arm64; then
   fail "the npm install accepted another target's platform package for x86_64-pc-windows-msvc"
 fi
 grep -Fq "@skill-test/cli-win32-x64@0.14.0 did not install" "$work/out" || fail "the wrong-platform failure did not name @skill-test/cli-win32-x64"
+
+# npm: a platform package left in node_modules by an earlier run does not
+# count; each attempt installs into a fresh tree.
+for left in node_modules package-lock.json; do
+  { rm -rf "$work/consumer-npm" && mkdir -p "$work/consumer-npm/node_modules/@skill-test/cli-win32-x64" &&
+    echo '{"name": "consumer"}' >"$work/consumer-npm/package.json"; } || fail "could not seed $work/consumer-npm"
+  if [ "$left" = node_modules ]; then
+    echo '{"name": "@skill-test/cli-win32-x64", "version": "0.14.0"}' >"$work/consumer-npm/node_modules/@skill-test/cli-win32-x64/package.json"
+  else
+    echo '{"packages": {"node_modules/@skill-test/sdk": {}}}' >"$work/consumer-npm/package-lock.json"
+  fi || fail "could not seed a stale $left in $work/consumer-npm"
+  : >"$work/calls" || fail "could not reset $work/calls"
+  status=0
+  env PATH="$work/bin:$PATH" CALLS="$work/calls" ARRIVES_AFTER="$([ "$left" = node_modules ] && echo never || echo 0)" \
+    PLATFORM=@skill-test/cli-win32-x64 SKILLTEST_REGISTRY_ATTEMPTS=2 SKILLTEST_REGISTRY_INTERVAL=0 \
+    bash "$script" npm x86_64-pc-windows-msvc 0.14.0 "$work/consumer-npm" >"$work/out" 2>&1 || status=$?
+  case "$left" in
+    node_modules) [ "$status" = 1 ] || fail "the npm install trusted a @skill-test/cli-win32-x64 left in node_modules by an earlier run" ;;
+    *) [ "$status" = 0 ] || fail "the npm install kept a stale package-lock.json that skips @skill-test/cli-win32-x64, so the published package never installed" ;;
+  esac
+done
 
 # npm: an installed platform manifest at another version, or one that is not
 # JSON, is not the platform package.
