@@ -39,8 +39,11 @@ for doc in "${docs[@]}"; do
     grep -Fq "\`$name\`" "$root/$doc" ||
       err "$doc does not name \`$name\`, which scripts/release-checksums.txt declares; state it where $doc lists the release checksums"
   done
-  stated="$(grep -oE "${bt}[^${bt} ]+\\.sha256${bt}" "$root/$doc" | tr -d "$bt" | sort -u)" || stated=""
+  status=0
+  stated="$(grep -oE "${bt}[^${bt} ]+\\.sha256${bt}" "$root/$doc")" || status=$?
+  [ "$status" -le 1 ] || err "could not read $root/$doc (grep exited $status); check that it is a readable file"
   while IFS= read -r name; do
+    name="${name//$bt/}"
     [ -n "$name" ] || continue
     [ "$name" = ".zip.sha256" ] && continue
     known=0

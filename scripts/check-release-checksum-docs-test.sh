@@ -30,7 +30,6 @@ fail() {
   exit 1
 }
 
-# A fresh copy of the files the gate reads.
 copy() {
   if ! { rm -rf "$work/tree" && mkdir -p "$work/tree/scripts" &&
     cp README.md AGENTS.md release-targets.toml "$work/tree/" &&
@@ -41,7 +40,7 @@ copy() {
 
 # expect_red <what> <message>: the gate run on the copy fails saying <message>.
 expect_red() {
-  : >"$work/out"
+  : >"$work/out" || fail "could not reset $work/out; check that $work is writable"
   if bash "$gate" "$work/tree" >"$work/out" 2>&1; then
     fail "the gate passed when $1"
   fi
@@ -75,7 +74,6 @@ grep -Fxq 'skilltest-{target}.checksum.sha256' "$work/tree/scripts/release-check
 expect_red "the declaration renamed a checksum the docs still state" \
   "does not name ${bt}skilltest-<target>.checksum.sha256${bt}"
 
-# The declaration is gone.
 copy
 rm "$work/tree/scripts/release-checksums.txt" || fail "could not remove the copied declaration"
 expect_red "scripts/release-checksums.txt is missing" "restore scripts/release-checksums.txt"
