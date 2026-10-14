@@ -35,6 +35,7 @@ usage_err() {
 }
 [ "$#" -eq 4 ] && [ -d "$4" ] || usage_err "$usage"
 registry="$1" target="$2" version="$3" dir="${4%/}"
+[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]] || usage_err "version '$version' is not X.Y.Z; $usage"
 case "$registry" in
   npm) marker=package.json ;;
   pypi) marker=pyvenv.cfg ;;
@@ -44,7 +45,6 @@ esac
 # consumer it names, never the filesystem root or an unrelated directory.
 [ -n "$dir" ] && [ -f "$dir/$marker" ] ||
   usage_err "'$4' has no $marker, so it is not the $registry consumer to install into; create it first (npm init -y, or uv venv)"
-[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]] || usage_err "version '$version' is not X.Y.Z; $usage"
 attempts="${SKILLTEST_REGISTRY_ATTEMPTS:-10}" interval="${SKILLTEST_REGISTRY_INTERVAL:-30}"
 [[ "$attempts" =~ ^[1-9][0-9]*$ && "$interval" =~ ^[0-9]+$ ]] ||
   usage_err "SKILLTEST_REGISTRY_ATTEMPTS must be a positive and SKILLTEST_REGISTRY_INTERVAL a non-negative whole number; unset them to use the defaults (10 attempts, 30 s apart)"
@@ -60,7 +60,8 @@ declared() {
   ' "$here/../release-platforms.toml"
 }
 # Each value names a node_modules path or a wheel tag, so it is held to the
-# grammar scripts/stage-and-verify-release-product.py holds the file to.
+# grammar scripts/stage-and-verify-release-product.py holds the file to
+# (PLATFORM_GRAMMAR; await-registry-install-test.sh fails if they differ).
 case "$registry" in
   npm) field=npm_package grammar='^@skill-test/cli-[a-z0-9]+-[a-z0-9]+$' ;;
   pypi) field=wheel_tag grammar='^[a-z0-9_]+$' ;;

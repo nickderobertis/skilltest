@@ -787,10 +787,16 @@ def release_pipeline(wfs: dict[WorkflowFile, Workflow]) -> list[str]:
         elif step.env.get("TARGET", "").replace(" ", "") != "${{matrix.target}}":
             bad.append(f"publish.yml:verify-windows runs `{command}` without TARGET set to the matrix target")
     bad += [
-        f"publish.yml:verify-windows overrides {key}; the install bound is 10 attempts 30 s apart"
+        f"publish.yml:verify-windows overrides {key}; the install bound is the script's own default"
         for st in verify.steps
         for key in st.env
         if key.startswith("SKILLTEST_REGISTRY_")
+    ]
+    helper = (ROOT / "scripts" / "await-registry-install.sh").read_text()
+    bad += [
+        f"scripts/await-registry-install.sh no longer defaults to `{default}`; verify-windows' bound is 10 attempts 30 s apart"
+        for default in ("${SKILLTEST_REGISTRY_ATTEMPTS:-10}", "${SKILLTEST_REGISTRY_INTERVAL:-30}")
+        if default not in helper
     ]
     return bad
 

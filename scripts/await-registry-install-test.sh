@@ -26,6 +26,7 @@ fail() {
     echo "  what the script said:" >&2
     cat "$work/out" >&2 || echo "  (unreadable: $work/out)" >&2
   fi
+  echo "  fix scripts/await-registry-install.sh (or this test, if the contract changed on purpose), then rerun just release-targets-check" >&2
   exit 1
 }
 
@@ -92,6 +93,9 @@ await() {
     npm) echo '{"name": "consumer"}' >"$dir/package.json" ;;
     *) echo 'home = /usr/bin' >"$dir/pyvenv.cfg" ;;
   esac || fail "could not mark $dir as a $registry consumer; check that $work is writable"
+  case " $* " in
+    *" WINDOWS_VENV=1 "*) { mkdir -p "$dir/Scripts" && : >"$dir/Scripts/python.exe"; } || fail "could not lay out $dir as a Windows venv" ;;
+  esac
   env PATH="$work/bin:$PATH" CALLS="$work/calls" ARRIVES_AFTER="$after" PLATFORM="$serves" WHEEL_TAG="$serves" VENV="$dir" \
     SKILLTEST_REGISTRY_ATTEMPTS=4 SKILLTEST_REGISTRY_INTERVAL=0 "$@" \
     bash "$script" "$registry" "$target" 0.14.0 "$dir" >"$work/out" 2>&1
@@ -142,9 +146,14 @@ grep -Fq "@skill-test/sdk@0.14.0 did not install from npm" "$work/out" || fail "
 await pypi x86_64-pc-windows-msvc 2 win_amd64 ||
   fail "the PyPI install failed although the win_amd64 wheel arrived on the third attempt"
 [ "$(calls)" = 3 ] || fail "the PyPI install stopped after $(calls) attempts; it must retry past the pure wheel until the platform wheel installed"
-grep -Fq -- "--refresh --reinstall skilltest-sdk==0.14.0" "$work/calls" || fail "the PyPI install did not reinstall skilltest-sdk==0.14.0 afresh; got: $(head -1 "$work/calls")"
+grep -Fq -- "--python $work/consumer-pypi/bin/python --refresh --reinstall skilltest-sdk==0.14.0" "$work/calls" || fail "the PyPI install did not reinstall skilltest-sdk==0.14.0 afresh; got: $(head -1 "$work/calls")"
 
 await pypi aarch64-pc-windows-msvc 0 win_arm64 || fail "the PyPI install failed for aarch64-pc-windows-msvc's win_arm64 wheel"
+
+# A Windows venv's interpreter is Scripts/python.exe, which uv must be given.
+await pypi x86_64-pc-windows-msvc 0 win_amd64 WINDOWS_VENV=1 || fail "the PyPI install failed in a Windows-layout venv"
+grep -Fq -- "--python $work/consumer-pypi/Scripts/python.exe " "$work/calls" ||
+  fail "the PyPI install did not pass the Windows venv's Scripts/python.exe to uv; got: $(head -1 "$work/calls")"
 
 # PyPI: only the pure wheel ever arrives; red after the bound, naming the wheel.
 if await pypi x86_64-pc-windows-msvc never win_amd64; then
@@ -170,6 +179,21 @@ fi
 grep -Fq "skilltest-sdk==0.14.0 did not install from pypi after 4 attempts" "$work/out" ||
   fail "the failed-install refusal did not name skilltest-sdk==0.14.0"
 grep -Fq "error: Failed to install skilltest-sdk" "$work/out" || fail "the failed-install refusal did not show uv's error"
+
+# The declared-field grammars match the stager's PLATFORM_GRAMMAR, so the two
+# readers of release-platforms.toml accept the same values.
+stager_grammar="$(python3 -I -c '
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("stager", sys.argv[1])
+stager = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(stager)
+for key in ("npm_package", "wheel_tag"):
+    print(key, "^" + stager.PLATFORM_GRAMMAR[key].pattern + "$")
+' scripts/stage-and-verify-release-product.py)" || fail "could not read PLATFORM_GRAMMAR from scripts/stage-and-verify-release-product.py; check that python3 (3.11+) is on PATH"
+while read -r key pattern; do
+  grep -Fq "field=$key grammar='$pattern'" "$script" ||
+    fail "scripts/await-registry-install.sh does not hold $key to the stager's grammar $pattern; make the two agree"
+done <<<"$stager_grammar"
 
 # Invocation errors exit 2, naming the problem, before any install.
 # $1 = what is wrong, $2 = what the script must say, rest = its invocation.

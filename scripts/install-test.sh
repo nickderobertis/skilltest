@@ -26,6 +26,7 @@ fail() {
     echo "  what the installer said:" >&2
     cat "$work/out" >&2 || echo "  (unreadable: $work/out; rerun sh scripts/install.sh by hand with the doubled PATH to see it)" >&2
   fi
+  echo "  fix scripts/install.sh (or this test, if the release contract changed on purpose), then rerun just release-targets-check" >&2
   exit 1
 }
 

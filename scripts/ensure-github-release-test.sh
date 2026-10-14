@@ -26,6 +26,7 @@ fail() {
     echo "  what the script said:" >&2
     cat "$work/out" >&2 || echo "  (unreadable: $work/out)" >&2
   fi
+  echo "  fix scripts/ensure-github-release.sh (or this test, if the contract changed on purpose), then rerun just release-targets-check" >&2
   exit 1
 }
 

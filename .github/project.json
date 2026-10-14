@@ -16,6 +16,7 @@
       "{workspaceRoot}/scripts/verify-release-archive*",
       "{workspaceRoot}/scripts/verify-staged-archives.sh",
       "{workspaceRoot}/scripts/release-checksums.txt",
+      "{workspaceRoot}/scripts/await-registry-install.sh",
       "{workspaceRoot}/scripts/smoke-*-bundle.sh"
     ]
   },
