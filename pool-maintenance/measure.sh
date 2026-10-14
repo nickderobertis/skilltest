@@ -21,29 +21,42 @@
 # Quiet on success. Needs cargo, jq, just and the pinned pruner (`just bootstrap`).
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
-result="${ONEBUDGETSPEC_RESULT:-}"
-if [ -n "${POOL_MAINTENANCE_EVIDENCE_DIR:-}" ]; then
-  work="$POOL_MAINTENANCE_EVIDENCE_DIR"
-  mkdir -p "$work"
-else
-  work="$(mktemp -d)"
-  trap 'rm -rf "$work"' EXIT
-fi
-
 fail() {
   echo "measure.sh: $1" >&2
   echo "  next: $2" >&2
   exit 1
 }
 
+# Both inputs are paths read after the `cd` below, so each must be absolute; the
+# evidence directory must not be an existing non-directory, and the result file's
+# directory must exist (onebudgetspec creates it before running this command).
+result="${ONEBUDGETSPEC_RESULT:-}"
+if [ -n "$result" ]; then
+  [[ "$result" == /* ]] || fail "ONEBUDGETSPEC_RESULT is not an absolute path: $result" \
+    "run this through \`onebudgetspec check pool-maintenance/budgets.yaml\`, or set it to an absolute path"
+  [ -d "$(dirname "$result")" ] || fail "ONEBUDGETSPEC_RESULT's directory does not exist: $result" \
+    "create $(dirname "$result") or point ONEBUDGETSPEC_RESULT at an existing directory"
+fi
+work="${POOL_MAINTENANCE_EVIDENCE_DIR:-}"
+if [ -n "$work" ]; then
+  [[ "$work" == /* ]] || fail "POOL_MAINTENANCE_EVIDENCE_DIR is not an absolute path: $work" \
+    "set it to an absolute directory path"
+  [ ! -e "$work" ] || [ -d "$work" ] || fail "POOL_MAINTENANCE_EVIDENCE_DIR exists and is not a directory: $work" \
+    "point it at a directory, or at a path that does not exist yet"
+  mkdir -p "$work" || fail "cannot create POOL_MAINTENANCE_EVIDENCE_DIR $work" "check that its parent is writable"
+else
+  work="$(mktemp -d)" || fail "cannot create a scratch directory" "check that \$TMPDIR (or /tmp) is writable"
+  trap 'rm -rf "$work"' EXIT
+fi
+
+cd "$(dirname "$0")/.."
+
 # Every top-level entry of each `deps/`, `.fingerprint/`, `build/` and
 # `incremental/` directory under target/ (what the pruner may remove), sorted.
 entries() {
   [ -d target ] || return 0
   find target \( -name deps -o -name .fingerprint -o -name build -o -name incremental \) \
-    -type d -prune -print0 |
-    xargs -0 -r -I{} find {} -mindepth 1 -maxdepth 1 |
+    -type d -prune -exec find {} -mindepth 1 -maxdepth 1 \; |
     LC_ALL=C sort
 }
 
@@ -60,9 +73,11 @@ ONEBUDGETSPEC_RESULT="$work/backlog.json" just pool-maintenance >/dev/null ||
 # (b) The alternative configuration's build, then backdate what it created.
 entries >"$work/before-alt.txt"
 profile_args=()
-for package in $(cargo metadata --no-deps --format-version 1 --locked | jq -r '.packages[].name'); do
+packages="$(cargo metadata --no-deps --format-version 1 --locked | jq -r '.packages[].name')" ||
+  fail "cannot list this workspace's packages" "run \`cargo metadata --no-deps --locked\` to see why"
+while IFS= read -r package; do
   profile_args+=(--config "profile.dev.package.$package.debug=\"line-tables-only\"")
-done
+done <<<"$packages"
 build_tests "${profile_args[@]}" ||
   fail "the alternative-profile build failed" "run \`cargo test --workspace --features fake-provider --no-run\` to see why"
 entries >"$work/after-alt.txt"
@@ -70,16 +85,11 @@ LC_ALL=C comm -13 "$work/before-alt.txt" "$work/after-alt.txt" >"$work/alt.txt"
 [ -s "$work/alt.txt" ] ||
   fail "the alternative-profile build created no new entries under target/" \
     "an interrupted earlier measurement leaves that build fresh: \`cargo clean -p\` this workspace's crates, then rerun"
-# Older than the 2-day window and than every entry already there, so each unit's
-# pre-existing ordinary build stays its newest one.
-now="$(date +%s)"
-stamp=$((now - 3 * 86400))
-if [ -s "$work/before-alt.txt" ]; then
-  oldest="$(xargs -d '\n' stat -c %Y <"$work/before-alt.txt" | sort -n | head -n 1)"
-  [ "$oldest" -gt "$stamp" ] || stamp=$((oldest - 86400))
-fi
+# Backdated to 2000-01-01: past the 2-day window and older than every entry
+# already there, so each unit's pre-existing ordinary build stays its newest one.
+# `touch -h -t` is the same on GNU and BSD userlands.
 while IFS= read -r entry; do
-  find "$entry" -exec touch -h -d "@$stamp" {} +
+  find "$entry" -exec touch -h -t 200001010000 {} +
 done <"$work/alt.txt"
 
 # (c) The ordinary gate build: each unit's newest build is now the ordinary one.

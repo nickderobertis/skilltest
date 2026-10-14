@@ -46,13 +46,17 @@ default:
 # Set up the project from a clean clone: install nx + per-stack dependencies.
 # The root `pnpm install` covers nx and the whole TS workspace (both packages);
 # the root `uv sync` covers the uv workspace (both Python packages, one lock).
-# The pinned pruner `pool-maintenance` runs is installed only when the one on
-# PATH is not already that release.
+# Then the pinned pruner `pool-maintenance` runs (`pool-maintenance-tool`).
 bootstrap:
     pnpm install
     cargo fetch
     uv sync
     bash .github/setup-screencomp.sh
+    @just pool-maintenance-tool
+
+# Install the pinned cargo-prune-superseded `pool-maintenance` runs, only when the
+# one on PATH is not already that release (pool-maintenance/pool-maintenance-test.sh).
+pool-maintenance-tool:
     @[ "$(cargo-prune-superseded --version 2>/dev/null)" = "cargo-prune-superseded {{prune-superseded-version}}" ] || cargo install --locked cargo-prune-superseded --version {{prune-superseded-version}}
 
 # Install nx and the TS workspace exactly as locked — the slice of `bootstrap` a
@@ -92,7 +96,8 @@ check tier="affected":
 # every target dir this repository's builds write to — `target`, the one
 # `.cargo/config.toml` sets — keeping its newest build and every build modified
 # within 2 days. `just bootstrap` installs the pinned pruner; the
-# `pool-maintenance` project's host budget holds how long one pass takes.
+# `pool-maintenance` project's host budget holds how long one pass takes, and its
+# `test-e2e` runs this recipe the way onevcs.toml declares it.
 pool-maintenance:
     @command -v cargo-prune-superseded >/dev/null || { echo "pool-maintenance: cargo-prune-superseded not found; run \`just bootstrap\` to install the pinned release" >&2; exit 1; }
     @cargo-prune-superseded --keep-within 2d target
