@@ -40,8 +40,10 @@ fail() {
 # Like npm, the double resolves from an existing package-lock.json, which
 # records the platform package as absent when it was skipped, so a retry over
 # a stale lockfile never picks it up.
-# PLATFORM_MANIFEST=stale or garbled has npm write the platform package's
-# manifest at another version or as broken JSON; UV_NO_METADATA has uv
+# PLATFORM_MANIFEST=stale, garbled, renamed, null or unreadable has npm write
+# the platform package's manifest at another version, as broken JSON, under
+# another name, as JSON null, or without read permission; SDK_ABSENT has npm
+# succeed without installing the SDK; UV_NO_METADATA has uv
 # succeed without leaving dist-info behind.
 mkdir -p "$work/bin" || fail "could not create $work/bin; check that $work is writable"
 cat >"$work/bin/npm" <<'EOF' || fail "could not write the npm double; check that $work is writable"
@@ -53,6 +55,7 @@ broken() { echo "npm double: could not $1" >&2; exit 70; }
 echo "$*" >>"$CALLS" || broken "log the call to $CALLS"
 n="$(wc -l <"$CALLS")" || broken "count the calls in $CALLS"
 [ -z "${SDK_MISSING:-}" ] || { echo "npm error 404 Not Found - GET @skill-test/sdk" >&2; exit 1; }
+[ -z "${SDK_ABSENT:-}" ] || exit 0
 { mkdir -p node_modules/@skill-test/sdk &&
   printf '{\n  "name": "@skill-test/sdk",\n  "version": "%s"\n}\n' "$version" >node_modules/@skill-test/sdk/package.json; } ||
   broken "install @skill-test/sdk into $PWD"
@@ -64,9 +67,13 @@ if [ -n "$arrived" ]; then
     case "${PLATFORM_MANIFEST:-}" in
       stale) printf '{"name": "%s", "version": "0.0.1"}\n' "$PLATFORM" ;;
       garbled) printf '{"name": "%s", "version": \n' "$PLATFORM" ;;
+      renamed) printf '{"name": "@skill-test/cli-other", "version": "%s"}\n' "$version" ;;
+      null) echo null ;;
       *) printf '{\n  "name": "%s",\n  "version": "%s"\n}\n' "$PLATFORM" "$version" ;;
     esac >"node_modules/$PLATFORM/package.json"; } ||
     broken "install $PLATFORM into $PWD"
+  [ "${PLATFORM_MANIFEST:-}" != unreadable ] || chmod 000 "node_modules/$PLATFORM/package.json" ||
+    broken "make $PLATFORM's manifest unreadable"
 fi
 if [ ! -f package-lock.json ]; then
   if [ -n "$arrived" ]; then
@@ -163,13 +170,33 @@ for left in node_modules package-lock.json; do
 done
 
 # npm: an installed platform manifest at another version, or one that is not
-# JSON, is not the platform package.
-for manifest in stale garbled; do
-  if await npm x86_64-pc-windows-msvc 0 @skill-test/cli-win32-x64 PLATFORM_MANIFEST="$manifest"; then
-    fail "the npm install accepted a $manifest @skill-test/cli-win32-x64 manifest; it must parse it and match the version"
+# JSON, is not the platform package, and not a registry delay either: the
+# script stops on the first attempt, naming what was wrong with it.
+manifests=(
+  "stale:is @skill-test/cli-win32-x64@0.0.1, not @skill-test/cli-win32-x64@0.14.0"
+  "garbled:package.json is not JSON"
+  "renamed:is @skill-test/cli-other@0.14.0, not @skill-test/cli-win32-x64@0.14.0"
+  "null:package.json is not a JSON object"
+)
+# Root reads any file, so the unreadable case needs an ordinary user, as CI
+# runners are.
+[ "$(id -u)" = 0 ] || manifests+=("unreadable:package.json could not be read")
+for manifest in "${manifests[@]}"; do
+  if await npm x86_64-pc-windows-msvc 0 @skill-test/cli-win32-x64 PLATFORM_MANIFEST="${manifest%%:*}"; then
+    fail "the npm install accepted a ${manifest%%:*} @skill-test/cli-win32-x64 manifest; it must parse it and match the version"
   fi
-  grep -Fq "@skill-test/cli-win32-x64@0.14.0 did not install" "$work/out" || fail "the $manifest-manifest failure did not name @skill-test/cli-win32-x64@0.14.0"
+  grep -Fq -- "${manifest#*:}" "$work/out" || fail "the ${manifest%%:*}-manifest failure did not say '${manifest#*:}'"
+  grep -Fq "npm installed an unusable @skill-test/cli-win32-x64" "$work/out" || fail "the ${manifest%%:*}-manifest failure did not name @skill-test/cli-win32-x64"
+  [ "$(calls)" = 1 ] || fail "the script retried a ${manifest%%:*} manifest $(calls) times; that is not a registry delay"
 done
+
+# npm: an install that reports success without the SDK is retried, then
+# named after the bound.
+if await npm x86_64-pc-windows-msvc 0 @skill-test/cli-win32-x64 SDK_ABSENT=1; then
+  fail "the npm install succeeded although npm installed no @skill-test/sdk"
+fi
+grep -Fq "@skill-test/sdk@0.14.0 did not install from npm after 4 attempts" "$work/out" ||
+  fail "the absent-SDK failure did not name @skill-test/sdk@0.14.0 and the bound"
 
 # npm: the SDK itself never installs.
 if await npm x86_64-pc-windows-msvc 0 @skill-test/cli-win32-x64 SDK_MISSING=1; then
@@ -249,6 +276,8 @@ expect_usage "the consumer directory does not exist" "usage: await-registry-inst
   bash "$script" npm x86_64-pc-windows-msvc 0.14.0 "$work/absent"
 expect_usage "the registry is unknown" "registry 'cargo' is neither npm nor pypi" \
   bash "$script" cargo x86_64-pc-windows-msvc 0.14.0 "$consumer"
+expect_usage "the target is not a triple" "target 'x86_64.*' is not a target triple" \
+  bash "$script" npm 'x86_64.*' 0.14.0 "$consumer"
 expect_usage "the version is not X.Y.Z" "version 'v0.14.0' is not X.Y.Z" \
   bash "$script" npm x86_64-pc-windows-msvc v0.14.0 "$consumer"
 expect_usage "the directory is not an npm consumer" "has no package.json, so it is not the npm consumer" \
@@ -284,6 +313,28 @@ fi
 grep -Fq "declares npm_package '../../escape' for x86_64-pc-windows-msvc, which is not a valid npm_package" "$work/out" ||
   fail "the script refused a malformed npm_package without naming it"
 [ "$(calls)" = 0 ] || fail "the script installed before refusing a malformed npm_package"
+
+# A declaration that is ambiguous or not written as `key = "value"` is refused
+# before any install rather than read one way: a target declared twice, its
+# field declared twice, or the field unquoted.
+# $1 = the case, $2 = the sed edit to release-platforms.toml, $3 = what the
+# script must say.
+for case in \
+  'duplicate target|/^target = "x86_64-pc-windows-msvc"$/{p;s/.*/[[platform]]/;p;s/.*/target = "x86_64-pc-windows-msvc"/;}|declares target x86_64-pc-windows-msvc more than once' \
+  'duplicate field|/^npm_package = "@skill-test\/cli-win32-x64"$/p|declares npm_package more than once for x86_64-pc-windows-msvc' \
+  'unquoted field|s/^npm_package = "@skill-test\/cli-win32-x64"$/npm_package = @skill-test\/cli-win32-x64/|writes x86_64-pc-windows-msvc'"'"'s npm_package other than as npm_package = "<value>"'; do
+  IFS='|' read -r what edit says <<<"$case"
+  sed "$edit" release-platforms.toml >"$work/tree/release-platforms.toml" || fail "could not write the $what declaration; check that $work is writable"
+  ! cmp -s release-platforms.toml "$work/tree/release-platforms.toml" || fail "the $what edit changed nothing in release-platforms.toml; update this test to its current shape"
+  : >"$work/calls" || fail "could not reset $work/calls"
+  if env PATH="$work/bin:$PATH" CALLS="$work/calls" ARRIVES_AFTER=0 PLATFORM=@skill-test/cli-win32-x64 \
+    SKILLTEST_REGISTRY_ATTEMPTS=1 SKILLTEST_REGISTRY_INTERVAL=0 \
+    bash "$work/tree/scripts/await-registry-install.sh" npm x86_64-pc-windows-msvc 0.14.0 "$consumer" >"$work/out" 2>&1; then
+    fail "the script accepted a $what in release-platforms.toml"
+  fi
+  grep -Fq -- "$says" "$work/out" || fail "the script refused a $what without saying '$says'"
+  [ "$(calls)" = 0 ] || fail "the script installed before refusing a $what"
+done
 
 # A tree with no release-platforms.toml is named before any install.
 rm "$work/tree/release-platforms.toml" || fail "could not remove the scratch declaration; check that $work is writable"
