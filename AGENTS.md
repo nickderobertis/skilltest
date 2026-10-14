@@ -275,7 +275,11 @@ from exactly that commit.
   `visual-docs.yml` skips it (job-level guards, not `[skip ci]`, which would also
   muzzle the tag workflows). The `vX.Y.Z` tag fires `publish.yml` (native binaries → staged products → registries). Its
   completion triggers Linux-only `release.yml`, which uploads archives from that
-  exact run and head, even when a registry fails. The one Darwin target (Apple
+  exact run and head, even when a registry fails, with both checksum names
+  `scripts/release-checksums.txt` declares (`<archive>.sha256` and the
+  `skilltest-<target>.sha256` older releases carry). It creates the GitHub
+  Release from the tag's `CHANGELOG.md` section when semantic-release's GitHub
+  step has not, so the binaries never depend on that step. The one Darwin target (Apple
   Silicon) and its bundle installation proofs run in one Mac build job. No sweep is repeated.
 - `scripts/check-workflow-routing.py` (`just workflows-check`, in every gate)
   simulates these events over the committed workflows and fails if the routing

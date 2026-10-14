@@ -25,15 +25,21 @@
 #
 # **What publish.yml and release.yml ship that is deliberately not declared.**
 #
-# - The GitHub Release archives. release.yml uploads `skilltest-<rust-target>.tar.gz`
-#   (`.zip` for the Windows targets) and its `.sha256` per target, the Unix ones
-#   for scripts/install.sh. They belong to no
+# - The GitHub Release archives. release.yml uploads, per target,
+#   `skilltest-<rust-target>.tar.gz` (`.zip` for the Windows targets) and two
+#   checksum files holding the same `<sha256-hex>  <archive>` line:
+#   `skilltest-<rust-target>.<tar.gz|zip>.sha256` and `skilltest-<rust-target>.sha256`
+#   (the one name v0.1.0-v0.13.0 carry; scripts/release-checksums.txt declares
+#   both). The Unix ones are for scripts/install.sh. release.yml creates the
+#   GitHub Release from the tag's CHANGELOG.md section when it does not exist yet
+#   (scripts/ensure-github-release.sh), so the archives no longer depend on
+#   semantic-release's own GitHub step. They belong to no
 #   registry, so no `<registry>:<name>` names one: they cannot be a target or a
 #   `covers` entry, and they are not `[[retired]]` either, which records something
 #   no longer published while these ship on every release. A consumer that
-#   installs them is nearest served by `cli-crate`: the same `v*` tag fires
-#   release.yml and publish.yml, though neither waits for the other, so that
-#   target's version says which archive exists and not that it has uploaded.
+#   installs them is nearest served by `cli-crate`: release.yml uploads them once
+#   the tag's publish.yml run completes, so that target's version says which
+#   archive exists and not that it has uploaded.
 # - The `skilltest-sdk` distribution files. scripts/build-python-dist.sh builds a
 #   platform wheel per target bundling the CLI, a pure wheel and an sdist, and
 #   publish.yml uploads all of them under the one PyPI project `skilltest-sdk` at
