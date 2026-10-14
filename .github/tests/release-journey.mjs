@@ -124,7 +124,7 @@ if command=='gh':
     if args[:2]==['release','view']:
         if os.environ.get('EXISTING_RELEASE')=='1':sys.exit(0)
         if any(json.loads(line)['args'][:2]==['release','create'] for line in log.read_text().splitlines()):sys.exit(0)
-        sys.stderr.write('release not found\n');sys.exit(1)
+        sys.stderr.write('release not found\\n');sys.exit(1)
     if args[:2]==['release','create']:
         notes=args[args.index('--notes-file')+1]
         pathlib.Path(os.environ['TRANSPORT_LOG']+'.notes').write_text(pathlib.Path(notes).read_text())
