@@ -17,6 +17,8 @@
       "{workspaceRoot}/scripts/verify-staged-archives.sh",
       "{workspaceRoot}/scripts/release-checksums.txt",
       "{workspaceRoot}/scripts/await-registry-install.sh",
+      "{workspaceRoot}/scripts/ensure-github-release.sh",
+      "{workspaceRoot}/scripts/set-version.sh",
       "{workspaceRoot}/scripts/smoke-*-bundle.sh"
     ]
   },
