@@ -100,14 +100,18 @@ contract-check:
 # so it runs even when only release-targets.toml or a workflow changed): the
 # declaration against what publish.yml publishes, that gate's own drift tests,
 # the release probe's offline outcome tests (curl doubled; no network), the
-# release-archive verifier's tests on stand-in archives, and install.sh's
-# install/refusal journeys (host identity and download transport doubled).
+# release-archive verifier's tests on stand-in archives, install.sh's
+# install/refusal journeys (host identity and download transport doubled),
+# release.yml's release-ensuring script in a real Git repository (gh doubled),
+# and publish.yml's registry-install retries (npm and uv doubled).
 release-targets-check:
     @bash scripts/check-release-targets.sh >/dev/null
     @bash scripts/check-release-targets-test.sh >/dev/null
     @bash scripts/check-release-probe.sh >/dev/null
     @bash scripts/verify-release-archive-test.sh >/dev/null
     @bash scripts/install-test.sh >/dev/null
+    @bash scripts/ensure-github-release-test.sh >/dev/null
+    @bash scripts/await-registry-install-test.sh >/dev/null
 
 # Workflow lint (part of `just check`; workspace-level, since no nx project owns
 # .github/workflows/): actionlint over every workflow, handing each `run:` script

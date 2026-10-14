@@ -158,6 +158,13 @@ for i in "${!names[@]}"; do
   [ ! -e "$work/dest/skilltest" ] || fail "the installer placed a binary whose ${names[$i]} does not match"
 done
 
+tag=v0.1.9
+publish "$tag" "$target"
+: >"$work/release/$tag/${names[0]}" || fail "could not write an empty ${names[0]}; check that $work is writable"
+if install_on; then fail "the installer accepted an empty ${names[0]}; it must refuse a checksum it cannot read a digest from"; fi
+grep -Fq "${names[0]} from release $tag is empty" "$work/out" ||
+  fail "the installer refused an empty ${names[0]} without naming it; restore that message in scripts/install.sh"
+
 tag=v0.2.0
 publish "$tag" "$target"
 if install_on; then fail "the installer installed from a release offering no checksum; it must refuse an archive it cannot verify"; fi
