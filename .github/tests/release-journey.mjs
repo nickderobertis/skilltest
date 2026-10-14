@@ -57,6 +57,7 @@ for (const path of [
   "scripts/release-checksums.txt",
   "scripts/stage-and-verify-release-product.py",
   "scripts/check-release-identity.sh",
+  "scripts/ensure-github-release.sh",
 ])
   cpSync(path, join(fixture, path), {
     recursive: true,
@@ -87,6 +88,11 @@ cpSync(join(work, "native-products"), join(fixture, "products", native), { recur
 for (const path of ["sdks/typescript", "plugins/vitest"])
   symlinkSync(resolve(path, "node_modules"), join(fixture, path, "node_modules"), "dir");
 const version = JSON.parse(readFileSync("sdks/typescript/package.json", "utf8")).version;
+const notes = `## [${version}](https://github.com/nickderobertis/skilltest/compare/v0.0.0...v${version}) (2026-10-13)\n\n### Bug Fixes\n\n* the staged release`;
+writeFileSync(
+  join(fixture, "CHANGELOG.md"),
+  `# Changelog\n\n${notes}\n\n## [0.0.0] (2026-01-01)\n`,
+);
 const git = (...args) => execFileSync("git", args, { cwd: fixture, encoding: "utf8" }).trim();
 git("init", "--quiet");
 git("config", "user.email", "packaging@example.invalid");
@@ -115,7 +121,13 @@ flags=int(os.environ['PUBLISHED_FLAGS'])
 if command=='git' and args[0]=='fetch': record();sys.exit(0)
 if command=='gh':
     record()
-    if args[:2]==['release','view']:sys.exit(0 if os.environ.get('EXISTING_RELEASE')=='1' else 1)
+    if args[:2]==['release','view']:
+        if os.environ.get('EXISTING_RELEASE')=='1':sys.exit(0)
+        if any(json.loads(line)['args'][:2]==['release','create'] for line in log.read_text().splitlines()):sys.exit(0)
+        sys.stderr.write('release not found\n');sys.exit(1)
+    if args[:2]==['release','create']:
+        notes=args[args.index('--notes-file')+1]
+        pathlib.Path(os.environ['TRANSPORT_LOG']+'.notes').write_text(pathlib.Path(notes).read_text())
     if args[:2]==['release','upload']:
         if os.environ.get('UPLOAD_FAILS')=='1':sys.exit(1)
         for path in args[2:]:
@@ -248,6 +260,24 @@ const declaredAssets = platforms.flatMap((p) => {
   return [asset, `${asset}.sha256`, `products/${p.target}/skilltest-${p.target}.sha256`];
 });
 assert.deepEqual([...new Set(uploads)].sort(), declaredAssets.sort());
+// With no release yet, the upload job creates it from the tag's changelog
+// section before uploading, so the archives never wait on semantic-release.
+const ghCalls = readFileSync(uploadLog, "utf8")
+  .trim()
+  .split("\n")
+  .map((line) => JSON.parse(line))
+  .filter((c) => c.command === "gh");
+const created = ghCalls.findIndex((c) => c.args[1] === "create");
+assert.ok(created >= 0 && created < ghCalls.findIndex((c) => c.args[1] === "upload"));
+assert.deepEqual(ghCalls[created].args.slice(0, 6), [
+  "release",
+  "create",
+  `v${version}`,
+  "--verify-tag",
+  "--title",
+  `v${version}`,
+]);
+assert.equal(readFileSync(`${uploadLog}.notes`, "utf8"), `${notes}\n`);
 // An undeclared asset staged in products stops the upload before any is sent.
 const stray = join(fixture, "products", platforms[0].target, "skilltest-undeclared.zip");
 writeFileSync(stray, "not a declared release asset");
