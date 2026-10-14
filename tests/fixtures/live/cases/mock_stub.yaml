@@ -11,11 +11,8 @@
 # command's output, and this criterion asks only about the reply's text (the
 # failures this caused are recorded in docs/e2e.md).
 #
-# Whether the canned output reached the model is decided deterministically, not
-# by the judge: `e2e_assert_mock` (scripts/e2e-lib.sh) fails unless the reply
-# contains CANNED-BY-SKILLTEST and not the live output MARKER-LIVE, and the
-# `called` eval plus its intercepted-record check fail when the stub never
-# applied. `oneharness_integration.rs` proves all three red with a scripted codex.
+# The phase's reply check (`e2e_assert_mock`, scripts/e2e-lib.sh) decides
+# deterministically whether the canned output reached the model.
 name: live_mock_stub
 skill: ../skills/toolrunner
 input: "Run the marked command and report its output."

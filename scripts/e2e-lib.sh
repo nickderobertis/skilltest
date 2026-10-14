@@ -274,6 +274,6 @@ e2e_assert_mock() {
         esac
     fi
     jq -e '.passed == true' "$report" >/dev/null 2>&1 \
-        || { note "  report:"; jq '{passed, evals:[.runs[0].evals[]?|{label,passed,reason}]}' "$report" 2>/dev/null | sed 's/^/    /'; fail "the live mock run did not pass; the failing eval's reason is above — fix what it names, then rerun the phase"; }
+        || { note "  report:"; { jq '{passed, evals:[.runs[0].evals[]?|{label,passed,reason}]}' "$report" 2>&1 | sed 's/^/    /'; } || note "    (could not render the evals; inspect $report)"; fail "the live mock run did not pass; the failing eval's reason is above — fix what it names, then rerun the phase"; }
     note "  ok: mock phase passed ($action intercepted the marked call)"
 }

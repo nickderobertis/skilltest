@@ -114,7 +114,10 @@ if [ -n "$hook" ]; then
     # command through the shell. The hook (oneharness mock) appends to the spy
     # log and prints a verdict or nothing.
     event="$(jq -cn --arg c "$command" --arg cwd "$PWD" \
-        '{hook_event_name:"PreToolUse", tool_name:"Bash", tool_input:{command:$c}, cwd:$cwd, session_id:"fake-codex"}')"
+        '{hook_event_name:"PreToolUse", tool_name:"Bash", tool_input:{command:$c}, cwd:$cwd, session_id:"fake-codex"}')" || {
+        echo "fake-codex: jq could not build the hook event (see its error above); fix the event's arguments and rerun" >&2
+        exit 1
+    }
     verdict="$(printf '%s' "$event" | sh -c "$hook")" || {
         echo "fake-codex: the PreToolUse hook '$hook' failed (see its error above); fix the mock rules or the oneharness install and rerun" >&2
         exit 1
