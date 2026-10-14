@@ -169,6 +169,24 @@ CASES = (
         "names a non-string matrix target 42",
     ),
     Case(
+        "release.yml uploading without first ensuring the release",
+        lambda wf, _tc: _replace(
+            wf / "release.yml", 'bash scripts/ensure-github-release.sh "$TAG" CHANGELOG.md\n', "true\n"
+        ),
+        1,
+        "release.yml:upload does not run `bash scripts/ensure-github-release.sh` before `gh release upload`",
+    ),
+    Case(
+        "verify-windows no longer waiting on the npm platform package",
+        lambda wf, _tc: _replace(
+            wf / "publish.yml",
+            'bash scripts/await-registry-install.sh npm "$TARGET" "$version" consumer-npm\n',
+            '(cd consumer-npm && npm install "@skill-test/sdk@$version")\n',
+        ),
+        1,
+        'publish.yml:verify-windows does not run `bash scripts/await-registry-install.sh npm "$TARGET"`',
+    ),
+    Case(
         "a called workflow without workflow_call",
         lambda wf, _tc: _replace(wf / "e2e-codex.yml", "  workflow_call:\n", ""),
         2,

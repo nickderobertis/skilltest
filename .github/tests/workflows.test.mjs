@@ -391,6 +391,27 @@ test("release artifact authority retains every platform and enforces pre-publica
     assert.ok(
       job.steps.some((s) => /bash scripts\/verify-staged-archives\.sh products /.test(s.run ?? "")),
     );
+  // The upload ensures the tag's release itself (scripts/ensure-github-release-test.sh)
+  // before uploading, rather than relying on semantic-release's GitHub step.
+  const upload = graph["release.yml"].jobs.upload.steps.map((s) => s.run ?? "").join("\n");
+  const ensured = upload.indexOf('bash scripts/ensure-github-release.sh "$TAG" CHANGELOG.md');
+  assert.ok(ensured >= 0 && ensured < upload.indexOf("gh release upload"));
+  assert.doesNotMatch(upload, /gh release (create|edit|delete)/);
+  // The Windows install proof waits on each registry for the matrix target's
+  // own platform package and wheel (scripts/await-registry-install-test.sh).
+  const verifyWindows = publish["verify-windows"].steps;
+  for (const [registry, runs] of [
+    ["pypi", "verify_bundled.py"],
+    ["npm", "verify-bundled.mjs"],
+  ]) {
+    const step = verifyWindows.find((s) =>
+      (s.run ?? "").includes(`bash scripts/await-registry-install.sh ${registry} "$TARGET"`),
+    );
+    assert.ok(step, registry);
+    assert.equal(step.env.TARGET, "${{ matrix.target }}");
+    assert.ok(step.run.indexOf("await-registry-install.sh") < step.run.indexOf(runs), registry);
+    assert.doesNotMatch(step.run, /for i in|sleep/);
+  }
   for (const script of [
     "stage-release-product.sh",
     "verify-release-archive.sh",

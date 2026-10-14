@@ -23,7 +23,10 @@ workflows — and asserts the routing:
   job, while the `v*` tag still fires release.yml and publish.yml;
 * every step running a `just` recipe that reaches Nx (read from the justfile)
   comes after its job installs the pinned pnpm and the locked workspace, so it
-  works on a fresh runner.
+  works on a fresh runner;
+* release.yml ensures the tag's GitHub Release exists before it uploads to it,
+  and publish.yml's Windows install proof waits on each registry until the
+  matrix target's own platform package and wheel installed.
 
 Then it re-runs those assertions over deliberately broken copies of the
 workflows, each of which must fail — a gate nobody has watched fail is not known
@@ -750,6 +753,48 @@ def harness_lanes(wfs: dict[WorkflowFile, Workflow]) -> dict[str, WorkflowFile]:
     }
 
 
+def _first_line(job: Job, needle: str) -> int | None:
+    """The position of the first line of `job`'s run scripts containing `needle`."""
+    lines = [line for step in job.steps if step.run for line in step.run.splitlines()]
+    return next((i for i, line in enumerate(lines) if needle in line), None)
+
+
+# The release-pipeline steps that must not regress to waiting on, or trusting,
+# a step that can lie: semantic-release's GitHub step, or an install that
+# succeeded without the platform package.
+ENSURE_RELEASE = "bash scripts/ensure-github-release.sh"
+AWAIT_INSTALL = 'bash scripts/await-registry-install.sh {registry} "$TARGET"'
+
+
+def release_pipeline(wfs: dict[WorkflowFile, Workflow]) -> list[str]:
+    """Where release.yml or publish.yml's verify-windows no longer converge on their own."""
+    bad = []
+    upload = wfs.get(WorkflowFile("release.yml"), Workflow(WorkflowFile(""), {}, {})).jobs.get(JobId("upload"))
+    if upload is None:
+        return ["release.yml has no `upload` job to publish the archives"]
+    ensured, uploaded = _first_line(upload, ENSURE_RELEASE), _first_line(upload, "gh release upload")
+    if ensured is None or uploaded is None or ensured > uploaded:
+        bad.append(f"release.yml:upload does not run `{ENSURE_RELEASE}` before `gh release upload`")
+    verify = wfs.get(WorkflowFile("publish.yml"), Workflow(WorkflowFile(""), {}, {})).jobs.get(JobId("verify-windows"))
+    if verify is None:
+        return [*bad, "publish.yml has no `verify-windows` job"]
+    for registry, runs in (("pypi", "verify_bundled.py"), ("npm", "verify-bundled.mjs")):
+        command = AWAIT_INSTALL.format(registry=registry)
+        step = next((st for st in verify.steps if st.run and command in st.run), None)
+        waited, ran = _first_line(verify, command), _first_line(verify, runs)
+        if step is None or waited is None or ran is None or waited > ran:
+            bad.append(f"publish.yml:verify-windows does not run `{command}` before {runs}")
+        elif step.env.get("TARGET", "").replace(" ", "") != "${{matrix.target}}":
+            bad.append(f"publish.yml:verify-windows runs `{command}` without TARGET set to the matrix target")
+    bad += [
+        f"publish.yml:verify-windows overrides {key}; the install bound is 10 attempts 30 s apart"
+        for st in verify.steps
+        for key in st.env
+        if key.startswith("SKILLTEST_REGISTRY_")
+    ]
+    return bad
+
+
 def violations(
     wfs: dict[WorkflowFile, Workflow],
     provisioned: set[str],
@@ -758,6 +803,7 @@ def violations(
 ) -> list[str]:
     """Every way the workflows break the release model, given the toolchain's targets, Nx recipes and lanes."""
     bad: list[str] = nx_without_install(wfs, recipes)
+    bad += release_pipeline(wfs)
     # Every per-harness lane a workflow runs is a live project of its own.
     bad += [
         f"{wf} runs `just test-harness {hid}`, but live/harness/{hid}/project.json does not exist"
@@ -972,6 +1018,30 @@ MUTATIONS: tuple[Mutation, ...] = (
         lambda d: _jobs(d, "e2e-judge-api.yml")["live"].update(
             steps=[s for s in _jobs(d, "e2e-judge-api.yml")["live"]["steps"] if "bootstrap" not in s.get("run", "")]
         ),
+    ),
+    Mutation(
+        "release.yml uploading without first ensuring the release",
+        lambda d: [
+            s.update({"run": s["run"].replace(ENSURE_RELEASE, "true")})
+            for s in _jobs(d, "release.yml")["upload"]["steps"]
+            if ENSURE_RELEASE in s.get("run", "")
+        ],
+    ),
+    Mutation(
+        "verify-windows installing from npm without waiting on the platform package",
+        lambda d: [
+            s.update({"run": s["run"].replace(AWAIT_INSTALL.format(registry="npm"), "npm install #")})
+            for s in _jobs(d, "publish.yml")["verify-windows"]["steps"]
+            if "run" in s
+        ],
+    ),
+    Mutation(
+        "verify-windows waiting on PyPI for another target's wheel",
+        lambda d: [
+            s["env"].update({"TARGET": "x86_64-unknown-linux-gnu"})
+            for s in _jobs(d, "publish.yml")["verify-windows"]["steps"]
+            if AWAIT_INSTALL.format(registry="pypi") in s.get("run", "")
+        ],
     ),
     Mutation(
         "a harness lane with no live project",
