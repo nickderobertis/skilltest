@@ -30,6 +30,14 @@ Three layers, all driving the real binary as a subprocess:
   deterministic; it is opt-in only because it needs `oneharness` on PATH. CI's
   e2e-claude workflow runs it before the live phase, as the cheap fail-fast
   drift alarm.
+  <!-- llmlint: ignore-block[e2e_not_mocked] This is the hermetic tier, not the e2e tier: it doubles only the paid model boundaries (the codex CLI and the judge) so the real skilltest, oneharness and mock-phase assertions run without a model call, and the live codex suite runs the same phase against real codex. -->
+  It also runs the per-harness **mock phase** itself
+  (`e2e_mock_phase codex`) over `tests/fixtures/oneharness/fake-codex.sh`, a
+  scripted codex that executes the hook from the project's `.codex/hooks.json`,
+  with fake-claude as the judge: a correct run passes, and a stub that never
+  applied, a reply missing the canned output, or a reply reporting the live
+  output each fail it.
+  <!-- llmlint: ignore-end[e2e_not_mocked] -->
 - **`test-live`** — the deep, claude-code-specific Rust suite. Asserts the strict
   `pong` reply, multi-turn roles, normalized usage, the real `oneharness run
   --stream` wire (`--format json-stream` emits NDJSON events + a terminal
@@ -49,6 +57,21 @@ Three layers, all driving the real binary as a subprocess:
   upstream). The judge is always a **fixed** claude-code judge (skilltest's
   "evals run on a fixed `judge_harness`" model), so verdicts stay clean even
   when the harness under test wraps its reply in a banner.
+
+  Judges never see tool events, on any harness: `build_judge_prompt` inlines
+  `render_transcript` (`crates/skilltest-core/src/provider.rs`), which writes
+  each message as `format!("{role}: {}", m.content)` and drops its `events`.
+  So whether the stub's output reached the model is decided by
+  `e2e_assert_mock` from the reply text (it must contain `CANNED-BY-SKILLTEST`
+  and not `MARKER-LIVE`), and the stub case's criterion asks only about the
+  reply. Before that, the criterion asked the haiku judge to confirm the reply
+  reported "the command output", which its input never contains. The phase
+  could pass only when the reply restated the canned text, and even then the
+  judge decided the part it could not check differently run to run: codex's
+  phase failed on the PR #82 and #86 merges (crush and opencode too on #82's)
+  with `called: marker` passing and the reply quoting `CANNED-BY-SKILLTEST`,
+  the judge answering false because "the transcript never shows that string
+  as the command's actual output".
 
 A missing `oneharness`, a missing harness binary, or a missing secret is a
 **skip, not a failure** — the rest of the project builds and tests without them.
