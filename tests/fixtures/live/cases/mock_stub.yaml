@@ -8,12 +8,8 @@
 # What the judge can see: the judge prompt renders each message's text only
 # (`render_transcript` in crates/skilltest-core/src/provider.rs), never its
 # tool events, on every harness. So no judge can confirm a reply against the
-# command's output, and this criterion asks only about the reply's text. Asking
-# it to confirm "the command output" (as it once did) made the phase flaky: the
-# claude-code/haiku judge sometimes took the reply at its word and sometimes
-# answered false because "the transcript never shows that string as the
-# command's actual output" — codex on the PR #82 and #86 merges, crush and
-# opencode on PR #82's, with `called: marker` passing each time.
+# command's output, and this criterion asks only about the reply's text (the
+# failures this caused are recorded in docs/e2e.md).
 #
 # Whether the canned output reached the model is decided deterministically, not
 # by the judge: `e2e_assert_mock` (scripts/e2e-lib.sh) fails unless the reply

@@ -29,12 +29,15 @@ Three layers, all driving the real binary as a subprocess:
   unsupported-verb refusal — is proven with no credentials and no model. It is
   deterministic; it is opt-in only because it needs `oneharness` on PATH. CI's
   e2e-claude workflow runs it before the live phase, as the cheap fail-fast
-  drift alarm. It also runs the per-harness **mock phase** itself
+  drift alarm.
+  <!-- llmlint: ignore-block[e2e_not_mocked] This is the hermetic tier, not the e2e tier: it doubles only the paid model boundaries (the codex CLI and the judge) so the real skilltest, oneharness and mock-phase assertions run without a model call, and the live codex suite runs the same phase against real codex. -->
+  It also runs the per-harness **mock phase** itself
   (`e2e_mock_phase codex`) over `tests/fixtures/oneharness/fake-codex.sh`, a
   scripted codex that executes the hook from the project's `.codex/hooks.json`,
   with fake-claude as the judge: a correct run passes, and a stub that never
   applied, a reply missing the canned output, or a reply reporting the live
   output each fail it.
+  <!-- llmlint: ignore-end[e2e_not_mocked] -->
 - **`test-live`** — the deep, claude-code-specific Rust suite. Asserts the strict
   `pong` reply, multi-turn roles, normalized usage, the real `oneharness run
   --stream` wire (`--format json-stream` emits NDJSON events + a terminal
