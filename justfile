@@ -55,7 +55,8 @@ bootstrap:
     @just pool-maintenance-tool
 
 # Install the pinned cargo-prune-superseded `pool-maintenance` runs, only when the
-# one on PATH is not already that release (pool-maintenance/declaration/pool-maintenance-test.sh).
+# one on PATH is not already that release (pool-maintenance/declaration/
+# pool-maintenance-test.sh runs it directly and through `bootstrap`).
 pool-maintenance-tool:
     @[ "$(cargo-prune-superseded --version 2>/dev/null)" = "cargo-prune-superseded {{prune-superseded-version}}" ] || cargo install --locked cargo-prune-superseded --version {{prune-superseded-version}}
 

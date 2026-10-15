@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Test of this repository's declared pool maintenance, driven the way onevcs and
 # a host's bootstrap drive it: the `command` onevcs.toml declares, run from the
-# repository root as a subprocess; the justfile's `pool-maintenance-tool` install;
-# and the `budgets` recipe's task selection against `check`'s. Only the external
-# binaries are doubled — cargo-prune-superseded and cargo, as recording stubs on a
-# PATH that holds nothing else but `just` and the shells — so no build runs, no
-# target dir is pruned and nothing is installed.
+# repository root as a subprocess; the justfile's `pool-maintenance-tool` install,
+# directly and through `just bootstrap`'s delegation; and the `budgets` recipe's
+# task selection against `check`'s. Only the external binaries are doubled —
+# cargo-prune-superseded, cargo, pnpm and uv, as recording stubs on a PATH that
+# holds nothing else but `just` and the shells, plus bootstrap's screencomp setup
+# — so no build runs, no target dir is pruned and nothing is installed or
+# downloaded.
 #
 # It is the drift gate between onevcs.toml, the recipe and `.cargo/config.toml`:
 # the declared command must reach the pruner with `--keep-within 2d` and exactly
@@ -52,13 +54,15 @@ stub() {
   chmod +x "$bin/$1" || fail "cannot make the $1 stub executable in $bin"
 }
 unstub() {
-  rm -f "$bin/cargo-prune-superseded" "$bin/cargo" "$calls" || fail "cannot remove the stubs from $bin; check that $work is writable"
+  rm -f "$bin/cargo-prune-superseded" "$bin/cargo" "$bin/pnpm" "$bin/uv" "$calls" ||
+    fail "cannot remove the stubs from $bin; check that $work is writable"
 }
 
-# run <argv...>: from the repository root on the sandbox PATH; sets $err and $code.
+# run <argv...>: from the repository root (or $dir, when set) on the sandbox PATH;
+# sets $err and $code.
 run() {
   code=0
-  (cd "$root" && env PATH="$bin" "$@") >/dev/null 2>"$work/err" || code=$?
+  (cd "${dir:-$root}" && env PATH="$bin" "$@") >/dev/null 2>"$work/err" || code=$?
   err="$(cat "$work/err")" || fail "cannot read the captured stderr in $work"
   recorded
 }
@@ -156,6 +160,51 @@ stub cargo 101
 run just pool-maintenance-tool
 [ "$code" -ne 0 ] || fail "pool-maintenance-tool exited 0 although cargo install failed"
 
+# `just bootstrap` reaches that install through its delegation, after the stack
+# setup it already ran. It runs in a copy of the committed justfile beside a
+# recording screencomp setup, so nothing is downloaded; pnpm, uv and cargo are
+# recording stubs.
+boot="$work/bootstrap"
+mkdir -p "$boot/.github" || fail "cannot create the bootstrap fixture under $work"
+cp "$root/justfile" "$boot/" || fail "cannot copy the justfile into $boot"
+echo "echo setup-screencomp >>'$calls'" >"$boot/.github/setup-screencomp.sh" ||
+  fail "cannot write the recording screencomp setup into $boot/.github"
+setup=("$bin/pnpm install" "$bin/cargo fetch" "$bin/uv sync" "setup-screencomp")
+want_boot="$(printf '%s\n' "${setup[@]}" "$want_install")"
+want_boot="${want_boot%$'\n'}"
+unstub
+stub pnpm 0
+stub uv 0
+stub cargo 0
+dir="$boot" run just bootstrap
+[ "$code" -eq 0 ] && [ "$got" = "$want_boot" ] ||
+  fail "just bootstrap without the pruner: expected the stack setup, then '$want_install'; got exit $code, calls '$got', stderr '$err'"
+unstub
+stub pnpm 0
+stub uv 0
+stub cargo 0
+stub cargo-prune-superseded 0 "cargo-prune-superseded $pin"
+dir="$boot" run just bootstrap
+want_boot="$(printf '%s\n' "${setup[@]}" "$bin/cargo-prune-superseded --version")"
+want_boot="${want_boot%$'\n'}"
+if [ "$code" -ne 0 ] || [ "$got" != "$want_boot" ]; then
+  fail "just bootstrap over the pinned release: expected the stack setup and no install, got exit $code, calls '$got', stderr '$err'"
+fi
+# A failed install fails the bootstrap, after `cargo fetch` succeeded.
+unstub
+stub pnpm 0
+stub uv 0
+stub cargo 0
+{
+  echo "#!$bash_path"
+  echo "echo \"\$0 \$*\" >>'$calls'"
+  echo "[ \"\$1\" != install ] || { echo 'stub install failed' >&2; exit 101; }"
+} >"$bin/cargo" || fail "cannot write the failing-install cargo stub into $bin"
+chmod +x "$bin/cargo" || fail "cannot make the failing-install cargo stub executable in $bin"
+dir="$boot" run just bootstrap
+[ "$code" -ne 0 ] && [[ "$got" == *"$want_install" ]] && [[ "$err" == *"stub install failed"* ]] ||
+  fail "just bootstrap with a failing install: expected a non-zero exit after '$want_install', got exit $code, calls '$got', stderr '$err'"
+
 # Task selection: the `budgets` recipe runs the measurement's budget check, while
 # `check` — over every project, and affected by a change to the maintenance
 # files, to the project's configuration or to a source file — never does.
@@ -184,6 +233,7 @@ selected="$(tasks "${check_argv[@]}")" || exit 1
 affected_argv=("${check_argv[@]/run-many/affected}")
 for changed in pool-maintenance/measure.sh pool-maintenance/budgets.yaml pool-maintenance/project.json \
   pool-maintenance/declaration/pool-maintenance-test.sh pool-maintenance/declaration/project.json \
+  pool-maintenance/measure-test/budget-test.sh pool-maintenance/measure-test/project.json \
   nx.json crates/skilltest-core/src/lib.rs; do
   selected="$(tasks "${affected_argv[@]}" --files="$changed")" || exit 1
   ! matches '^pool-maintenance:budgets' "$selected" ||

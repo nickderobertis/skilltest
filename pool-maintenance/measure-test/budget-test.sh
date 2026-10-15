@@ -6,15 +6,16 @@
 # builds the workspace or prunes this checkout's target dir.
 #
 # The fixture is a one-crate cargo workspace carrying the committed justfile,
-# `.cargo/config.toml`, measure.sh and budgets.yaml. Three cases: the real pruner
-# passes the budget and reports builds removed; a failing pruner, and a pruner
-# that removes nothing, each fail the check with measure.sh's own message.
+# `.cargo/config.toml`, measure.sh and budgets.yaml. Four cases: the real pruner
+# passes the budget and reports builds removed; a failing pruner, a pruner that
+# removes nothing, and a build directory measure.sh cannot list each fail the
+# check with measure.sh's own message.
 #
 # Quiet on success, one line. On failure it names the case and what happened.
 # Needs cargo, jq, just, pnpm (`just bootstrap`) and the pinned pruner.
 set -euo pipefail
 
-root="$(cd "$(dirname "$0")/.." && pwd)" || {
+root="$(cd "$(dirname "$0")/../.." && pwd)" || {
   echo "budget-test: cannot locate the repository root above $0; run it from a complete checkout" >&2
   exit 1
 }
