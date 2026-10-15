@@ -53,14 +53,21 @@ cd "$(dirname "$0")/.." || fail "cannot change to the repository root above $0" 
 
 # Every top-level entry of each `deps/`, `.fingerprint/`, `build/` and
 # `incremental/` directory under target/ (what the pruner may remove), sorted,
-# written to $work/<name>.txt.
+# written to $work/<name>.txt. Each directory is listed on its own, so one that
+# cannot be read stops the measurement instead of reading as empty.
 entries() {
   : >"$work/$1.txt" || fail "cannot write $work/$1.txt" "check that $work is writable"
+  : >"$work/$1.unsorted" || fail "cannot write $work/$1.unsorted" "check that $work is writable"
   [ -d target ] || return 0
   find target \( -name deps -o -name .fingerprint -o -name build -o -name incremental \) \
-    -type d -prune -exec find {} -mindepth 1 -maxdepth 1 \; |
-    LC_ALL=C sort >"$work/$1.txt" ||
-    fail "cannot list target/'s build entries into $work/$1.txt" "check that target/ is readable and $work writable"
+    -type d -prune -print >"$work/$1.dirs" ||
+    fail "cannot find target/'s build directories" "check that every directory under target/ is readable by this user"
+  while IFS= read -r dir; do
+    find "$dir" -mindepth 1 -maxdepth 1 >>"$work/$1.unsorted" ||
+      fail "cannot list $dir" "check that it is readable by this user (\`chmod u+rx $dir\`), then rerun"
+  done <"$work/$1.dirs" || fail "cannot read $work/$1.dirs" "check that $work is readable"
+  LC_ALL=C sort "$work/$1.unsorted" >"$work/$1.txt" ||
+    fail "cannot sort target/'s build entries into $work/$1.txt" "check that $work is writable"
 }
 
 # only_in <a> <b> <out>: the lines of $work/<a>.txt missing from $work/<b>.txt.

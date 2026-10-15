@@ -114,4 +114,18 @@ check "$work/idle"
 [ "$code" -ne 0 ] && [[ "$out" == *"measure.sh: the timed pass removed nothing"* ]] ||
   fail "a pruner removing nothing: expected a non-zero exit naming the timed pass, got exit $code: $out"
 
+# A build directory measure.sh cannot list stops it before it compares anything,
+# rather than reading as an empty one. Release is a profile no case builds.
+unreadable="$repo/target/release/incremental"
+mkdir -p "$unreadable" || fail "cannot create $unreadable"
+chmod 000 "$unreadable" || fail "cannot make $unreadable unreadable"
+if ls "$unreadable" >/dev/null 2>&1; then
+  fail "$unreadable stays readable after chmod 000 (running as root?); run this test as an unprivileged user"
+fi
+check "$work/idle"
+chmod 755 "$unreadable" || fail "cannot restore the permissions of $unreadable"
+rmdir "$unreadable" || fail "cannot remove $unreadable"
+[ "$code" -ne 0 ] && [[ "$out" == *"measure.sh: cannot list target/release/incremental"* ]] ||
+  fail "an unreadable build directory: expected a non-zero exit naming it, got exit $code: $out"
+
 echo "budget-test: ok"
