@@ -1,0 +1,15 @@
+schema_version: 1
+budgets:
+  - id: skilltest-pool-maintenance-seconds
+    description: >-
+      Wall-clock seconds one steady-state pass of this repository's declared
+      pool maintenance takes after one ordinary run's worth of superseded
+      builds, as cargo-prune-superseded reports it. Protects how long a regular
+      post-run pass holds one of this repository's warm pool slots out of
+      service.
+    measure: reported
+    command: [./measure.sh]
+    unit: seconds
+    direction: max
+    threshold: 20
+    labels: [host]

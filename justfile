@@ -35,6 +35,10 @@ live := "tag:type:live"
 # installed separately — see https://github.com/nickderobertis/screencomp.
 freeze-version := "0.2.2"
 
+# The released cargo-prune-superseded the `pool-maintenance` recipe runs; the one
+# pin `just bootstrap` installs from.
+prune-superseded-version := "0.1.1"
+
 # List available recipes.
 default:
     @just --list
@@ -42,11 +46,19 @@ default:
 # Set up the project from a clean clone: install nx + per-stack dependencies.
 # The root `pnpm install` covers nx and the whole TS workspace (both packages);
 # the root `uv sync` covers the uv workspace (both Python packages, one lock).
+# Then the pinned pruner `pool-maintenance` runs (`pool-maintenance-tool`).
 bootstrap:
     pnpm install
     cargo fetch
     uv sync
     bash .github/setup-screencomp.sh
+    @just pool-maintenance-tool
+
+# Install the pinned cargo-prune-superseded `pool-maintenance` runs, only when the
+# one on PATH is not already that release (pool-maintenance/declaration/
+# pool-maintenance-test.sh runs it directly and through `bootstrap`).
+pool-maintenance-tool:
+    @[ "$(cargo-prune-superseded --version 2>/dev/null)" = "cargo-prune-superseded {{prune-superseded-version}}" ] || cargo install --locked cargo-prune-superseded --version {{prune-superseded-version}}
 
 # Install nx and the TS workspace exactly as locked — the slice of `bootstrap` a
 # CI job needs to run an nx recipe (the live suites) without the Python stack.
@@ -79,6 +91,27 @@ check tier="affected":
     {{nx}} run-many -t lint format-check --projects={{live}}
     @just coverage
     @echo "check ({{tier}}): all gates passed"
+
+# The pool maintenance onevcs runs in each idle warm-pool slot of this repository
+# (onevcs.toml): prune each unit's superseded cargo builds older than 2 days from
+# every target dir this repository's builds write to — `target`, the one
+# `.cargo/config.toml` sets — keeping its newest build and every build modified
+# within 2 days. `just bootstrap` installs the pinned pruner; the
+# `pool-maintenance` project's host budget holds how long one pass takes, and
+# `pool-maintenance-declaration`'s `test` runs this recipe the way onevcs.toml
+# declares it.
+pool-maintenance:
+    @command -v cargo-prune-superseded >/dev/null || { echo "pool-maintenance: cargo-prune-superseded not found; run \`just bootstrap\` to install the pinned release" >&2; exit 1; }
+    @cargo-prune-superseded --keep-within 2d target
+
+# The onebudgetspec budgets at a tier: every project's `budgets` and
+# `budgets-host` targets, then the root `budgets.yaml` where one exists. `check`
+# does not depend on this recipe: it runs the deterministic `budgets` targets
+# itself, while the host-labelled budgets read this host's clock and the
+# pool-maintenance measurement builds the workspace twice.
+budgets tier="affected":
+    {{ if tier == "all" { nx + " run-many" } else if tier == "affected" { affected } else { error("unknown tier '" + tier + "' — use 'affected' (the default) or 'all'") } }} -t budgets budgets-host --exclude={{live}}
+    @[ ! -f budgets.yaml ] || pnpm exec onebudgetspec check budgets.yaml
 
 # Build the artifacts for affected projects (Rust CLI + fake provider, TS dist).
 build:

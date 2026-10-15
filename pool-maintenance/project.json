@@ -1,0 +1,23 @@
+{
+  "name": "pool-maintenance",
+  "tags": ["type:e2e", "lang:bash"],
+  "targets": {
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "uv run --no-sync shellcheck pool-maintenance/measure.sh"
+      }
+    },
+    // The host tier, and the only suite here: builds the workspace twice and
+    // prunes this checkout's real target dir. Only the `budgets` recipe selects
+    // it. The script tests live in their own projects so no per-change selection
+    // of them reaches this one: `declaration/` (offline, recording stubs) and
+    // `measure-test/` (this command over a one-crate fixture).
+    "budgets-host": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm exec onebudgetspec check pool-maintenance/budgets.yaml --label host"
+      }
+    }
+  }
+}

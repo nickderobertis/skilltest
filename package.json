@@ -5,6 +5,7 @@
   "packageManager": "pnpm@10.0.0",
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
+    "@onebudgetspec/cli": "0.1.4",
     "@semantic-release/changelog": "^6.0.3",
     "@semantic-release/commit-analyzer": "^13.0.1",
     "@semantic-release/exec": "^7.1.0",

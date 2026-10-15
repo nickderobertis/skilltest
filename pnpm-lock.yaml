@@ -11,6 +11,9 @@ importers:
       '@biomejs/biome':
         specifier: ^1.9.4
         version: 1.9.4
+      '@onebudgetspec/cli':
+        specifier: 0.1.4
+        version: 0.1.4
       '@semantic-release/changelog':
         specifier: ^6.0.3
         version: 6.0.3(semantic-release@25.0.5(typescript@5.9.3))
@@ -2719,7 +2722,6 @@ snapshots:
       '@onebudgetspec/cli-linux-x64': 0.1.4
       '@onebudgetspec/cli-win32-arm64': 0.1.4
       '@onebudgetspec/cli-win32-x64': 0.1.4
-    optional: true
 
   '@onebudgetspec/sdk@0.1.4':
     optionalDependencies:

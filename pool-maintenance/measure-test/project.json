@@ -1,0 +1,28 @@
+{
+  "name": "pool-maintenance-measure-test",
+  "tags": ["type:e2e", "lang:bash"],
+  "targets": {
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "uv run --no-sync shellcheck pool-maintenance/measure-test/budget-test.sh"
+      }
+    },
+    // Cheap, but it drives the real cargo and the pinned pruner: runs the
+    // `pool-maintenance` project's `budgets-host` command over a one-crate
+    // fixture, so it builds that crate, never this workspace, and prunes only
+    // the fixture's target dir. Its own project, apart from both the host tier
+    // and the offline declaration test. Uncached: it reads the root justfile,
+    // `.cargo/config.toml`, measure.sh and the installed pruner, which no input
+    // here can key. measure.sh belongs to `pool-maintenance`, which no project
+    // may depend on (scripts/check-project-boundaries.py), so an edit to it alone
+    // selects its shellcheck, and this journey runs on `just check all`.
+    "test": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "bash pool-maintenance/measure-test/budget-test.sh"
+      }
+    }
+  }
+}
