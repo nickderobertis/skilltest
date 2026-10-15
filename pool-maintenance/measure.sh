@@ -46,7 +46,7 @@ if [ -n "$work" ]; then
   mkdir -p "$work" || fail "cannot create POOL_MAINTENANCE_EVIDENCE_DIR $work" "check that its parent is writable"
 else
   work="$(mktemp -d)" || fail "cannot create a scratch directory" "check that \$TMPDIR (or /tmp) is writable"
-  trap 'rm -rf "$work"' EXIT
+  trap 'rm -rf "$work" || echo "measure.sh: could not remove the scratch directory $work; delete it by hand" >&2' EXIT
 fi
 
 cd "$(dirname "$0")/.." || fail "cannot change to the repository root above $0" "run it from a complete checkout"
@@ -100,7 +100,7 @@ only_in after-alt before-alt alt
 while IFS= read -r entry; do
   find "$entry" -exec touch -h -t 200001010000 {} + ||
     fail "cannot backdate $entry" "check that target/ is writable by this user, then rerun"
-done <"$work/alt.txt"
+done <"$work/alt.txt" || fail "cannot read $work/alt.txt" "check that $work is readable"
 
 # (c) The ordinary gate build: each unit's newest build is now the ordinary one.
 build_tests || fail "the ordinary build failed" "run \`cargo test --workspace --features fake-provider --no-run\` to see why"

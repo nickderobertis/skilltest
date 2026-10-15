@@ -54,20 +54,32 @@ stub() {
 unstub() {
   rm -f "$bin/cargo-prune-superseded" "$bin/cargo" "$calls" || fail "cannot remove the stubs from $bin; check that $work is writable"
 }
-# installs: how many `cargo install` calls the stubs recorded.
-installs() {
-  [ -f "$calls" ] || { echo 0; return; }
-  [ -r "$calls" ] || fail "cannot read the recorded calls in $calls"
-  grep -c '/cargo install' "$calls" || true
-}
 
 # run <argv...>: from the repository root on the sandbox PATH; sets $err and $code.
 run() {
   code=0
   (cd "$root" && env PATH="$bin" "$@") >/dev/null 2>"$work/err" || code=$?
   err="$(cat "$work/err")" || fail "cannot read the captured stderr in $work"
+  recorded
 }
-recorded() { [ -f "$calls" ] && cat "$calls" || true; }
+# recorded: sets $got to the calls the stubs recorded ("" when none ran) and
+# $installs to how many of them were `cargo install`.
+recorded() {
+  got=""
+  installs=0
+  [ -f "$calls" ] || return 0
+  got="$(cat "$calls")" || fail "cannot read the recorded calls in $calls"
+  installs="$(grep -c '/cargo install' <<<"$got")" || [ "$installs" = 0 ] ||
+    fail "cannot count the recorded \`cargo install\` calls in $calls"
+}
+# matches <pattern> <text>: grep -q, but a grep error fails the test rather than
+# reading as "no match".
+matches() {
+  local status=0
+  grep -q "$1" <<<"$2" || status=$?
+  [ "$status" -le 1 ] || fail "grep could not search for '$1'"
+  return "$status"
+}
 
 # The command onevcs.toml declares, and the target dirs the committed
 # `.cargo/config.toml` files resolve to (relative to the directory holding
@@ -102,8 +114,8 @@ unstub
 stub cargo-prune-superseded 0
 run "${command[@]}"
 want="$bin/cargo-prune-superseded --keep-within 2d $target_dirs"
-[ "$code" -eq 0 ] && [ "$(recorded)" = "$want" ] ||
-  fail "the declared command (${command[*]}): expected exit 0 and one call '$want', got exit $code, calls '$(recorded)', stderr '$err'"
+[ "$code" -eq 0 ] && [ "$got" = "$want" ] ||
+  fail "the declared command (${command[*]}): expected exit 0 and one call '$want', got exit $code, calls '$got', stderr '$err'"
 
 # A failing pass fails the declared command, so onevcs sees it.
 unstub
@@ -124,20 +136,20 @@ want_install="$bin/cargo install --locked cargo-prune-superseded --version $pin"
 unstub
 stub cargo 0
 run just pool-maintenance-tool
-[ "$code" -eq 0 ] && [ "$(recorded)" = "$want_install" ] ||
-  fail "pool-maintenance-tool without the pruner: expected '$want_install', got exit $code, calls '$(recorded)', stderr '$err'"
+[ "$code" -eq 0 ] && [ "$got" = "$want_install" ] ||
+  fail "pool-maintenance-tool without the pruner: expected '$want_install', got exit $code, calls '$got', stderr '$err'"
 unstub
 stub cargo 0
 stub cargo-prune-superseded 0 "cargo-prune-superseded 0.0.0-stale"
 run just pool-maintenance-tool
-[ "$code" -eq 0 ] && [ "$(installs)" = 1 ] ||
-  fail "pool-maintenance-tool over a stale pruner: expected one install, got exit $code, calls '$(recorded)', stderr '$err'"
+[ "$code" -eq 0 ] && [ "$installs" = 1 ] ||
+  fail "pool-maintenance-tool over a stale pruner: expected one install, got exit $code, calls '$got', stderr '$err'"
 unstub
 stub cargo 0
 stub cargo-prune-superseded 0 "cargo-prune-superseded $pin"
 run just pool-maintenance-tool
-if [ "$code" -ne 0 ] || [ "$(installs)" != 0 ]; then
-  fail "pool-maintenance-tool over the pinned release: expected no install, got exit $code, calls '$(recorded)'"
+if [ "$code" -ne 0 ] || [ "$installs" != 0 ]; then
+  fail "pool-maintenance-tool over the pinned release: expected no install, got exit $code, calls '$got'"
 fi
 unstub
 stub cargo 101
@@ -150,28 +162,31 @@ run just pool-maintenance-tool
 nx_line() { # recipe tier: the recipe's `nx run-many` line, as just would run it
   local plan
   plan="$(cd "$root" && just --dry-run "$1" "$2" 2>&1)" || fail "\`just --dry-run $1 $2\` failed: $plan"
-  { grep '^pnpm exec nx run-many -t ' <<<"$plan" || true; } | head -n 1
+  local line status=0
+  line="$(grep -m 1 '^pnpm exec nx run-many -t ' <<<"$plan")" || status=$?
+  [ "$status" -le 1 ] || fail "grep could not read the plan of \`just --dry-run $1 $2\`"
+  printf '%s\n' "$line"
 }
 tasks() { # nx argv...: the task ids nx would run
   (cd "$root" && "$@" --graph="$work/graph.json" >/dev/null 2>&1) || fail "nx could not plan \`$*\`"
   jq -r '.tasks.tasks | keys[]' "$work/graph.json" || fail "cannot read the task ids from nx's graph $work/graph.json for \`$*\`"
 }
 measured="pool-maintenance:budgets-host"
-budgets_line="$(nx_line budgets all)"
-check_line="$(nx_line check all)"
+budgets_line="$(nx_line budgets all)" || exit 1
+check_line="$(nx_line check all)" || exit 1
 [ -n "$budgets_line" ] && [ -n "$check_line" ] || fail "cannot read the nx lines of \`just budgets all\` / \`just check all\`"
 read -r -a budgets_argv <<<"$budgets_line"
 read -r -a check_argv <<<"$check_line"
 selected="$(tasks "${budgets_argv[@]}")" || exit 1
-grep -qx "$measured" <<<"$selected" || fail "\`just budgets all\` does not select $measured"
+matches "^$measured\$" "$selected" || fail "\`just budgets all\` does not select $measured"
 selected="$(tasks "${check_argv[@]}")" || exit 1
-! grep -q '^pool-maintenance:budgets' <<<"$selected" || fail "\`just check all\` selects the pool-maintenance budget"
+! matches '^pool-maintenance:budgets' "$selected" || fail "\`just check all\` selects the pool-maintenance budget"
 affected_argv=("${check_argv[@]/run-many/affected}")
 for changed in pool-maintenance/measure.sh pool-maintenance/budgets.yaml pool-maintenance/project.json \
   pool-maintenance/declaration/pool-maintenance-test.sh pool-maintenance/declaration/project.json \
   nx.json crates/skilltest-core/src/lib.rs; do
   selected="$(tasks "${affected_argv[@]}" --files="$changed")" || exit 1
-  ! grep -q '^pool-maintenance:budgets' <<<"$selected" ||
+  ! matches '^pool-maintenance:budgets' "$selected" ||
     fail "\`just check\` affected by $changed selects the pool-maintenance budget"
 done
 

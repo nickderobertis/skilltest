@@ -5,12 +5,24 @@
     "lint": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "uv run --no-sync shellcheck pool-maintenance/measure.sh"
+        "command": "uv run --no-sync shellcheck pool-maintenance/measure.sh pool-maintenance/budget-test.sh"
+      }
+    },
+    // Cheap: runs `budgets-host`'s own command over a one-crate fixture, so it
+    // builds that crate, never this workspace. Uncached: it reads the root
+    // justfile, `.cargo/config.toml` and the installed pruner, which no input
+    // here can key.
+    "test-e2e": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "bash pool-maintenance/budget-test.sh"
       }
     },
     // The host tier: builds the workspace twice and prunes this checkout's real
     // target dir. Only the `budgets` recipe selects it; the declaration's offline
-    // test lives in its own project (`declaration/`) so no script edit pays for it.
+    // test lives in its own project (`declaration/`), and `test-e2e` above runs
+    // this command against a fixture rather than the workspace.
     "budgets-host": {
       "executor": "nx:run-commands",
       "options": {
