@@ -97,7 +97,7 @@ check tier="affected":
 # `.cargo/config.toml` sets — keeping its newest build and every build modified
 # within 2 days. `just bootstrap` installs the pinned pruner; the
 # `pool-maintenance` project's host budget holds how long one pass takes, and
-# `pool-maintenance-declaration`'s `test-e2e` runs this recipe the way onevcs.toml
+# `pool-maintenance-declaration`'s `test` runs this recipe the way onevcs.toml
 # declares it.
 pool-maintenance:
     @command -v cargo-prune-superseded >/dev/null || { echo "pool-maintenance: cargo-prune-superseded not found; run \`just bootstrap\` to install the pinned release" >&2; exit 1; }

@@ -12,7 +12,7 @@
     // pruned or installed. Uncached: it plans nx task graphs over every project
     // and reads the root justfile, onevcs.toml and .cargo/config.toml, which no
     // input here can key.
-    "test-e2e": {
+    "test": {
       "executor": "nx:run-commands",
       "cache": false,
       "options": {
