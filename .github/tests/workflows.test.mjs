@@ -1146,6 +1146,7 @@ test("production screencomp reader matches the installer and locked reusable ver
   const installer = readFileSync(".github/setup-screencomp.sh", "utf8");
   const version = installer.match(/screencomp ([0-9]+\.[0-9]+\.[0-9]+)/)?.[1];
   assert.ok(version);
-  assert.equal(caller.with["screencomp-version"], version);
+  // The installer uses this input verbatim as the release tag and archive stem.
+  assert.equal(caller.with["screencomp-version"], `v${version}`);
   assert.ok(caller.uses.endsWith(`@v${version}`));
 });
