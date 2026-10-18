@@ -208,10 +208,13 @@ test("screencomp provisioning exercises real filesystem/extraction with only hos
   // The download cannot be removed because extraction left a directory at its path. That holds
   // for GNU tar and macOS's bsdtar alike, unlike a read-only `.` entry, whose mode bsdtar does not
   // apply to the existing directory it extracts into. The transport double links the download to
-  // the forge archive, since bsdtar refuses to replace the very file it is reading.
+  // the forge archive, since bsdtar refuses to replace the very file it is reading; it links with
+  // the fixture's own node rather than a host `ln`, so it reaches no further tool than the rest.
   restore();
-  const ln = execFileSync("bash", ["-c", "command -v ln"], { encoding: "utf8" }).trim();
-  writeFileSync(join(tools, "curl"), `#!/bin/sh\n${ln} -s "$FORGE_ARCHIVE" "$4"\n`);
+  writeFileSync(
+    join(tools, "curl"),
+    '#!/bin/sh\nexec node -e \'require("node:fs").symlinkSync(process.argv[1], process.argv[2])\' "$FORGE_ARCHIVE" "$4"\n',
+  );
   execFileSync("python3", [
     "-c",
     `import io,sys,tarfile
