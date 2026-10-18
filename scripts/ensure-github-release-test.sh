@@ -166,7 +166,8 @@ mkdir -p "$work/tmp" || fail "could not create $work/tmp; check that $work is wr
 TMPDIR="$work/tmp" ensure absent ok v0.14.0 CHANGELOG.md || fail "the script failed with a writable TMPDIR"
 grep -Fq -- "--notes-file $work/tmp/ensure-github-release." "$work/gh.log" ||
   fail "the script did not create its notes file under \$TMPDIR ($work/tmp); gh saw: $(cat "$work/gh.log")"
-[ -z "$(ls -A "$work/tmp")" ] || fail "the script left its notes file in \$TMPDIR: $(ls -A "$work/tmp")"
+left="$(ls -A "$work/tmp")" || fail "could not list $work/tmp to check the notes file was removed; check that it is readable"
+[ -z "$left" ] || fail "the script left its notes file in \$TMPDIR: $left"
 (unset TMPDIR && ensure absent ok v0.14.0 CHANGELOG.md) || fail "the script failed with TMPDIR unset"
 grep -Fq -- "--notes-file /tmp/ensure-github-release." "$work/gh.log" ||
   fail "the script did not fall back to /tmp for its notes file with TMPDIR unset; gh saw: $(cat "$work/gh.log")"
