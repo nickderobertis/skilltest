@@ -45,8 +45,8 @@ esac
 checked="$(git cat-file -e "$tag:$changelog" 2>&1)" ||
   err "$changelog is not committed at $tag ($checked); check the changelog path and that semantic-release's changelog step committed it"
 
-# An explicit template: a bare mktemp on macOS still succeeds when $TMPDIR
-# does not exist, while with a template GNU and BSD mktemp both refuse.
+# Named under $TMPDIR explicitly: a template-less mktemp on macOS falls back to the
+# system temp dir when $TMPDIR is unwritable, so the refusal below would never come.
 body="$(mktemp "${TMPDIR:-/tmp}/ensure-github-release.XXXXXX")" || err "could not create a temporary file for the release notes; check that \$TMPDIR is writable"
 trap 'rm -f "$body" || echo "ensure-github-release: could not remove $body; delete it by hand" >&2' EXIT
 # Streamed straight into the notes file, never through a command substitution,

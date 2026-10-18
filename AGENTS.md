@@ -141,6 +141,7 @@ added. What was pulled in, and why:
 | `gh-secrets.json` | Declarative secret manifest, synced from Bitwarden via `gh-secrets manifest sync`. |
 | `.github/workflows/` | `ci.yml` (both gate tiers, the live calls, the release), `e2e-*.yml` (one live suite each), `semantic-release.yml`, `publish.yml` (tag-triggered) and `release.yml` (exact-build downstream archive upload), `bundle-smoke.yml`, `windows-build.yml` (Windows install proof, not required), `visual-docs.yml`, `pr-title.yml`, `notignored.yml`. |
 | `nx.json`, `<project>/project.json` | The Nx workspace: named inputs, target defaults, and each project's targets, tags and edges. |
+| `.python-version` | The interpreter uv builds `.venv` on, so a runner's newer system Python (one the pinned `datamodel-code-generator` cannot import on) never becomes the gate's. |
 | `rust-toolchain.toml` | The one Rust toolchain pin (channel, components, release targets); every workflow installs from it, and `just workflows-check` holds its targets to the build matrices. |
 
 ## Project graph

@@ -204,28 +204,35 @@ test("screencomp provisioning exercises real filesystem/extraction with only hos
       join(fixture, ".github/.tools", "screencomp-v0.4.2-x86_64-unknown-linux-gnu.tar.gz"),
       0o644,
     );
-    restore();
-    execFileSync("python3", [
-      "-c",
-      `import io,sys,tarfile
-with tarfile.open(sys.argv[1],'w:gz') as t:
- root=tarfile.TarInfo('.');root.type=tarfile.DIRTYPE;root.mode=0o555;t.addfile(root)
- data=b'#!/bin/sh\\necho "screencomp 0.4.2"\\n';bin=tarfile.TarInfo('screencomp');bin.mode=0o755;bin.size=len(data);t.addfile(bin,io.BytesIO(data))`,
-      archive,
-    ]);
-    writeFileSync(
-      lock,
-      JSON.stringify({
-        "x86_64-unknown-linux-gnu": createHash("sha256")
-          .update(readFileSync(archive))
-          .digest("hex"),
-      }),
-    );
-    result = invoke();
-    chmodSync(join(fixture, ".github/.tools"), 0o755);
-    assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /cannot remove download/);
   }
+  // The download cannot be removed because extraction left a directory at its path. That holds
+  // for GNU tar and macOS's bsdtar alike, unlike a read-only `.` entry, whose mode bsdtar does not
+  // apply to the existing directory it extracts into. The transport double links the download to
+  // the forge archive, since bsdtar refuses to replace the very file it is reading; it links with
+  // the fixture's own node rather than a host `ln`, so it reaches no further tool than the rest.
+  restore();
+  writeFileSync(
+    join(tools, "curl"),
+    '#!/bin/sh\nexec node -e \'require("node:fs").symlinkSync(process.argv[1], process.argv[2])\' "$FORGE_ARCHIVE" "$4"\n',
+  );
+  execFileSync("python3", [
+    "-c",
+    `import io,sys,tarfile
+with tarfile.open(sys.argv[1],'w:gz') as t:
+ data=b'#!/bin/sh\\necho "screencomp 0.4.2"\\n';bin=tarfile.TarInfo('screencomp');bin.mode=0o755;bin.size=len(data);t.addfile(bin,io.BytesIO(data))
+ dl=tarfile.TarInfo(sys.argv[2]);dl.type=tarfile.DIRTYPE;dl.mode=0o755;t.addfile(dl)`,
+    archive,
+    "screencomp-v0.4.2-x86_64-unknown-linux-gnu.tar.gz",
+  ]);
+  writeFileSync(
+    lock,
+    JSON.stringify({
+      "x86_64-unknown-linux-gnu": createHash("sha256").update(readFileSync(archive)).digest("hex"),
+    }),
+  );
+  result = invoke();
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /cannot remove download/);
 });
 
 // llmlint: ignore[shell_test_tiers_stay_split] The task requires these deterministic real subprocess boundaries in the integrated workflow-recording test target; no external-service or model probe runs here.
