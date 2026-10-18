@@ -33,7 +33,7 @@ jobs:
       !startsWith(github.event.head_commit.message, 'chore(release):')
     uses: nickderobertis/screencomp/.github/workflows/visual-docs-reusable.yml@v0.4.2
     with:
-      screencomp-version: 0.4.2
+      screencomp-version: v0.4.2
       # Strict gate (the safe default): CI FAILS if the capture drifts from the
       # committed baseline (shots/baseline/<arch>.json). Regenerate it locally
       # with `just screenshots-bless` (the pre-push guard does this for you) and
