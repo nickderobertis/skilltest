@@ -106,7 +106,7 @@ the streaming call passes `--stream`, whose NDJSON protocol does not depend on
 | --- | --- | --- |
 | `respond` | the platform + model under test | `--system <skill instructions>` + either the latest user message (when resuming) or the whole transcript (no-resume harnesses); plus the history flags when recording is on |
 | `user` | `judge_harness` + `judge_model` | the persona, the conversation, and "write only the user's next message" |
-| `judge` | `judge_harness` + `judge_model` | the criterion + transcript — with each assistant turn's recorded tool events, in order, ahead of its reply: kind, name, input and output, each output cut to 8,192 characters with the omitted count stated, and a field the recording lacks marked unavailable — then "respond with ONLY `{\"value\": …, \"reason\": …}`". The API judge backend sends the same prompt |
+| `judge` | `judge_harness` + `judge_model` | the criterion + transcript — with each assistant turn's recorded tool events, in order, ahead of its reply: kind, name, input and output, each output cut to `JUDGE_EVENT_OUTPUT_LIMIT` characters (`crates/skilltest-core/src/provider.rs`) with the omitted count stated, and a field the recording lacks marked unavailable — then "respond with ONLY `{\"value\": …, \"reason\": …}`". The API judge backend sends the same prompt |
 
 Two deliberate choices:
 

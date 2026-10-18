@@ -2344,7 +2344,6 @@ fn role_label(role: Role) -> &'static str {
 /// rest of the transcript.
 const JUDGE_EVENT_OUTPUT_LIMIT: usize = 8_192;
 
-/// What a judge reads for a tool-event field the recording does not have.
 const UNAVAILABLE: &str = "(unavailable: not recorded)";
 
 /// Render the conversation for a judge: the `Role: content` lines of
@@ -2388,8 +2387,6 @@ fn render_judge_event(position: usize, event: &ToolEvent) -> String {
     )
 }
 
-/// An event output cut to [`JUDGE_EVENT_OUTPUT_LIMIT`] characters, stating how
-/// many were omitted when it was cut.
 fn bounded_event_output(output: &str) -> String {
     let total = output.chars().count();
     if total <= JUDGE_EVENT_OUTPUT_LIMIT {
@@ -4537,8 +4534,6 @@ echo '{{"results":[{{"status":"ok","text":"done"}}]}}'
                 "numeric prompt: {prompt}"
             );
         }
-
-        // ---- Judges read the recorded tool activity (driven through Runner) ----
 
         /// A two-turn conversation whose skill turns record tool events, run
         /// through the real [`crate::runner::Runner`] against doubled model
