@@ -2321,21 +2321,82 @@ fn parse_chat_response(vendor: ApiVendor, raw: &str) -> Result<ChatOutcome> {
 }
 
 /// Render the conversation as `Role: content` lines for inlining in a prompt.
-/// Used by the judge, the simulated user, and the no-resume fallback path of
-/// `respond`.
+/// Used by the simulated user and the no-resume fallback path of `respond`;
+/// judges use [`render_judge_transcript`], which adds the recorded tool events.
 fn render_transcript(messages: &[Message]) -> String {
     messages
         .iter()
-        .map(|m| {
-            let role = match m.role {
-                Role::User => "User",
-                Role::Assistant => "Assistant",
-                Role::System => "System",
-            };
-            format!("{role}: {}", m.content)
-        })
+        .map(|m| format!("{}: {}", role_label(m.role), m.content))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn role_label(role: Role) -> &'static str {
+    match role {
+        Role::User => "User",
+        Role::Assistant => "Assistant",
+        Role::System => "System",
+    }
+}
+
+/// The most characters of one tool event's output a judge prompt carries; the
+/// rest is cut and its length stated, so one huge result cannot crowd out the
+/// rest of the transcript.
+const JUDGE_EVENT_OUTPUT_LIMIT: usize = 8_192;
+
+const UNAVAILABLE: &str = "(unavailable: not recorded)";
+
+/// Render the conversation for a judge: the `Role: content` lines of
+/// [`render_transcript`], with each turn's recorded tool events, in turn order,
+/// ahead of that turn's reply text. Judges need this to check criteria about
+/// what the skill did or what a tool returned against the recording rather
+/// than against the assistant's own account of it.
+fn render_judge_transcript(messages: &[Message]) -> String {
+    let mut out = Vec::new();
+    for m in messages {
+        if !m.events.is_empty() {
+            out.push(format!(
+                "[{} tool activity: {} recorded event(s), in order, as the harness \
+                 recorded them]",
+                role_label(m.role),
+                m.events.len()
+            ));
+            for (i, event) in m.events.iter().enumerate() {
+                out.push(render_judge_event(i + 1, event));
+            }
+            out.push("[end of tool activity]".to_string());
+        }
+        out.push(format!("{}: {}", role_label(m.role), m.content));
+    }
+    out.join("\n")
+}
+
+fn render_judge_event(position: usize, event: &ToolEvent) -> String {
+    let name = event.name.as_deref().unwrap_or(UNAVAILABLE);
+    let input = event
+        .input
+        .as_ref()
+        .map_or_else(|| UNAVAILABLE.to_string(), serde_json::Value::to_string);
+    let output = event
+        .output
+        .as_deref()
+        .map_or_else(|| UNAVAILABLE.to_string(), bounded_event_output);
+    format!(
+        "--- tool event {position} ---\nkind: {kind}\nname: {name}\ninput: {input}\noutput: {output}",
+        kind = event.kind,
+    )
+}
+
+fn bounded_event_output(output: &str) -> String {
+    let total = output.chars().count();
+    if total <= JUDGE_EVENT_OUTPUT_LIMIT {
+        return output.to_string();
+    }
+    let kept: String = output.chars().take(JUDGE_EVENT_OUTPUT_LIMIT).collect();
+    format!(
+        "{kept}\n[output truncated: {omitted} of {total} characters omitted]",
+        omitted = total - JUDGE_EVENT_OUTPUT_LIMIT,
+    )
 }
 
 /// The prompt for `respond` when we cannot resume a harness session: inline the
@@ -2372,7 +2433,7 @@ fn build_user_prompt(persona: &str, messages: &[Message]) -> String {
 }
 
 fn build_judge_prompt(query: &JudgeQuery<'_>, messages: &[Message]) -> String {
-    let transcript = render_transcript(messages);
+    let transcript = render_judge_transcript(messages);
     match query.kind {
         JudgeKind::Boolean => format!(
             "You are a strict, careful evaluator of an AI assistant's behavior.\n\n\
@@ -4472,6 +4533,273 @@ echo '{{"results":[{{"status":"ok","text":"done"}}]}}'
                 prompt.contains("scale from 0 to 10"),
                 "numeric prompt: {prompt}"
             );
+        }
+
+        /// A two-turn conversation whose skill turns record tool events, run
+        /// through the real [`crate::runner::Runner`] against doubled model
+        /// boundaries: a fake `oneharness` that answers skill (`--system`),
+        /// simulated-user and judge (`--schema`) runs from canned replies in
+        /// `dir`, and records every prompt it was sent as `<role>-prompt-<n>.txt`.
+        struct ToolConversation {
+            dir: PathBuf,
+            oneharness: PathBuf,
+        }
+
+        /// The first skill turn's second event: a `tool_result` whose output is
+        /// 1,808 characters over the judge limit and which names no tool.
+        fn long_output() -> String {
+            format!("{}{}", "a".repeat(8_192), "b".repeat(1_808))
+        }
+
+        impl ToolConversation {
+            fn new(tag: &str) -> Self {
+                let dir = std::env::temp_dir().join(format!(
+                    "skilltest-judge-tools-{}-{tag}",
+                    std::process::id()
+                ));
+                let _ = std::fs::remove_dir_all(&dir);
+                std::fs::create_dir_all(dir.join("skill")).unwrap();
+                std::fs::write(
+                    dir.join("skill/SKILL.md"),
+                    "---\nname: tidier\ndescription: tidies a repo\n---\nTidy the repo.\n",
+                )
+                .unwrap();
+                let reply = |text: &str, events: serde_json::Value| {
+                    serde_json::json!({ "results": [
+                        { "status": "ok", "text": text, "events": events }
+                    ]})
+                    .to_string()
+                };
+                let write = |name: &str, body: String| {
+                    std::fs::write(dir.join(name), body).unwrap();
+                };
+                write(
+                    "respond-reply-0.json",
+                    reply(
+                        "I checked the log and the config.",
+                        serde_json::json!([
+                            { "kind": "tool_call", "name": "bash",
+                              "input": { "command": "cat big.log" }, "index": 0 },
+                            { "kind": "tool_result", "output": long_output(), "index": 1 },
+                            { "kind": "tool_call", "name": "read_file", "index": 2 },
+                        ]),
+                    ),
+                );
+                write(
+                    "respond-reply-1.json",
+                    reply(
+                        "Pushed.",
+                        serde_json::json!([
+                            { "kind": "tool_call", "name": "bash",
+                              "input": { "command": "git push" }, "index": 0 },
+                            { "kind": "tool_result", "name": "bash",
+                              "output": "Everything up-to-date", "index": 1 },
+                        ]),
+                    ),
+                );
+                write(
+                    "user-reply-0.json",
+                    reply("Now push it.", serde_json::Value::Null),
+                );
+                write(
+                    "judge-reply-0.json",
+                    serde_json::json!({ "results": [{ "status": "ok",
+                        "text": "{\"value\": true, \"reason\": \"pushed\"}" }]})
+                    .to_string(),
+                );
+                let oneharness = script(
+                    "oh-tools",
+                    &format!(
+                        "d='{}'\n\
+                         case \" $* \" in\n\
+                         *' --schema '*) role=judge ;;\n\
+                         *' --system '*) role=respond ;;\n\
+                         *) role=user ;;\n\
+                         esac\n\
+                         n=$(ls \"$d\" | grep -c \"^$role-prompt-\")\n\
+                         cat > \"$d/$role-prompt-$n.txt\"\n\
+                         cat \"$d/$role-reply-$n.json\"\n",
+                        dir.display()
+                    ),
+                );
+                Self { dir, oneharness }
+            }
+
+            fn case(&self) -> crate::testcase::TestCase {
+                crate::testcase::TestCase {
+                    name: "pushes".into(),
+                    skill: self.dir.join("skill"),
+                    input: "Tidy the repo".into(),
+                    user: Some(crate::testcase::SimulatedUser {
+                        persona: "a busy maintainer".into(),
+                        done_when: None,
+                        max_turns: Some(2),
+                    }),
+                    mocks: Vec::new(),
+                    spy: false,
+                    evals: vec![crate::eval::Eval::Boolean(crate::eval::BooleanEval {
+                        criterion: "the push reported the branch up to date".into(),
+                        expected: true,
+                        name: None,
+                    })],
+                }
+            }
+
+            fn run(&self, provider: &dyn Provider) -> crate::report::CaseRun {
+                let config = crate::config::Config::default();
+                let mut runs = crate::runner::Runner::new(provider, &config)
+                    .run_case(&self.case())
+                    .unwrap();
+                assert_eq!(runs.len(), 1);
+                let run = runs.remove(0);
+                assert!(run.passed, "{run:?}");
+                assert_eq!(run.turns, 2);
+                run
+            }
+
+            fn prompt(&self, role: &str, n: usize) -> String {
+                std::fs::read_to_string(self.dir.join(format!("{role}-prompt-{n}.txt")))
+                    .unwrap()
+                    .trim_end_matches('\n')
+                    .to_string()
+            }
+        }
+
+        /// What every judge backend must be sent for [`ToolConversation`]: each
+        /// event in turn order with its kind, name, input and output, the long
+        /// output cut to 8,192 characters with the omitted count, and the
+        /// fields the recording lacks marked unavailable.
+        fn expected_judge_transcript() -> String {
+            format!(
+                "User: Tidy the repo\n\
+                 [Assistant tool activity: 3 recorded event(s), in order, as the harness recorded them]\n\
+                 --- tool event 1 ---\n\
+                 kind: tool_call\n\
+                 name: bash\n\
+                 input: {{\"command\":\"cat big.log\"}}\n\
+                 output: (unavailable: not recorded)\n\
+                 --- tool event 2 ---\n\
+                 kind: tool_result\n\
+                 name: (unavailable: not recorded)\n\
+                 input: (unavailable: not recorded)\n\
+                 output: {kept}\n\
+                 [output truncated: 1808 of 10000 characters omitted]\n\
+                 --- tool event 3 ---\n\
+                 kind: tool_call\n\
+                 name: read_file\n\
+                 input: (unavailable: not recorded)\n\
+                 output: (unavailable: not recorded)\n\
+                 [end of tool activity]\n\
+                 Assistant: I checked the log and the config.\n\
+                 User: Now push it.\n\
+                 [Assistant tool activity: 2 recorded event(s), in order, as the harness recorded them]\n\
+                 --- tool event 1 ---\n\
+                 kind: tool_call\n\
+                 name: bash\n\
+                 input: {{\"command\":\"git push\"}}\n\
+                 output: (unavailable: not recorded)\n\
+                 --- tool event 2 ---\n\
+                 kind: tool_result\n\
+                 name: bash\n\
+                 input: (unavailable: not recorded)\n\
+                 output: Everything up-to-date\n\
+                 [end of tool activity]\n\
+                 Assistant: Pushed.",
+                kept = "a".repeat(8_192),
+            )
+        }
+
+        /// The simulated-user prompt for [`ToolConversation`]'s first exchange,
+        /// pinned literally: the prose rendering, with no tool activity.
+        const EXPECTED_USER_PROMPT: &str = "You are role-playing the USER in a conversation \
+            with an AI assistant. Stay in character:\n\na busy maintainer\n\n\
+            Conversation so far (most recent last):\n\
+            User: Tidy the repo\n\
+            Assistant: I checked the log and the config.\n\n\
+            Write only the user's next message. Output the message text and nothing else.";
+
+        /// The inlined second skill prompt (no session to resume), pinned
+        /// literally: the prose rendering, with no tool activity.
+        const EXPECTED_RESPOND_PROMPT: &str = "Conversation so far (most recent last):\n\
+            User: Tidy the repo\n\
+            Assistant: I checked the log and the config.\n\
+            User: Now push it.\n\n\
+            Write only the assistant's next reply, following your system instructions. \
+            Output the reply text and nothing else.";
+
+        fn assert_judge_prompt(prompt: &str) {
+            let expected = format!(
+                "Criterion: the push reported the branch up to date\n\n\
+                 Transcript:\n{}\n\nDecide whether",
+                expected_judge_transcript()
+            );
+            assert!(prompt.contains(&expected), "judge prompt:\n{prompt}");
+            assert!(!prompt.contains(&"a".repeat(8_193)), "output was not cut");
+        }
+
+        #[test]
+        fn oneharness_judge_receives_recorded_tool_activity() {
+            let conv = ToolConversation::new("oh");
+            let run = conv.run(&oh_provider_cfg(conv.oneharness.clone(), false));
+            assert_eq!(run.transcript.messages[1].events.len(), 3);
+            assert_judge_prompt(&conv.prompt("judge", 0));
+            assert_eq!(conv.prompt("user", 0), EXPECTED_USER_PROMPT);
+            assert_eq!(conv.prompt("respond", 1), EXPECTED_RESPOND_PROMPT);
+        }
+
+        #[test]
+        fn api_judge_receives_recorded_tool_activity() {
+            // The skill runs through the fake oneharness; judge and simulated
+            // user go to the API judge, whose fake curl records each request
+            // body and answers a schema-constrained (judge) request with a
+            // verdict and any other with the simulated user's reply.
+            let conv = ToolConversation::new("api");
+            let curl = script(
+                "curl-tools",
+                &format!(
+                    "d='{}'\n\
+                     n=$(ls \"$d\" | grep -c '^curl-body-')\n\
+                     cat > \"$d/curl-body-$n.json\"\n\
+                     if grep -q '\"output_config\"' \"$d/curl-body-$n.json\"; then\n\
+                     echo '{{\"content\":[{{\"type\":\"text\",\"text\":\"{{\\\"value\\\": true, \\\"reason\\\": \\\"pushed\\\"}}\"}}]}}'\n\
+                     else\n\
+                     echo '{{\"content\":[{{\"type\":\"text\",\"text\":\"Now push it.\"}}]}}'\n\
+                     fi\n",
+                    conv.dir.display()
+                ),
+            );
+            std::env::set_var("SKILLTEST_TOOLS_API_KEY", "sk-test");
+            let judge = ApiJudgeProvider::new(&ApiJudgeConfig {
+                vendor: ApiVendor::Anthropic,
+                api_key_env: Some("SKILLTEST_TOOLS_API_KEY".to_string()),
+                base_url: Some("https://example.invalid/v1".to_string()),
+                timeout_secs: 5,
+                curl_bin: curl.to_string_lossy().into_owned(),
+                strict_json: true,
+            });
+            let split = SplitProvider::new(
+                Box::new(oh_provider_cfg(conv.oneharness.clone(), false)),
+                judge,
+            );
+            conv.run(&split);
+            std::env::remove_var("SKILLTEST_TOOLS_API_KEY");
+
+            let bodies: Vec<serde_json::Value> = (0..2)
+                .map(|n| {
+                    let raw = std::fs::read_to_string(conv.dir.join(format!("curl-body-{n}.json")))
+                        .unwrap();
+                    serde_json::from_str(raw.trim()).unwrap()
+                })
+                .collect();
+            let prompt = |body: &serde_json::Value| {
+                body["messages"][0]["content"].as_str().unwrap().to_string()
+            };
+            // Request 0 is the simulated user, request 1 the judge.
+            assert!(bodies[0].get("output_config").is_none());
+            assert_eq!(prompt(&bodies[0]), EXPECTED_USER_PROMPT);
+            assert!(bodies[1].get("output_config").is_some());
+            assert_judge_prompt(&prompt(&bodies[1]));
+            assert_eq!(conv.prompt("respond", 1), EXPECTED_RESPOND_PROMPT);
         }
 
         #[test]
