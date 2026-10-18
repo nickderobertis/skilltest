@@ -3,7 +3,8 @@
 # repository with a real tag, with only `gh` doubled on PATH. It creates a
 # missing release from the tag's own CHANGELOG.md section (not the working
 # tree's), leaves an existing one untouched, accepts a create a concurrent one
-# won, and refuses a missing tag, a gh refusal and a missing section by name.
+# won, names its notes file under $TMPDIR (/tmp when unset), and refuses a
+# missing tag, a gh refusal, a missing section and an unwritable TMPDIR by name.
 # `just release-targets-check` (every `just check` tier) runs it.
 #
 # Quiet on success, one line. On failure it prints what the script said.
@@ -158,6 +159,17 @@ if TMPDIR="$work/absent" ensure absent ok v0.14.0 CHANGELOG.md; then fail "the s
 grep -Fq "could not create a temporary file for the release notes" "$work/out" ||
   fail "the script did not name the release-notes file it could not create"
 ! grep -q '^release create' "$work/gh.log" || fail "the script attempted a create without its notes"
+# A writable $TMPDIR is where the notes file is named, not the system temp dir
+# a template-less mktemp may pick, and it is removed on exit; an unset one
+# falls back to /tmp.
+mkdir -p "$work/tmp" || fail "could not create $work/tmp; check that $work is writable"
+TMPDIR="$work/tmp" ensure absent ok v0.14.0 CHANGELOG.md || fail "the script failed with a writable TMPDIR"
+grep -Fq -- "--notes-file $work/tmp/ensure-github-release." "$work/gh.log" ||
+  fail "the script did not create its notes file under \$TMPDIR ($work/tmp); gh saw: $(cat "$work/gh.log")"
+[ -z "$(ls -A "$work/tmp")" ] || fail "the script left its notes file in \$TMPDIR: $(ls -A "$work/tmp")"
+(unset TMPDIR && ensure absent ok v0.14.0 CHANGELOG.md) || fail "the script failed with TMPDIR unset"
+grep -Fq -- "--notes-file /tmp/ensure-github-release." "$work/gh.log" ||
+  fail "the script did not fall back to /tmp for its notes file with TMPDIR unset; gh saw: $(cat "$work/gh.log")"
 status=0
 ensure absent ok v0.14.0 || status=$?
 [ "$status" = 2 ] || fail "the script exited $status, not 2, without a changelog path"
