@@ -40,8 +40,19 @@ impl Drop for Scratch {
     }
 }
 
+/// Each double's shell prelude: `verdict <request>` names the canned verdict
+/// for a judge request — its kind from the prompt's wording, its value from
+/// whether the recorded push output is in it.
 fn executable(path: &Path, body: &str) {
-    std::fs::write(path, format!("#!/bin/sh\nd=\"$JOURNEY_DIR\"\n{body}")).unwrap();
+    let prelude = format!(
+        "d=\"$JOURNEY_DIR\"\n\
+         verdict() {{\n\
+         kind=boolean; grep -q 'Score how well' \"$1\" && kind=numeric\n\
+         value=false; grep -qF '{EVIDENCE}' \"$1\" && value=true\n\
+         echo \"$kind-$value\"\n\
+         }}\n"
+    );
+    std::fs::write(path, format!("#!/bin/sh\n{prelude}{body}")).unwrap();
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
 }
 
@@ -64,7 +75,9 @@ fn conversation(push_output: &str) -> Scratch {
         dir.join("case.yaml"),
         "name: pushes\nskill: skill\ninput: Tidy the repo\n\
          user:\n  persona: a busy maintainer\n  max_turns: 2\n\
-         evals:\n  - type: boolean\n    criterion: the push reported the branch up to date\n",
+         evals:\n  - type: boolean\n    criterion: the push reported the branch up to date\n  \
+         - type: numeric\n    criterion: how completely the push succeeded\n    \
+         min: 0\n    max: 10\n    threshold: 7\n",
     )
     .unwrap();
     let reply = |text: &str, events: Value| {
@@ -95,7 +108,12 @@ fn conversation(push_output: &str) -> Scratch {
         ),
     );
     write("user-reply-0.json", reply("Now push it.", Value::Null));
-    for (name, value) in [("verdict-true", true), ("verdict-false", false)] {
+    for (name, value) in [
+        ("boolean-true", json!(true)),
+        ("boolean-false", json!(false)),
+        ("numeric-true", json!(10)),
+        ("numeric-false", json!(0)),
+    ] {
         let verdict = json!({ "value": value, "reason": "from the recorded push output" });
         write(
             &format!("oh-{name}.json"),
@@ -110,38 +128,33 @@ fn conversation(push_output: &str) -> Scratch {
         "api-user.json",
         json!({ "content": [{ "type": "text", "text": "Now push it." }] }).to_string(),
     );
+    // llmlint: ignore-block[e2e_not_mocked] These two executables are the models — skill, simulated user and both judge backends — doubled at the paid model boundary and nowhere above: everything between them and the case file is the real built `skilltest` (config, runner, both judge backends, prompt building, verdict parsing). AGENTS.md: "No non-determinism in the gate: the LLM is always faked in tests"; the live tiers (`live/`) drive real harnesses and APIs.
     executable(
         &dir.join("oneharness"),
-        &format!(
-            "case \" $* \" in\n\
-             *' --schema '*) role=judge ;;\n\
-             *' --system '*) role=respond ;;\n\
-             *) role=user ;;\n\
-             esac\n\
-             n=$(ls \"$d\" | grep -c \"^$role-prompt-\")\n\
-             cat > \"$d/$role-prompt-$n.txt\"\n\
-             if [ \"$role\" = judge ]; then\n\
-             if grep -qF '{EVIDENCE}' \"$d/judge-prompt-$n.txt\"; then v=true; else v=false; fi\n\
-             cat \"$d/oh-verdict-$v.json\"\n\
-             else\n\
-             cat \"$d/$role-reply-$n.json\"\n\
-             fi\n"
-        ),
+        "case \" $* \" in\n\
+         *' --schema '*) role=judge ;;\n\
+         *' --system '*) role=respond ;;\n\
+         *) role=user ;;\n\
+         esac\n\
+         n=$(ls \"$d\" | grep -c \"^$role-prompt-\")\n\
+         cat > \"$d/$role-prompt-$n.txt\"\n\
+         if [ \"$role\" = judge ]; then\n\
+         cat \"$d/oh-$(verdict \"$d/judge-prompt-$n.txt\").json\"\n\
+         else\n\
+         cat \"$d/$role-reply-$n.json\"\n\
+         fi\n",
     );
     executable(
         &dir.join("curl"),
-        &format!(
-            "n=$(ls \"$d\" | grep -c '^curl-body-')\n\
-             cat > \"$d/curl-body-$n.json\"\n\
-             if ! grep -q '\"output_config\"' \"$d/curl-body-$n.json\"; then\n\
-             cat \"$d/api-user.json\"\n\
-             elif grep -qF '{EVIDENCE}' \"$d/curl-body-$n.json\"; then\n\
-             cat \"$d/api-verdict-true.json\"\n\
-             else\n\
-             cat \"$d/api-verdict-false.json\"\n\
-             fi\n"
-        ),
+        "n=$(ls \"$d\" | grep -c '^curl-body-')\n\
+         cat > \"$d/curl-body-$n.json\"\n\
+         if grep -q '\"output_config\"' \"$d/curl-body-$n.json\"; then\n\
+         cat \"$d/api-$(verdict \"$d/curl-body-$n.json\").json\"\n\
+         else\n\
+         cat \"$d/api-user.json\"\n\
+         fi\n",
     );
+    // llmlint: ignore-end[e2e_not_mocked]
     std::fs::write(
         dir.join("api-judge.yaml"),
         format!(
@@ -181,15 +194,33 @@ fn run(scratch: &Scratch, api_judge: bool) -> (Output, Value) {
     (output, report)
 }
 
-/// The prompt each judge backend was sent.
-fn judge_prompt(scratch: &Scratch, api_judge: bool) -> String {
+/// Every prompt the judge and simulated-user doubles were sent, as
+/// `(judge, user)`. The API backend carries both roles, telling a judge request
+/// by its schema-constrained `output_config`.
+fn prompts(scratch: &Scratch, api_judge: bool) -> (Vec<String>, Vec<String>) {
+    let read_all = |prefix: &str| -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(&scratch.0)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with(prefix))
+            .collect();
+        names.sort();
+        names.iter().map(|name| scratch.read(name)).collect()
+    };
     if !api_judge {
-        return scratch.read("judge-prompt-0.txt");
+        return (read_all("judge-prompt-"), read_all("user-prompt-"));
     }
-    // Request 0 is the simulated user's, request 1 the judge's.
-    let body: Value = serde_json::from_str(scratch.read("curl-body-1.json").trim()).unwrap();
-    assert!(body.get("output_config").is_some(), "{body}");
-    body["messages"][0]["content"].as_str().unwrap().to_string()
+    let (mut judge, mut user) = (Vec::new(), Vec::new());
+    for raw in read_all("curl-body-") {
+        let body: Value = serde_json::from_str(raw.trim()).unwrap();
+        let prompt = body["messages"][0]["content"].as_str().unwrap().to_string();
+        if body.get("output_config").is_some() {
+            judge.push(prompt);
+        } else {
+            user.push(prompt);
+        }
+    }
+    (judge, user)
 }
 
 /// The transcript every judge backend must see: each turn's reply text with
@@ -248,31 +279,32 @@ fn assert_journey(api_judge: bool, push_output: &str, verdict: bool) {
     let case_run = &report["runs"][0];
     assert_eq!(case_run["turns"], 2, "{report}");
     assert_eq!(case_run["evals"][0]["passed"], verdict, "{report}");
+    assert_eq!(case_run["evals"][1]["passed"], verdict, "{report}");
     assert_eq!(
         case_run["transcript"]["messages"][3]["events"][1]["output"],
         push_output
     );
 
-    let prompt = judge_prompt(&scratch, api_judge);
-    assert!(
-        prompt.contains(&format!(
-            "Criterion: the push reported the branch up to date\n\n\
-             Transcript:\n{}\n\n",
+    let (judge, user) = prompts(&scratch, api_judge);
+    assert_eq!((judge.len(), user.len()), (2, 1));
+    for criterion in [
+        "the push reported the branch up to date",
+        "how completely the push succeeded",
+    ] {
+        let expected = format!(
+            "Criterion: {criterion}\n\nTranscript:\n{}\n\n",
             expected_transcript(push_output)
-        )),
-        "judge prompt:\n{prompt}"
-    );
-    assert!(!prompt.contains(&"a".repeat(8_193)), "output was not cut");
+        );
+        let prompt = judge
+            .iter()
+            .find(|prompt| prompt.contains(&expected))
+            .unwrap_or_else(|| panic!("no judge prompt carries {criterion:?}: {judge:#?}"));
+        assert!(!prompt.contains(&"a".repeat(8_193)), "output was not cut");
+    }
 
     // The simulated user and the inlined second skill turn keep the prose
     // rendering: reply text only, no tool activity.
-    let user_prompt = if api_judge {
-        let body: Value = serde_json::from_str(scratch.read("curl-body-0.json").trim()).unwrap();
-        body["messages"][0]["content"].as_str().unwrap().to_string()
-    } else {
-        scratch.read("user-prompt-0.txt")
-    };
-    for prose in [user_prompt, scratch.read("respond-prompt-1.txt")] {
+    for prose in [&user[0], &scratch.read("respond-prompt-1.txt")] {
         assert!(
             prose.contains("User: Tidy the repo\nAssistant: I checked the log and the config.\n"),
             "{prose}"
