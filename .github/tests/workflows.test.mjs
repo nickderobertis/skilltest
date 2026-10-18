@@ -1146,7 +1146,10 @@ test("production screencomp reader matches the installer and locked reusable ver
   const installer = readFileSync(".github/setup-screencomp.sh", "utf8");
   const version = installer.match(/screencomp ([0-9]+\.[0-9]+\.[0-9]+)/)?.[1];
   assert.ok(version);
-  // The installer uses this input verbatim as the release tag and archive stem.
+  // The installer uses this input verbatim as the release tag and archive stem. That installer
+  // is screencomp's action step, run only inside the reusable workflow on GitHub and fetching
+  // from GitHub's releases, so this offline gate asserts the tag it is handed; visual-docs'
+  // own run on each pull request is the integration proof that the tag downloads.
   assert.equal(caller.with["screencomp-version"], `v${version}`);
   assert.ok(caller.uses.endsWith(`@v${version}`));
 });
