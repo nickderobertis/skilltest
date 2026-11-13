@@ -11,8 +11,12 @@
 # keeping each unit's newest build plus every build modified within 2 days, so
 # rebuilds stay warm. `just bootstrap` installs the pinned pruner it runs; the
 # `pool-maintenance` Nx project's host budget holds how long one pass takes.
-schema_version = 1
+schema_version = 2
 
 [pool.maintain]
 command = ["just", "pool-maintenance"]
 timeout = "30m"
+
+[policy]
+publication = "change-auto"
+approvals = "none"
