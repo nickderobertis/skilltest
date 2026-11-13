@@ -11,12 +11,19 @@
 # keeping each unit's newest build plus every build modified within 2 days, so
 # rebuilds stay warm. `just bootstrap` installs the pinned pruner it runs; the
 # `pool-maintenance` Nx project's host budget holds how long one pass takes.
+# llmlint: ignore[contracts_have_one_source_or_a_drift_gate] This version names onevcs's declaration schema, whose authority is onevcs's own reader: it parses and validates this file on every read. onevcs consumes skilltest rather than being its dependency, so the gate holds no copy of that schema to drift from (as release-targets.toml argues).
 schema_version = 2
 
 [pool.maintain]
 command = ["just", "pool-maintenance"]
 timeout = "30m"
 
+# llmlint: ignore-block[contracts_have_one_source_or_a_drift_gate] These keys and values are onevcs's declaration contract, validated by onevcs's reader whenever it resolves this repository's policy; nothing in skilltest reads them, so there is no in-repo copy for a gate to hold.
+# llmlint: ignore-block[changed_behavior_has_e2e] No skilltest code reads this table: its only consumer is onevcs, which routes this repository's changes from it, and onevcs's own suite and the `onevcs rules check` comparison cover that behavior. A skilltest test could only re-read the literal.
+# llmlint: ignore-block[least_privilege_grants] This grants nothing new: it restates the exact policy (change-auto, no approvals) the host's rules already give skilltest today, so its merge path is unchanged when the host rule is retired.
 [policy]
 publication = "change-auto"
 approvals = "none"
+# llmlint: ignore-end[contracts_have_one_source_or_a_drift_gate]
+# llmlint: ignore-end[changed_behavior_has_e2e]
+# llmlint: ignore-end[least_privilege_grants]
